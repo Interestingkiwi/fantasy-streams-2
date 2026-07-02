@@ -2,12 +2,12 @@
 Projects Skater Data using up to 5 years of NHL Data
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import pandas as pd
-import sqlite3
+from db_config import engine
 import numpy as np
 
 def calculate_trend(y1_pts_pg, y2_pts_pg):
@@ -29,9 +29,7 @@ def calculate_trend(y1_pts_pg, y2_pts_pg):
 print("--- INITIATING PROJECTION ENGINE ---")
 
 
-db_name = "projections.db"
-conn = sqlite3.connect(db_name)
-df = pd.read_sql("SELECT * FROM historic_skaters_baseline", conn)
+df = pd.read_sql("SELECT * FROM historic_skaters_baseline", con=engine)
 
 
 seasons = sorted(df['seasonId'].unique(), reverse=True)
@@ -114,8 +112,8 @@ final_projections_df = pd.DataFrame(projected_data)
 final_projections_df.fillna(0, inplace=True)
 
 table_name = "projected_skaters_baseline"
-final_projections_df.to_sql(table_name, conn, if_exists='replace', index=False)
-conn.close()
+final_projections_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
+
 
 print(f"\n{len(final_projections_df)} player projections written to '{table_name}'.")
 print("Math applied: 60/30/10 Dynamic Time-Decay + Paced to 82 Games + Trend Analyzed.")

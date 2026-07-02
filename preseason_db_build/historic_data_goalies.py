@@ -2,13 +2,13 @@
 Fetches past 5 years of NHL Goalie Data using NHL.com API
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import requests
 import pandas as pd
-import sqlite3
+from db_config import engine
 import time
 from datetime import datetime
 
@@ -101,11 +101,8 @@ if 'gamesStarted' in final_df.columns:
     final_df['startPct'] = (final_df['gamesStarted'] / 82.0).fillna(0)
 
 # Write to Database
-db_name = "projections.db"
-conn = sqlite3.connect(db_name)
 table_name = "historic_goalies_baseline"
 
-final_df.to_sql(table_name, conn, if_exists='replace', index=False)
-conn.close()
+final_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
 print(f"\n{len(final_df)} goalie-seasons safely written to '{table_name}'.")

@@ -2,12 +2,12 @@
 Adjusts projections based on injuries, creates final_projections table
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import pandas as pd
-import sqlite3
+from db_config import engine
 from datetime import datetime
 
 # NHL Season start date (yyyy, m, d,)
@@ -26,9 +26,8 @@ def get_return_date(details_str):
 print("--- APPLYING INJURY ADJUSTMENTS (VIA CROSSWALK) ---")
 
 # Load tables
-conn = sqlite3.connect("projections.db")
-skaters = pd.read_sql("SELECT * FROM projected_skaters_baseline", conn)
-injuries = pd.read_sql("SELECT * FROM current_injuries", conn)
+skaters = pd.read_sql("SELECT * FROM projected_skaters_baseline", con=engine)
+injuries = pd.read_sql("SELECT * FROM current_injuries", con=engine)
 
 # Extract return dates
 injuries['cleanReturnDate'] = injuries['injuryDetails'].apply(get_return_date)
@@ -58,6 +57,5 @@ for index, injury in valid_injuries.iterrows():
             skaters.loc[skaters['playerId'] == pid, col] *= scaling_factor
 
 # Save final adjusted projections
-skaters.to_sql("final_projections", conn, if_exists='replace', index=False)
-conn.close()
+skaters.to_sql("final_projections", con=engine, if_exists='replace', index=False)
 print("'final_projections' table created with crosswalk-verified injury adjustments applied.")

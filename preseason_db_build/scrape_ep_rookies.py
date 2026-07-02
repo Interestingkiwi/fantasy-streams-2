@@ -2,14 +2,14 @@
 Scrapes rookies from EliteProspects (Temp until work out API License)
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import cloudscraper
 from bs4 import BeautifulSoup
 import pandas as pd
-import sqlite3
+from db_config import engine
 import time
 import re
 
@@ -142,14 +142,11 @@ if successful_dfs:
     # Print a quick preview of the new columns
     print(master_prospects_df[['playerName', 'league', 'points', 'pim', 'hits']].head(5))
 
-    db_name = "projections.db"
-    conn = sqlite3.connect(db_name)
     table_name = "prospects_baseline"
 
     # if_exists='replace' means it will recreate the table to include our 3 new columns
-    master_prospects_df.to_sql(table_name, conn, if_exists='replace', index=False)
-    conn.close()
+    master_prospects_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
-    print(f"\nSUCCESS! Top rookies safely written to '{table_name}'.")
+    print(f"\nTop rookies safely written to '{table_name}'.")
 else:
     print("\nFailed to compile any prospect data.")

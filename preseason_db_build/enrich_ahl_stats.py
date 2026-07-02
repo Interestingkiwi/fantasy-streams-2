@@ -2,13 +2,13 @@
 Scrapes more stats from AHL DB
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import requests
 import pandas as pd
-import sqlite3
+from db_config import engine
 import difflib
 import json
 
@@ -130,17 +130,13 @@ def fuzzy_merge_stats(db_df, api_df):
 
     return merged_df
 
-# ==========================================
-# EXECUTION SCRIPT
-# ==========================================
 
-db_name = "projections.db"
+# EXECUTION SCRIPT
 table_name = "prospects_baseline"
-conn = sqlite3.connect(db_name)
 
 try:
     print(f"Loading '{table_name}' from SQLite...")
-    prospects_db = pd.read_sql(f"SELECT * FROM {table_name}", conn)
+    prospects_db = pd.read_sql(f"SELECT * FROM {table_name}", con=engine)
 except Exception as e:
     print("Could not load database. Make sure you ran the EP scraper first!")
     exit()
@@ -151,7 +147,5 @@ if ahl_api_data is not None:
     enriched_prospects = fuzzy_merge_stats(prospects_db, ahl_api_data)
 
     print("\n--- SAVING ENRICHED DATA TO DATABASE ---")
-    enriched_prospects.to_sql(table_name, conn, if_exists='replace', index=False)
-    print(f"SUCCESS! AHL Shots, PP Goals, and Plus/Minus safely injected into '{table_name}'.")
-
-conn.close()
+    enriched_prospects.to_sql(table_name, con=engine, if_exists='replace', index=False)
+    print(f"AHL Shots, PP Goals, and Plus/Minus injected into '{table_name}'.")

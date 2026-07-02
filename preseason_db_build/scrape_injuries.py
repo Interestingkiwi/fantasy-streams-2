@@ -2,13 +2,13 @@
 Identifies players who are injured to start the season
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import pandas as pd
 import requests
-import sqlite3
+from db_config import engine
 from player_utils import find_player_id
 
 def fetch_espn_injury_report():
@@ -64,11 +64,8 @@ injuries_df = fetch_espn_injury_report()
 if injuries_df is not None:
     print("\n--- CURRENT INJURY TIMELINES ---")
 
-    db_name = "projections.db"
-    conn = sqlite3.connect(db_name)
     table_name = "current_injuries"
 
-    injuries_df.to_sql(table_name, conn, if_exists='replace', index=False)
-    conn.close()
+    injuries_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
     print(f"\nInjury data safely synced to '{table_name}' using official Player IDs.")

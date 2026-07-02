@@ -2,13 +2,13 @@
 Fetches past 5 years of NHL Skater Data using NHL.com API
 Author - Jason Druckenmiller
 Created - 6/30/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import requests
 import pandas as pd
-import sqlite3
+from db_config import engine
 import time
 from datetime import datetime
 
@@ -140,12 +140,8 @@ existing_columns = [col for col in columns_to_keep if col in master_df.columns]
 final_df = master_df[existing_columns].copy()
 
 
-db_name = "projections.db"
-conn = sqlite3.connect(db_name)
 table_name = "historic_skaters_baseline"
 
-final_df.to_sql(table_name, conn, if_exists='replace', index=False)
-conn.close()
+final_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
 print(f"\n{len(final_df)} player-seasons safely written to '{table_name}'.")
-print("Data pipeline includes Summary, Realtime (Hits/Blocks), and Faceoff stats.")

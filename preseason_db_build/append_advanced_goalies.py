@@ -2,12 +2,12 @@
 Fetches past 5 years of NHL Goalie Advanced Stats from MoneyPuck CSV
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/1/2026
+Updated - 7/2/2026
 """
 
 
 import pandas as pd
-import sqlite3
+from db_config import engine
 import time
 from datetime import datetime
 
@@ -78,19 +78,16 @@ def safe_merge(base_df, new_df, desired_columns):
 
 
 #EXECUTION
-db_name = "projections.db"
 table_name = "historic_goalies_baseline"
 
-print("--- CONNECTING TO LOCAL DATABASE ---")
-conn = sqlite3.connect(db_name)
+print("--- CONNECTING TO POSTGRESQL DATABASE ---")
 
 try:
-    baseline_df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
+    baseline_df = pd.read_sql(f"SELECT * FROM {table_name}", con=engine)
     baseline_df['playerId'] = baseline_df['playerId'].astype(int)
     baseline_df['seasonId'] = baseline_df['seasonId'].astype(str)
 except Exception as e:
     print(f"Error loading database: {e}")
-    conn.close()
     exit()
 
 seasons_to_pull = generate_rolling_seasons(5)
@@ -109,7 +106,6 @@ mp_wish_list = [
 master_df = safe_merge(baseline_df, mp_df, mp_wish_list)
 
 print("\n--- SAVING TO DATABASE ---")
-master_df.to_sql(table_name, conn, if_exists='replace', index=False)
-conn.close()
+master_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
 print(f"SUCCESS! Advanced stats appended to your {table_name} database.")
