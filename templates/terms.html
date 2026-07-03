@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terms & Privacy - Fantasy Streams</title>
+    <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        h2 { color: #60A5FA; font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid #374151; padding-bottom: 0.5rem; }
+        h3 { color: #9CA3AF; font-weight: 500; margin-top: 1rem; margin-bottom: 0.5rem; }
+        p, li { color: #D1D5DB; line-height: 1.6; margin-bottom: 1rem; }
+        ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 1rem; }
+        a { color: #60A5FA; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="bg-gray-900 text-gray-200">
+
+    <main class="container mx-auto p-6 max-w-4xl">
+        <h1 class="text-3xl font-bold mb-2 text-white">Terms of Service & Privacy Policy</h1>
+        <p class="text-sm text-gray-500 mb-8">Last Updated: {{ date_today }}</p>
+
+        <div class="bg-gray-800 p-8 rounded-lg shadow-lg border border-gray-700">
+
+            <div id="terms">
+                <h2 class="text-2xl text-blue-400 mb-4">Terms of Service</h2>
+
+                <section>
+                    <h3>1. Introduction</h3>
+                    <p>Welcome to Fantasy Streams ("Service"). By accessing or using our Service, you agree to be bound by these Terms. If you disagree with any part of the terms, you may not access the Service.</p>
+                </section>
+
+                <section>
+                    <h3>2. Use of Service</h3>
+                    <p>This Service is designed to analyze fantasy hockey data to assist with roster decisions. You agree to use this Service only for lawful purposes and in accordance with the rules of your fantasy league provider.</p>
+                </section>
+
+                <section>
+                    <h3>3. Yahoo! Fantasy Sports API</h3>
+                    <p>This Service uses the Yahoo! Fantasy Sports API to retrieve league data. By using this Service, you authorize us to access your Yahoo! Fantasy Sports data on your behalf.</p>
+                </section>
+
+                <section>
+                    <h3>4. Automation Features</h3>
+                    <p>Some features of this Service, such as the "Scheduled Add/Drop Tool," allow you to schedule automated transactions to be executed on your behalf. By using these features, you explicitly grant the Service permission to perform add/drop transactions on your fantasy team at the dates and times you specify. You acknowledge that automation carries inherent risks (e.g., API downtime, timing conflicts) and that the Service is not liable for failed transactions or unintended roster moves.</p>
+                </section>
+
+                <section>
+                    <h3>5. Disclaimer of Warranties</h3>
+                    <p>The Service is provided on an "AS IS" and "AS AVAILABLE" basis. We do not guarantee the accuracy, completeness, or timeliness of the data provided. We are not responsible for any fantasy league outcomes resulting from the use of this Service.</p>
+                </section>
+
+                <section>
+                    <h3>6. Limitation of Liability</h3>
+                    <p>In no event shall the developers or owners of this Service be liable for any indirect, incidental, special, consequential or punitive damages, including without limitation, loss of profits, data, use, goodwill, or other intangible losses.</p>
+                </section>
+            </div>
+
+            <div id="privacy" class="mt-12 pt-8 border-t border-gray-600">
+                <h2 class="text-2xl text-blue-400 mb-4">Privacy Policy</h2>
+
+                <section>
+                    <h3>1. Data Collection</h3>
+                    <p>We collect only the data necessary to provide the Service. This includes:</p>
+                    <ul>
+                        <li>Your Yahoo! Fantasy Sports profile information (GUID, Name).</li>
+                        <li>League settings, rosters, matchups, and transaction history.</li>
+                        <li>OAuth2 tokens required to maintain your authenticated session.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3>2. Data Storage</h3>
+                    <p>Your league data is cached in a secure database to improve performance and reduce API calls. Your OAuth2 access and refresh tokens are stored securely and encrypted where applicable.</p>
+                </section>
+
+                <section>
+                    <h3>3. Data Usage</h3>
+                    <p>We use your data solely to:</p>
+                    <ul>
+                        <li>Display your league's dashboard and analytics.</li>
+                        <li>Calculate optimal lineups and player projections.</li>
+                        <li>Perform automated league updates to keep data fresh.</li>
+                        <li>Execute authorized transactions (adds/drops) on your behalf if you use our automation tools.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3>4. Data Sharing</h3>
+                    <p>We do not sell your personal data to third parties. We use industry-standard security measures to protect your access tokens.</p>
+                </section>
+
+                <section>
+                    <h3>5. Your Rights (Data Deletion)</h3>
+                    <p>You have the right to request the deletion of your data. Since this Service accesses your Yahoo! data, you may revoke access at any time via your <a href="https://login.yahoo.com/account/security" target="_blank" class="text-blue-400 hover:underline">Yahoo Account Security Settings</a>. To request a full deletion of your data from our servers, please contact the developer.</p>
+                </section>
+
+                <section>
+                    <h3>6. Third-Party Services</h3>
+                    <p>Data is retrieved via the Yahoo! Fantasy Sports API. Use of Yahoo! services is subject to <a href="https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html" target="_blank" class="text-blue-400 hover:underline">Yahoo's Terms of Service</a> and <a href="https://legal.yahoo.com/us/en/yahoo/privacy/index.html" target="_blank" class="text-blue-400 hover:underline">Privacy Policy</a>.</p>
+                </section>
+            </div>
+
+            <div class="mt-8 pt-6 border-t border-gray-700">
+                <a href="/" class="text-blue-400 hover:text-blue-300 font-medium">&larr; Back to Login</a>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-gray-800 text-center p-4 text-gray-500 text-sm mt-auto">
+        &copy; {{ date_today.split(',')[1] }} Fantasy Streams. All rights reserved.
+    </footer>
+
+</body>
+</html>

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Streams</title>
+    <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .form-input {
+            background-color: #2D2D2D;
+            color: #D4D4D4;
+            border: 1px solid #555;
+        }
+        .form-input::placeholder { color: #888; }
+        .btn-primary { background-color: #0E639C; color: white; }
+        .btn-primary:hover { background-color: #1177BB; }
+        .hidden { display: none; }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen relative">
+
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700">
+        <h1 class="text-2xl font-bold text-white text-center tracking-wide">Fantasy Streams - Hockey</h1>
+    </header>
+
+    <main class="flex-grow container mx-auto p-4 md:p-8 flex flex-col items-center justify-center">
+
+        <div class="text-center mb-12 max-w-3xl">
+            <h2 class="text-4xl font-extrabold text-white mb-4">H2H Matchup Analysis Tool</h2>
+            <p class="text-lg text-gray-400 leading-relaxed">
+                Welcome to the one stop toolkit for Head-to-Head Fantasy Hockey. View schedule advantages, category strengths, optimized lineups based on opponent strengths, free agent streams, compare player projections for yourself and opponent, and more.
+                <br>
+                <a href="#" id="open-features-modal-btn" class="text-blue-400 hover:text-blue-300 underline transition-colors">Click for full feature list</a>.
+                <br><br>
+                Choose how you want to access the platform below.
+            </p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 w-full max-w-6xl">
+
+            <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 flex flex-col">
+                <div class="text-center mb-6 flex-grow">
+                    <h3 class="text-2xl font-semibold text-white mb-2">Sync Your League</h3>
+                    <p class="text-gray-400 text-sm mt-4">
+                        Sign in via your Fantasy Platform to be able to sync your leagues data, providing tailored projections and analysis specific to your league settings.
+                    </p>
+                </div>
+                <div class="mt-auto pt-4">
+                    <button id="open-sync-modal-btn" class="w-full btn-primary font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 shadow-md">
+                        Sync Your League
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 flex flex-col">
+                <div class="text-center mb-6 flex-grow">
+                    <h3 class="text-2xl font-semibold text-white mb-2">Standalone Mode</h3>
+                    <p class="text-gray-400 text-sm mt-4">
+                        Don't want to link an account right now?
+                        <br><br>
+                        Standalone mode allows access to most of the sites features just requires manual entry of any lineup and league settings where needed.
+                    </p>
+                </div>
+                <div class="mt-auto pt-4">
+                    <a href="/standalone" class="block w-full bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 border border-gray-600">
+                        Enter Standalone Mode
+                    </a>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 flex flex-col">
+                <div class="text-center mb-6 flex-grow">
+                    <h3 class="text-2xl font-semibold text-white mb-2">Draft Prep</h3>
+                    <p class="text-gray-400 text-sm mt-4">
+                        Preseason database that will adjust draft projections based on your leagues settings.
+                    </p>
+                </div>
+                <div class="mt-auto pt-4">
+                    <a href="/draft-prep" class="block w-full bg-emerald-700 hover:bg-emerald-600 text-white font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 shadow-md">
+                        Access Draft Prep
+                    </a>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <div id="features-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-2xl border border-gray-700 w-full max-w-2xl relative mx-4 max-h-[90vh] overflow-y-auto">
+            <button id="close-features-modal-btn" class="absolute top-4 right-4 text-gray-400 hover:text-white text-3xl leading-none" aria-label="Close modal">&times;</button>
+
+            <h3 class="text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-3">Platform Features</h3>
+
+            <div class="mb-8">
+                <h4 class="text-xl font-semibold text-blue-400 mb-4">
+                    Current Features
+                </h4>
+                <ul class="list-disc pl-5 space-y-3 text-gray-300">
+                    <li><strong>Schedule Advantages:</strong> Easily visualize off-nights and optimize your weekly starts.</li>
+                    <li><strong>Category Strengths:</strong> Compare your roster's projected output directly against your opponent.</li>
+                    <li><strong>Optimized Lineups:</strong> Get automated start/sit recommendations based on matchup data.</li>
+                    <li><strong>Free Agent Streams:</strong> Identify the best players on the wire to win specific categories.</li>
+                    <li>[Placeholder] Add another current feature here...</li>
+                </ul>
+            </div>
+
+            <div>
+                <h4 class="text-xl font-semibold text-emerald-400 mb-4">
+                    Planned Enhancements
+                </h4>
+                <ul class="list-disc pl-5 space-y-3 text-gray-300">
+                    <li><strong>ESPN & Fantrax Sync:</strong> Expand platform integration beyond Yahoo!.</li>
+                    <li><strong>Trade Analyzer Tool:</strong> Evaluate complex trades using rest-of-season projection algorithms.</li>
+                    <li><strong>Goalie Start Probability:</strong> Advanced tracking for probable and confirmed goalie starts.</li>
+                    <li>[Placeholder] Add another planned enhancement here...</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="sync-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-2xl border border-gray-700 w-full max-w-md relative mx-4">
+
+            <button id="close-sync-modal-btn" class="absolute top-4 right-4 text-gray-400 hover:text-white text-2xl leading-none" aria-label="Close modal">&times;</button>
+
+            <div id="platform-selection-view">
+                <h3 class="text-2xl font-semibold text-white mb-6 text-center">Which Platform?</h3>
+                <div class="space-y-4">
+                    <button id="select-yahoo-btn" class="w-full btn-primary font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 shadow-md flex justify-center items-center">
+                        <span class="font-bold tracking-wider">Yahoo!</span>&nbsp;Fantasy
+                    </button>
+                    <button id="select-espn-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md text-sm px-5 py-3 text-center border border-gray-600 transition-colors flex justify-center items-center">
+                        ESPN
+                    </button>
+                    <button id="select-fantrax-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md text-sm px-5 py-3 text-center border border-gray-600 transition-colors flex justify-center items-center">
+                        Fantrax
+                    </button>
+                    <button id="select-other-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md text-sm px-5 py-3 text-center border border-gray-600 transition-colors flex justify-center items-center">
+                        Other
+                    </button>
+                </div>
+            </div>
+
+            <div id="yahoo-login-view" class="hidden platform-view">
+                <button class="back-to-platforms-btn text-gray-400 hover:text-white text-sm mb-4 flex items-center transition-colors">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Back to Platforms
+                </button>
+
+                <h3 class="text-2xl font-semibold text-white mb-2 text-center">Yahoo Login</h3>
+
+                <form id="credentials-form" class="space-y-4 mt-4">
+                    <div>
+                        <label for="league_id" class="block mb-1 text-sm font-medium text-gray-300">Yahoo League ID</label>
+                        <input type="text" id="league_id" class="form-input w-full p-2.5 rounded-md focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., 12345" required>
+                        <p class="text-xs text-gray-500 mt-2">
+                            Found in Yahoo settings under "League ID".
+                        </p>
+                    </div>
+
+                    <div class="flex items-start mb-4 mt-2">
+                        <div class="flex items-center h-5">
+                            <input id="tos_consent" type="checkbox" required class="w-4 h-4 border border-gray-600 rounded bg-gray-700 focus:ring-3 focus:ring-blue-600 ring-offset-gray-800">
+                        </div>
+                        <label for="tos_consent" class="ml-2 text-xs font-medium text-gray-300">
+                            I agree to the <a href="/terms" class="text-blue-500 hover:underline">Terms of Service</a>.
+                        </label>
+                    </div>
+
+                    <button type="submit" class="w-full btn-primary font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 shadow-md">
+                        Login with Yahoo
+                    </button>
+                </form>
+                <div id="auth-error" class="mt-4 text-red-400 text-sm hidden text-center"></div>
+            </div>
+
+            <div id="espn-login-view" class="hidden platform-view">
+                <button class="back-to-platforms-btn text-gray-400 hover:text-white text-sm mb-4 flex items-center transition-colors">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Back to Platforms
+                </button>
+
+                <h3 class="text-2xl font-semibold text-white mb-2 text-center">ESPN Fantasy</h3>
+                <p class="text-gray-400 text-sm text-center mb-6">Direct synchronization for ESPN is currently under development.</p>
+
+                <div class="bg-gray-700 border border-gray-600 rounded-lg p-4 mb-6">
+                    <p class="text-sm text-gray-300 text-center">
+                        Want to help speed up development for this platform? <br>
+                        Contact me at: <a href="mailto:your@email.com" class="text-blue-400 hover:underline font-medium">your@email.com</a>
+                    </p>
+                </div>
+
+                <a href="/standalone" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 block shadow-md">
+                    Continue in Standalone Mode
+                </a>
+            </div>
+
+            <div id="fantrax-login-view" class="hidden platform-view">
+                <button class="back-to-platforms-btn text-gray-400 hover:text-white text-sm mb-4 flex items-center transition-colors">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Back to Platforms
+                </button>
+
+                <h3 class="text-2xl font-semibold text-white mb-2 text-center">Fantrax</h3>
+                <p class="text-gray-400 text-sm text-center mb-6">Direct synchronization for Fantrax is currently under development.</p>
+
+                <div class="bg-gray-700 border border-gray-600 rounded-lg p-4 mb-6">
+                    <p class="text-sm text-gray-300 text-center">
+                        Want to help speed up development for this platform? <br>
+                        Contact me at: <a href="mailto:your@email.com" class="text-blue-400 hover:underline font-medium">your@email.com</a>
+                    </p>
+                </div>
+
+                <a href="/standalone" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 block shadow-md">
+                    Continue in Standalone Mode
+                </a>
+            </div>
+
+            <div id="other-login-view" class="hidden platform-view">
+                <button class="back-to-platforms-btn text-gray-400 hover:text-white text-sm mb-4 flex items-center transition-colors">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Back to Platforms
+                </button>
+
+                <h3 class="text-2xl font-semibold text-white mb-2 text-center">Other Platforms</h3>
+                <p class="text-gray-400 text-sm text-center mb-6">We are continually looking to add support for more fantasy hockey platforms.</p>
+
+                <div class="bg-gray-700 border border-gray-600 rounded-lg p-4 mb-6">
+                    <p class="text-sm text-gray-300 text-center">
+                        Is your platform missing? Let me know what you use! <br>
+                        Contact me at: <a href="mailto:your@email.com" class="text-blue-400 hover:underline font-medium">your@email.com</a>
+                    </p>
+                </div>
+
+                <a href="/standalone" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 block shadow-md">
+                    Continue in Standalone Mode
+                </a>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- 1. CONFIGURATION: TERMS VERSION ---
+        const CURRENT_TERMS_VERSION = '2025-12-12_v1';
+
+        // Auth Form Elements
+        const credentialsForm = document.getElementById('credentials-form');
+        const authError = document.getElementById('auth-error');
+        const tosCheckbox = document.getElementById('tos_consent');
+
+        // Feature Modal Elements
+        const featuresModal = document.getElementById('features-modal');
+        const openFeaturesModalBtn = document.getElementById('open-features-modal-btn');
+        const closeFeaturesModalBtn = document.getElementById('close-features-modal-btn');
+
+        // Sync Modal Elements
+        const syncModal = document.getElementById('sync-modal');
+        const openSyncModalBtn = document.getElementById('open-sync-modal-btn');
+        const closeSyncModalBtn = document.getElementById('close-sync-modal-btn');
+
+        // Sync Modal Views
+        const platformSelectionView = document.getElementById('platform-selection-view');
+        const platformViews = document.querySelectorAll('.platform-view'); // Grabs Yahoo, ESPN, Fantrax, Other
+
+        // Sync Modal Navigation Buttons
+        const selectYahooBtn = document.getElementById('select-yahoo-btn');
+        const selectEspnBtn = document.getElementById('select-espn-btn');
+        const selectFantraxBtn = document.getElementById('select-fantrax-btn');
+        const selectOtherBtn = document.getElementById('select-other-btn');
+        const backToPlatformsBtns = document.querySelectorAll('.back-to-platforms-btn');
+
+        const showAuthError = (message) => {
+            authError.textContent = `Error: ${message}`;
+            authError.classList.remove('hidden');
+        };
+
+        // --- FEATURE MODAL LOGIC ---
+
+        // Open Features Modal
+        openFeaturesModalBtn.addEventListener('click', (e) => {
+            e.preventDefault(); // Prevents the link from jumping to the top of page
+            featuresModal.classList.remove('hidden');
+        });
+
+        // Close Features Modal
+        const closeFeaturesModal = () => {
+            featuresModal.classList.add('hidden');
+        };
+
+        closeFeaturesModalBtn.addEventListener('click', closeFeaturesModal);
+
+        featuresModal.addEventListener('click', (e) => {
+            if (e.target === featuresModal) closeFeaturesModal();
+        });
+
+
+        // --- SYNC MODAL LOGIC ---
+
+        // Helper to hide all individual platform views
+        const hideAllPlatformViews = () => {
+            platformViews.forEach(view => view.classList.add('hidden'));
+            authError.classList.add('hidden');
+        };
+
+        // Open Sync Modal
+        openSyncModalBtn.addEventListener('click', () => {
+            syncModal.classList.remove('hidden');
+            hideAllPlatformViews();
+            platformSelectionView.classList.remove('hidden');
+        });
+
+        // Close Sync Modal
+        const closeSyncModal = () => {
+            syncModal.classList.add('hidden');
+        };
+
+        closeSyncModalBtn.addEventListener('click', closeSyncModal);
+
+        syncModal.addEventListener('click', (e) => {
+            if (e.target === syncModal) closeSyncModal();
+        });
+
+        // Navigate to Specific Platform Views
+        selectYahooBtn.addEventListener('click', () => {
+            platformSelectionView.classList.add('hidden');
+            document.getElementById('yahoo-login-view').classList.remove('hidden');
+        });
+
+        selectEspnBtn.addEventListener('click', () => {
+            platformSelectionView.classList.add('hidden');
+            document.getElementById('espn-login-view').classList.remove('hidden');
+        });
+
+        selectFantraxBtn.addEventListener('click', () => {
+            platformSelectionView.classList.add('hidden');
+            document.getElementById('fantrax-login-view').classList.remove('hidden');
+        });
+
+        selectOtherBtn.addEventListener('click', () => {
+            platformSelectionView.classList.add('hidden');
+            document.getElementById('other-login-view').classList.remove('hidden');
+        });
+
+        // Navigate Back to Platforms View (Applies to ALL back buttons)
+        backToPlatformsBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                hideAllPlatformViews();
+                platformSelectionView.classList.remove('hidden');
+            });
+        });
+
+        // --- 2. CHECK LOCAL STORAGE ON LOAD ---
+        if (tosCheckbox) {
+            const storedVersion = localStorage.getItem('accepted_terms_version');
+            if (storedVersion === CURRENT_TERMS_VERSION) {
+                tosCheckbox.checked = true;
+            } else {
+                tosCheckbox.checked = false;
+            }
+        }
+
+        // --- 3. SUBMIT LOGIN LOGIC (Yahoo) ---
+        if (credentialsForm) {
+            credentialsForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                authError.classList.add('hidden');
+                const button = credentialsForm.querySelector('button');
+                const originalText = button.textContent;
+
+                button.textContent = 'Processing...';
+                button.disabled = true;
+
+                // SAVE TO LOCAL STORAGE ON SUBMIT
+                if (tosCheckbox && tosCheckbox.checked) {
+                    localStorage.setItem('accepted_terms_version', CURRENT_TERMS_VERSION);
+                }
+
+                try {
+                    const response = await fetch('/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            league_id: document.getElementById('league_id').value,
+                            terms_accepted: tosCheckbox.checked
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Failed to start login.');
+
+                    if (data.dev_login && data.redirect_url) {
+                        window.location.href = data.redirect_url;
+                    } else if (data.auth_url) {
+                        button.textContent = 'Redirecting to Yahoo...';
+                        window.location.href = data.auth_url;
+                    } else {
+                        throw new Error('Invalid response from server.');
+                    }
+
+                } catch (error) {
+                    showAuthError(error.message);
+                    button.textContent = 'Login with Yahoo';
+                    button.disabled = false;
+                }
+            });
+        }
+    });
+    </script>
+
+</body>
+</html>
