@@ -15,3 +15,6 @@ __pycache__/
 # Database
 *.db
 *.sqlite3
+
+# Other
+export_postgres.py
