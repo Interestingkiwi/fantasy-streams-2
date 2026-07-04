@@ -2,7 +2,7 @@
 Routes used by Draft Prep
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 7/3/2026
+Updated - 7/4/2026
 """
 
 
@@ -27,11 +27,10 @@ def get_available_stats():
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = 'final_projections'
-                  AND column_name NOT IN ('id', 'playerId', 'player_name', 'team', 'position');
+                  AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend');
             """)
             result = conn.execute(query)
 
-            # Extract just the column names into a clean list
             stats = [row[0] for row in result]
 
         return jsonify({"status": "success", "stats": stats})

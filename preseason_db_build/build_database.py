@@ -2,7 +2,7 @@
 Runs all DB Scripts to create projection DB.
 Author - Jason Druckenmiller
 Created - 7/2/2026
-Updated - 7/2/2026
+Updated - 7/4/2026
 """
 
 import subprocess
@@ -50,6 +50,7 @@ def build_database():
 
     # 7. Math & Projections
     run_script("calculate_skater_projections.py")
+    run_script("calculate_goalie_projections.py")
 
     # 8. Final Adjustments
     run_script("apply_injury_adjustments.py")

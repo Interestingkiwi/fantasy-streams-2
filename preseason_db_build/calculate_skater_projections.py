@@ -2,7 +2,7 @@
 Projects Skater Data using up to 5 years of NHL Data
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/2/2026
+Updated - 7/4/2026
 """
 
 
@@ -53,15 +53,18 @@ for stat in stats_to_project:
     df_3yr[f'{stat}_pg'] = np.where(df_3yr['gamesPlayed'] > 0, df_3yr[stat] / df_3yr['gamesPlayed'], 0)
 
 
+latest_metadata = df_3yr.sort_values('seasonId', ascending=False).drop_duplicates(subset=['playerId'])[['playerId', 'skaterFullName', 'positionCode', 'teamAbbrevs']]
+
 pivot_df = df_3yr.pivot(
-    index=['playerId', 'skaterFullName', 'positionCode'],
+    index='playerId',
     columns='seasonId',
     values=[f'{s}_pg' for s in stats_to_project]
 )
 
-
 pivot_df.columns = [f"{col[0]}_{col[1]}" for col in pivot_df.columns]
 pivot_df.reset_index(inplace=True)
+
+pivot_df = pd.merge(latest_metadata, pivot_df, on='playerId', how='left')
 
 
 projected_data = []
@@ -71,6 +74,7 @@ for index, row in pivot_df.iterrows():
         'playerId': row['playerId'],
         'skaterFullName': row['skaterFullName'],
         'positionCode': row['positionCode'],
+        'teamAbbrevs': row['teamAbbrevs'],
         'projectedGames': 82
     }
 

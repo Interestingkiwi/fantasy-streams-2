@@ -17,7 +17,7 @@
         .btn-primary:hover { background-color: #1177BB; }
         .hidden { display: none; }
 
-        /* Table row hover effect */
+
         .table-row-hover:hover { background-color: #374151; }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -40,32 +40,9 @@
                 <button class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
             </div>
 
-            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
-                <label class="flex items-center space-x-2 cursor-pointer">
-                    <input type="checkbox" checked class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                    <span class="text-sm font-medium text-gray-300">Goals (G)</span>
-                </label>
-                <label class="flex items-center space-x-2 cursor-pointer">
-                    <input type="checkbox" checked class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                    <span class="text-sm font-medium text-gray-300">Assists (A)</span>
-                </label>
-                <label class="flex items-center space-x-2 cursor-pointer">
-                    <input type="checkbox" checked class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                    <span class="text-sm font-medium text-gray-300">Points (PTS)</span>
-                </label>
-                <label class="flex items-center space-x-2 cursor-pointer">
-                    <input type="checkbox" checked class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                    <span class="text-sm font-medium text-gray-300">Shots (SOG)</span>
-                </label>
-                <label class="flex items-center space-x-2 cursor-pointer">
-                    <input type="checkbox" checked class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                    <span class="text-sm font-medium text-gray-300">Powerplay Pts (PPP)</span>
-                </label>
-                <label class="flex items-center space-x-2 cursor-pointer">
-                    <input type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                    <span class="text-sm font-medium text-gray-300">Hits (HIT)</span>
-                </label>
-                </div>
+            <div id="stat-toggles" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
+                            <span class="text-gray-500 italic col-span-full">Loading available stats...</span>
+                        </div>
         </section>
 
         <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-4">
@@ -108,48 +85,22 @@
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead class="bg-gray-900 border-b border-gray-700">
-                        <tr>
-                            <th class="p-4 w-12 text-center">
-                                <input type="checkbox" id="select-all" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                            </th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Player</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Team</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Pos</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right">G</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right">A</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right">PTS</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right">SOG</th>
-                            <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right">PPP</th>
-                        </tr>
+                      <tr id="table-head-row">
+                          <th class="p-4 w-12 text-center">
+                              <input type="checkbox" id="select-all" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                          </th>
+                          <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Player</th>
+                          <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Team</th>
+                          <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Pos</th>
+                      </tr>
                     </thead>
-                    <tbody class="text-sm divide-y divide-gray-700">
-                        <tr class="table-row-hover transition-colors">
-                            <td class="p-4 text-center">
-                                <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                    <tbody id="table-body" class="text-sm divide-y divide-gray-700">
+                        <tr>
+                            <td colspan="100%" class="p-4 text-center text-gray-500 italic">
+                                Awaiting player data...
                             </td>
-                            <td class="p-4 font-medium text-white">Connor McDavid</td>
-                            <td class="p-4 text-gray-400">EDM</td>
-                            <td class="p-4 text-gray-400">C</td>
-                            <td class="p-4 text-right text-gray-300">45</td>
-                            <td class="p-4 text-right text-gray-300">95</td>
-                            <td class="p-4 text-right font-bold text-emerald-400">140</td>
-                            <td class="p-4 text-right text-gray-300">310</td>
-                            <td class="p-4 text-right text-gray-300">60</td>
                         </tr>
-                        <tr class="table-row-hover transition-colors">
-                            <td class="p-4 text-center">
-                                <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
-                            </td>
-                            <td class="p-4 font-medium text-white">Auston Matthews</td>
-                            <td class="p-4 text-gray-400">TOR</td>
-                            <td class="p-4 text-gray-400">C</td>
-                            <td class="p-4 text-right text-gray-300">60</td>
-                            <td class="p-4 text-right text-gray-300">45</td>
-                            <td class="p-4 text-right font-bold text-emerald-400">105</td>
-                            <td class="p-4 text-right text-gray-300">340</td>
-                            <td class="p-4 text-right text-gray-300">35</td>
-                        </tr>
-                        </tbody>
+                    </tbody>
                 </table>
             </div>
 
@@ -163,6 +114,157 @@
         </section>
 
     </main>
+    <script>
+            function formatStatName(stat) {
+                return stat
+                    .replace('proj_', '')
+                    .replace(/([A-Z])/g, ' $1')
+                    .replace(/^./, str => str.toUpperCase());
+            }
 
+            let selectedStats = [];
+            let playerData = [];
+
+            async function fetchAvailableStats() {
+                try {
+                    const response = await fetch('/draft-prep/api/available-stats');
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        const stats = data.stats;
+                        selectedStats = [...stats];
+                        buildToggles(stats);
+                        buildTableHeaders();
+                    } else {
+                        console.error("Server error:", data.message);
+                        document.getElementById('stat-toggles').innerHTML =
+                            `<span class="text-red-500 col-span-full">Error loading stats: ${data.message}</span>`;
+                    }
+                } catch (error) {
+                    console.error("Fetch failed:", error);
+                }
+            }
+
+            async function fetchPlayerData() {
+                try {
+                    const response = await fetch('/draft-prep/api/projections');
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        playerData = data.data;
+                        buildTableBody();
+                    } else {
+                        console.error("Server error loading players:", data.message);
+                        document.getElementById('table-body').innerHTML =
+                            `<tr><td colspan="100%" class="p-4 text-center text-red-500">Error loading players: ${data.message}</td></tr>`;
+                    }
+                } catch (error) {
+                    console.error("Fetch players failed:", error);
+                }
+            }
+
+            function buildToggles(stats) {
+                const toggleContainer = document.getElementById('stat-toggles');
+                toggleContainer.innerHTML = '';
+
+                stats.forEach(stat => {
+                    const label = document.createElement('label');
+                    label.className = "flex items-center space-x-2 cursor-pointer";
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = "checkbox";
+                    checkbox.value = stat;
+                    checkbox.className = "w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600";
+                    checkbox.checked = true;
+
+                    checkbox.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            selectedStats.push(stat);
+                        } else {
+                            selectedStats = selectedStats.filter(s => s !== stat);
+                        }
+                        buildTableHeaders();
+                        buildTableBody();
+                    });
+
+                    const span = document.createElement('span');
+                    span.className = "text-sm font-medium text-gray-300";
+                    span.textContent = formatStatName(stat);
+
+                    label.appendChild(checkbox);
+                    label.appendChild(span);
+                    toggleContainer.appendChild(label);
+                });
+            }
+
+            function buildTableHeaders() {
+                const headerRow = document.getElementById('table-head-row');
+
+                headerRow.innerHTML = `
+                    <th class="p-4 w-12 text-center">
+                        <input type="checkbox" id="select-all" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                    </th>
+                    <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Player</th>
+                    <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Team</th>
+                    <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Pos</th>
+                `;
+
+                selectedStats.forEach(stat => {
+                    const th = document.createElement('th');
+                    th.className = "p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right";
+                    th.textContent = formatStatName(stat);
+                    headerRow.appendChild(th);
+                });
+            }
+
+            function buildTableBody() {
+                const tableBody = document.getElementById('table-body');
+                tableBody.innerHTML = '';
+
+                const playersToRender = playerData.slice(0, 50);
+
+                if (playersToRender.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="100%" class="p-4 text-center text-gray-500 italic">No players found.</td></tr>`;
+                    return;
+                }
+
+                playersToRender.forEach(player => {
+                    const tr = document.createElement('tr');
+                    tr.className = "table-row-hover transition-colors";
+
+                    const playerName = player.skaterFullName || player.player_name || 'Unknown';
+                    const team = player.teamAbbrev || player.team || 'FA';
+                    const pos = player.positionCode || player.position || 'N/A';
+
+                    let rowHTML = `
+                        <td class="p-4 w-12 text-center">
+                            <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600" value="${player.playerId || ''}">
+                        </td>
+                        <td class="p-4 font-medium text-white">${playerName}</td>
+                        <td class="p-4 text-gray-400">${team}</td>
+                        <td class="p-4 text-gray-400">${pos}</td>
+                    `;
+
+                    selectedStats.forEach(stat => {
+                        let val = player[stat];
+                        if (val === undefined || val === null) val = 0;
+
+                        if (typeof val === 'number' && !Number.isInteger(val)) {
+                            val = val.toFixed(1);
+                        }
+
+                        rowHTML += `<td class="p-4 text-right text-gray-300">${val}</td>`;
+                    });
+
+                    tr.innerHTML = rowHTML;
+                    tableBody.appendChild(tr);
+                });
+            }
+
+            document.addEventListener('DOMContentLoaded', async () => {
+                await fetchAvailableStats();
+                await fetchPlayerData();
+            });
+        </script>
 </body>
 </html>
