@@ -20,20 +20,40 @@ def dashboard():
 
 @draft_bp.route('/api/available-stats')
 def get_available_stats():
-    """Dynamically fetches all stat columns available in the database."""
+    """Dynamically fetches stat columns and separates them by Skater vs Goalie."""
     try:
         with engine.connect() as conn:
+            #1. Get all potential stat columns from the database schema
             query = text("""
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = 'final_projections'
-                  AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend');
+                  AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend', 'peripheralTrend');
             """)
             result = conn.execute(query)
-
             stats = [row[0] for row in result]
 
-        return jsonify({"status": "success", "stats": stats})
+            if not stats:
+                return jsonify({"status": "success", "skater_stats": [], "goalie_stats": []})
+
+            #Dynamically count non-nulls for Goalies ('G') vs Skaters
+            count_selects = ", ".join([f'COUNT("{stat}") AS "{stat}"' for stat in stats])
+
+            #Query for Goalies
+            g_query = text(f'SELECT {count_selects} FROM final_projections WHERE "positionCode" = \'G\'')
+            g_result = dict(conn.execute(g_query).fetchone()._mapping)
+            goalie_stats = [stat for stat in stats if g_result[stat] > 0]
+
+            #Query for Skaters
+            s_query = text(f'SELECT {count_selects} FROM final_projections WHERE "positionCode" != \'G\'')
+            s_result = dict(conn.execute(s_query).fetchone()._mapping)
+            skater_stats = [stat for stat in stats if s_result[stat] > 0]
+
+        return jsonify({
+            "status": "success",
+            "skater_stats": skater_stats,
+            "goalie_stats": goalie_stats
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

@@ -46,37 +46,68 @@
         </section>
 
         <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-4">
+              <div class="flex flex-wrap gap-4 w-full lg:w-auto">
+                  <input type="text" id="search-input" placeholder="Search player name..." class="form-input p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm w-full md:w-48">
 
-            <div class="flex flex-wrap gap-4 w-full lg:w-auto">
-                <input type="text" placeholder="Search player name..." class="form-input p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm w-full md:w-48">
+                  <select id="pos-filter" class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
+                      <option value="">All Positions</option>
+                      <option value="C">Center (C)</option>
+                      <option value="LW">Left Wing (LW)</option>
+                      <option value="RW">Right Wing (RW)</option>
+                      <option value="D">Defense (D)</option>
+                      <option value="G">Goalie (G)</option>
+                  </select>
 
-                <select class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
-                    <option value="">All Positions</option>
-                    <option value="C">Center (C)</option>
-                    <option value="LW">Left Wing (LW)</option>
-                    <option value="RW">Right Wing (RW)</option>
-                    <option value="D">Defense (D)</option>
-                    <option value="G">Goalie (G)</option>
-                </select>
+                  <select id="team-filter" class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
+                      <option value="">All Teams</option>
+                      <option value="ANA">Anaheim Ducks (ANA)</option>
+                      <option value="BOS">Boston Bruins (BOS)</option>
+                      <option value="BUF">Buffalo Sabres (BUF)</option>
+                      <option value="CGY">Calgary Flames (CGY)</option>
+                      <option value="CAR">Carolina Hurricanes (CAR)</option>
+                      <option value="CHI">Chicago Blackhawks (CHI)</option>
+                      <option value="COL">Colorado Avalanche (COL)</option>
+                      <option value="CBJ">Columbus Blue Jackets (CBJ)</option>
+                      <option value="DAL">Dallas Stars (DAL)</option>
+                      <option value="DET">Detroit Red Wings (DET)</option>
+                      <option value="EDM">Edmonton Oilers (EDM)</option>
+                      <option value="FLA">Florida Panthers (FLA)</option>
+                      <option value="LAK">Los Angeles Kings (LAK)</option>
+                      <option value="MIN">Minnesota Wild (MIN)</option>
+                      <option value="MTL">Montreal Canadiens (MTL)</option>
+                      <option value="NSH">Nashville Predators (NSH)</option>
+                      <option value="NJD">New Jersey Devils (NJD)</option>
+                      <option value="NYI">New York Islanders (NYI)</option>
+                      <option value="NYR">New York Rangers (NYR)</option>
+                      <option value="OTT">Ottawa Senators (OTT)</option>
+                      <option value="PHI">Philadelphia Flyers (PHI)</option>
+                      <option value="PIT">Pittsburgh Penguins (PIT)</option>
+                      <option value="SJS">San Jose Sharks (SJS)</option>
+                      <option value="SEA">Seattle Kraken (SEA)</option>
+                      <option value="STL">St. Louis Blues (STL)</option>
+                      <option value="TBL">Tampa Bay Lightning (TBL)</option>
+                      <option value="TOR">Toronto Maple Leafs (TOR)</option>
+                      <option value="UTA">Utah Hockey Club (UTA)</option>
+                      <option value="VAN">Vancouver Canucks (VAN)</option>
+                      <option value="VGK">Vegas Golden Knights (VGK)</option>
+                      <option value="WSH">Washington Capitals (WSH)</option>
+                      <option value="WPG">Winnipeg Jets (WPG)</option>
+                  </select>
+              </div>
 
-                <select class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
-                    <option value="">All Teams</option>
-                    <option value="TOR">TOR</option>
-                    <option value="EDM">EDM</option>
-                    <option value="COL">COL</option>
-                    </select>
-            </div>
+              <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
+                  <button class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Add to Favourites</button>
+                  <button class="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Add to DND</button>
+                  <button class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export List</button>
+              </div>
+          </section>
 
-            <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
-                <button class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
-                    Add to Favourites
-                </button>
-                <button class="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
-                    Add to DND
-                </button>
-                <button class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">
-                    Export List
-                </button>
+          <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
+                <span class="pagination-info">Showing ...</span>
+                <div class="space-x-2">
+                    <button class="btn-prev px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
+                    <button class="btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
+                </div>
             </div>
 
         </section>
@@ -103,12 +134,13 @@
                     </tbody>
                 </table>
             </div>
+          </section>
 
-            <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
-                <span>Showing 1 to 50 of 800 players</span>
+          <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
+                <span class="pagination-info">Showing ...</span>
                 <div class="space-x-2">
-                    <button class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
-                    <button class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
+                    <button class="btn-prev px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
+                    <button class="btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
                 </div>
             </div>
         </section>
@@ -116,152 +148,279 @@
     </main>
     <script>
             function formatStatName(stat) {
-                return stat
-                    .replace('proj_', '')
-                    .replace(/([A-Z])/g, ' $1')
-                    .replace(/^./, str => str.toUpperCase());
+                return stat.replace('proj_', '').replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
             }
 
+            // --- Global State ---
             let selectedStats = [];
             let playerData = [];
+            let filteredData = [];
 
+            let currentPage = 1;
+            const itemsPerPage = 50;
+
+            let currentSortColumn = 'fullName';
+            let currentSortDirection = 'asc';
+
+            // --- API Calls ---
             async function fetchAvailableStats() {
                 try {
                     const response = await fetch('/draft-prep/api/available-stats');
                     const data = await response.json();
-
                     if (data.status === 'success') {
-                        const stats = data.stats;
-                        selectedStats = [...stats];
-                        buildToggles(stats);
+                        selectedStats = [...data.skater_stats, ...data.goalie_stats];
+                        buildToggles(data.skater_stats, data.goalie_stats);
                         buildTableHeaders();
-                    } else {
-                        console.error("Server error:", data.message);
-                        document.getElementById('stat-toggles').innerHTML =
-                            `<span class="text-red-500 col-span-full">Error loading stats: ${data.message}</span>`;
                     }
-                } catch (error) {
-                    console.error("Fetch failed:", error);
-                }
+                } catch (error) { console.error("Fetch failed:", error); }
             }
 
             async function fetchPlayerData() {
                 try {
                     const response = await fetch('/draft-prep/api/projections');
                     const data = await response.json();
-
                     if (data.status === 'success') {
-                        playerData = data.data;
-                        buildTableBody();
-                    } else {
-                        console.error("Server error loading players:", data.message);
-                        document.getElementById('table-body').innerHTML =
-                            `<tr><td colspan="100%" class="p-4 text-center text-red-500">Error loading players: ${data.message}</td></tr>`;
+                        playerData = data.data.map(p => ({
+                            ...p,
+                            fullName: p.fullName || p.player_name || 'Unknown',
+                            teamAbbrevs: p.teamAbbrevs || p.team || 'FA',
+                            positionCode: p.positionCode || p.position || 'N/A',
+                            productionTrend: p.productionTrend || p.Trend || 'N/A',
+                            peripheralTrend: p.peripheralTrend || 'N/A'
+                        }));
+                        applyFiltersAndSort();
                     }
-                } catch (error) {
-                    console.error("Fetch players failed:", error);
-                }
+                } catch (error) { console.error("Fetch players failed:", error); }
             }
 
-            function buildToggles(stats) {
+            // --- Core Engine ---
+            function applyFiltersAndSort() {
+                const searchInput = document.getElementById('search-input').value.toLowerCase();
+                const posFilter = document.getElementById('pos-filter').value;
+                const teamFilter = document.getElementById('team-filter').value;
+
+                // 1. Filter
+                filteredData = playerData.filter(p => {
+                    const matchSearch = p.fullName.toLowerCase().includes(searchInput);
+                    const matchPos = posFilter === '' || p.positionCode.includes(posFilter);
+                    const matchTeam = teamFilter === '' || p.teamAbbrevs.includes(teamFilter);
+                    return matchSearch && matchPos && matchTeam;
+                });
+
+                // 2. Sort
+                filteredData.sort((a, b) => {
+                    let valA = a[currentSortColumn];
+                    let valB = b[currentSortColumn];
+
+                    if (valA === undefined || valA === null) valA = '';
+                    if (valB === undefined || valB === null) valB = '';
+
+                    if (!isNaN(Number(valA)) && valA !== '') valA = Number(valA);
+                    if (!isNaN(Number(valB)) && valB !== '') valB = Number(valB);
+
+                    if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
+                    if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
+                    return 0;
+                });
+
+                buildTableHeaders();
+                buildTableBody();
+            }
+
+            // --- UI Builders ---
+            function buildToggles(skaterStats, goalieStats) {
                 const toggleContainer = document.getElementById('stat-toggles');
                 toggleContainer.innerHTML = '';
+                toggleContainer.className = "flex flex-col gap-6 mt-4";
 
-                stats.forEach(stat => {
-                    const label = document.createElement('label');
-                    label.className = "flex items-center space-x-2 cursor-pointer";
+                function createStatSection(title, stats) {
+                    if (stats.length === 0) return;
+                    const sectionDiv = document.createElement('div');
 
-                    const checkbox = document.createElement('input');
-                    checkbox.type = "checkbox";
-                    checkbox.value = stat;
-                    checkbox.className = "w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600";
-                    checkbox.checked = true;
+                    const titleEl = document.createElement('h3');
+                    titleEl.className = "text-white font-semibold border-b border-gray-600 pb-2 mb-4";
+                    titleEl.textContent = title;
+                    sectionDiv.appendChild(titleEl);
 
-                    checkbox.addEventListener('change', (e) => {
-                        if (e.target.checked) {
-                            selectedStats.push(stat);
-                        } else {
-                            selectedStats = selectedStats.filter(s => s !== stat);
-                        }
-                        buildTableHeaders();
-                        buildTableBody();
+                    const gridDiv = document.createElement('div');
+                    gridDiv.className = "grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4";
+
+                    stats.forEach(stat => {
+                        const label = document.createElement('label');
+                        label.className = "flex items-center space-x-2 cursor-pointer";
+
+                        const checkbox = document.createElement('input');
+                        checkbox.type = "checkbox";
+                        checkbox.value = stat;
+                        checkbox.className = "w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600";
+                        checkbox.checked = true;
+
+                        checkbox.addEventListener('change', (e) => {
+                            if (e.target.checked) selectedStats.push(stat);
+                            else selectedStats = selectedStats.filter(s => s !== stat);
+                            buildTableHeaders();
+                            buildTableBody();
+                        });
+
+                        const span = document.createElement('span');
+                        span.className = "text-sm font-medium text-gray-300";
+                        span.textContent = formatStatName(stat);
+
+                        label.appendChild(checkbox);
+                        label.appendChild(span);
+                        gridDiv.appendChild(label);
                     });
+                    sectionDiv.appendChild(gridDiv);
+                    toggleContainer.appendChild(sectionDiv);
+                }
 
-                    const span = document.createElement('span');
-                    span.className = "text-sm font-medium text-gray-300";
-                    span.textContent = formatStatName(stat);
-
-                    label.appendChild(checkbox);
-                    label.appendChild(span);
-                    toggleContainer.appendChild(label);
-                });
+                createStatSection('Skater Categories', skaterStats);
+                createStatSection('Goalie Categories', goalieStats);
             }
 
             function buildTableHeaders() {
                 const headerRow = document.getElementById('table-head-row');
-
                 headerRow.innerHTML = `
                     <th class="p-4 w-12 text-center">
                         <input type="checkbox" id="select-all" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
                     </th>
-                    <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Player</th>
-                    <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Team</th>
-                    <th class="p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white">Pos</th>
                 `;
 
-                selectedStats.forEach(stat => {
+                // Helper function to build clickable, sortable headers
+                function createHeader(text, sortKey, alignClass = "text-left") {
                     const th = document.createElement('th');
-                    th.className = "p-4 text-sm font-semibold text-gray-300 cursor-pointer hover:text-white text-right";
-                    th.textContent = formatStatName(stat);
+                    th.className = `p-4 text-sm font-semibold cursor-pointer hover:text-white select-none ${alignClass}`;
+
+                    let sortIcon = '';
+                    if (currentSortColumn === sortKey) {
+                        sortIcon = currentSortDirection === 'asc' ? ' ↑' : ' ↓';
+                        th.classList.add('text-blue-400');
+                    } else {
+                        th.classList.add('text-gray-300');
+                    }
+
+                    th.textContent = text + sortIcon;
+                    th.addEventListener('click', () => {
+                        if (currentSortColumn === sortKey) {
+                            currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+                        } else {
+                            currentSortColumn = sortKey;
+                            currentSortDirection = 'desc';
+                        }
+                        applyFiltersAndSort();
+                    });
                     headerRow.appendChild(th);
+                }
+
+                createHeader('Player', 'fullName');
+                createHeader('Team', 'teamAbbrevs');
+                createHeader('Pos', 'positionCode');
+
+                selectedStats.forEach(stat => {
+                    createHeader(formatStatName(stat), stat, "text-right");
                 });
+
+                createHeader('Prod Trend', 'productionTrend', "text-right");
+                createHeader('Periph Trend', 'peripheralTrend', "text-right");
             }
 
             function buildTableBody() {
                 const tableBody = document.getElementById('table-body');
                 tableBody.innerHTML = '';
 
-                const playersToRender = playerData.slice(0, 50);
+                // Pagination Math
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const endIndex = startIndex + itemsPerPage;
+                const playersToRender = filteredData.slice(startIndex, endIndex);
 
-                if (playersToRender.length === 0) {
-                    tableBody.innerHTML = `<tr><td colspan="100%" class="p-4 text-center text-gray-500 italic">No players found.</td></tr>`;
-                    return;
+                // Update Pagination UI
+                const paginationInfos = document.querySelectorAll('.pagination-info');
+                const btnPrevs = document.querySelectorAll('.btn-prev');
+                const btnNexts = document.querySelectorAll('.btn-next');
+                const maxPage = Math.ceil(filteredData.length / itemsPerPage);
+
+                let infoText = '';
+                if (filteredData.length === 0) {
+                    infoText = 'Showing 0 players';
+                    tableBody.innerHTML = `<tr><td colspan="100%" class="p-4 text-center text-gray-500 italic">No players match your search criteria.</td></tr>`;
+                } else {
+                    const displayEnd = Math.min(endIndex, filteredData.length);
+                    infoText = `Showing ${startIndex + 1} to ${displayEnd} of ${filteredData.length} players`;
                 }
+
+                // Update text for all info spans
+                paginationInfos.forEach(info => info.textContent = infoText);
+
+                // Toggle Button States for all Previous buttons
+                const prevDisabled = currentPage === 1;
+                const prevClass = prevDisabled ? "btn-prev px-3 py-1 bg-gray-800 text-gray-600 rounded cursor-not-allowed" : "btn-prev px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white";
+                btnPrevs.forEach(btn => {
+                    btn.disabled = prevDisabled;
+                    btn.className = prevClass;
+                });
+
+                // Toggle Button States for all Next buttons
+                const nextDisabled = currentPage >= maxPage || maxPage === 0;
+                const nextClass = nextDisabled ? "btn-next px-3 py-1 bg-gray-800 text-gray-600 rounded cursor-not-allowed" : "btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white";
+                btnNexts.forEach(btn => {
+                    btn.disabled = nextDisabled;
+                    btn.className = nextClass;
+                });
+
 
                 playersToRender.forEach(player => {
                     const tr = document.createElement('tr');
                     tr.className = "table-row-hover transition-colors";
 
-                    const playerName = player.skaterFullName || player.player_name || 'Unknown';
-                    const team = player.teamAbbrev || player.team || 'FA';
-                    const pos = player.positionCode || player.position || 'N/A';
-
                     let rowHTML = `
                         <td class="p-4 w-12 text-center">
                             <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600" value="${player.playerId || ''}">
                         </td>
-                        <td class="p-4 font-medium text-white">${playerName}</td>
-                        <td class="p-4 text-gray-400">${team}</td>
-                        <td class="p-4 text-gray-400">${pos}</td>
+                        <td class="p-4 font-medium text-white">${player.fullName}</td>
+                        <td class="p-4 text-gray-400">${player.teamAbbrevs}</td>
+                        <td class="p-4 text-gray-400">${player.positionCode}</td>
                     `;
 
                     selectedStats.forEach(stat => {
                         let val = player[stat];
                         if (val === undefined || val === null) val = 0;
-
-                        if (typeof val === 'number' && !Number.isInteger(val)) {
-                            val = val.toFixed(1);
-                        }
-
+                        if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(1);
                         rowHTML += `<td class="p-4 text-right text-gray-300">${val}</td>`;
                     });
+
+                    rowHTML += `
+                        <td class="p-4 text-right text-gray-400">${player.productionTrend}</td>
+                        <td class="p-4 text-right text-gray-400">${player.peripheralTrend}</td>
+                    `;
 
                     tr.innerHTML = rowHTML;
                     tableBody.appendChild(tr);
                 });
             }
 
+            // --- Event Listeners ---
             document.addEventListener('DOMContentLoaded', async () => {
+
+                // Wire up Filters (resetting to page 1 on search/filter)
+                document.getElementById('search-input').addEventListener('input', () => { currentPage = 1; applyFiltersAndSort(); });
+                document.getElementById('pos-filter').addEventListener('change', () => { currentPage = 1; applyFiltersAndSort(); });
+                document.getElementById('team-filter').addEventListener('change', () => { currentPage = 1; applyFiltersAndSort(); });
+
+                // Wire up Pagination
+                document.querySelectorAll('.btn-prev').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (currentPage > 1) { currentPage--; buildTableBody(); }
+                    });
+                });
+
+                document.querySelectorAll('.btn-next').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const maxPage = Math.ceil(filteredData.length / itemsPerPage);
+                        if (currentPage < maxPage) { currentPage++; buildTableBody(); }
+                    });
+                });
+
+
                 await fetchAvailableStats();
                 await fetchPlayerData();
             });
