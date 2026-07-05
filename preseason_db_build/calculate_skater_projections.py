@@ -2,9 +2,8 @@
 Projects Skater Data using up to 5 years of NHL Data
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/4/2026
+Updated - 7/5/2026
 """
-
 
 import pandas as pd
 from db_config import engine
@@ -14,7 +13,8 @@ def calculate_trend(y1_pts_pg, y2_pts_pg):
     """
     Calculates the production trend by comparing Last Year (Y1) to Two Years Ago (Y2).
     """
-    if pd.isna(y2_pts_pg) or y2_pts_pg == 0:
+    # Safely handle missing seasons so it doesn't crash on NaNs
+    if pd.isna(y1_pts_pg) or pd.isna(y2_pts_pg) or y2_pts_pg == 0:
         return "Not Enough Data"
 
     change = (y1_pts_pg - y2_pts_pg) / y2_pts_pg
@@ -29,7 +29,7 @@ def calculate_trend(y1_pts_pg, y2_pts_pg):
 def calculate_peripheral_trend(row, y1, y2):
     """
     Evaluates peripheral stats (Hits, Blocks, FOW, Shots) for trends.
-    Uses volume thresholds to filter out noise (e.g., a winger winning 2 faceoffs instead of 1).
+    Uses volume thresholds to filter out noise.
     """
     thresholds = {
         'hits': 1.0,
@@ -80,11 +80,10 @@ print(f"Target Seasons: Y1={y1} (60%), Y2={y2} (30%), Y3={y3} (10%)")
 df_3yr = df[df['seasonId'].isin([y1, y2, y3])].copy()
 df_3yr = df_3yr.drop_duplicates(subset=['playerId', 'seasonId'], keep='first')
 
-# --- 40-GAME THRESHOLD CHECK ---
+# --- 40-GAME GLOBAL THRESHOLD CHECK ---
 gp_totals = df_3yr.groupby('playerId')['gamesPlayed'].sum().reset_index()
 valid_skaters = gp_totals[gp_totals['gamesPlayed'] >= 40]['playerId']
 df_3yr = df_3yr[df_3yr['playerId'].isin(valid_skaters)]
-# -------------------------------
 
 stats_to_project = [
     'goals', 'assists', 'points', 'plusMinus', 'penaltyMinutes',
@@ -92,8 +91,13 @@ stats_to_project = [
     'hits', 'blockedShots', 'totalFaceoffs', 'totalFaceoffWins', 'totalFaceoffLosses'
 ]
 
+# --- PER-SEASON OUTLIER CHECK ---
+MIN_GAMES_PER_SEASON = 10
+
 for stat in stats_to_project:
-    df_3yr[f'{stat}_pg'] = np.where(df_3yr['gamesPlayed'] > 0, df_3yr[stat] / df_3yr['gamesPlayed'], 0)
+    df_3yr[f'{stat}_pg'] = np.where(df_3yr['gamesPlayed'] >= MIN_GAMES_PER_SEASON,
+                                    df_3yr[stat] / df_3yr['gamesPlayed'],
+                                    np.nan)
 
 latest_metadata = df_3yr.sort_values('seasonId', ascending=False).drop_duplicates(subset=['playerId'])[['playerId', 'skaterFullName', 'positionCode', 'teamAbbrevs']]
 
@@ -105,7 +109,6 @@ pivot_df = df_3yr.pivot(
 
 pivot_df.columns = [f"{col[0]}_{col[1]}" for col in pivot_df.columns]
 pivot_df.reset_index(inplace=True)
-
 pivot_df = pd.merge(latest_metadata, pivot_df, on='playerId', how='left')
 
 projected_data = []
@@ -119,7 +122,6 @@ for index, row in pivot_df.iterrows():
         'projectedGames': 82
     }
 
-    # Derive Trends
     y1_pts = row.get(f"points_pg_{y1}", np.nan)
     y2_pts = row.get(f"points_pg_{y2}", np.nan)
 
