@@ -37,7 +37,7 @@
                     <h2 class="text-xl font-semibold text-white">League Settings</h2>
                     <p class="text-gray-400 text-sm mt-1">Select the scoring categories used in your league to adjust projections.</p>
                 </div>
-                <button class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
+                <button id="applySettingsBtn" class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
             </div>
 
             <div id="stat-toggles" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
@@ -312,6 +312,8 @@
                     headerRow.appendChild(th);
                 }
 
+                // Add the Rank column dynamically!
+                createHeader('Rank', 'overall_rank', 'text-center');
                 createHeader('Player', 'fullName');
                 createHeader('Team', 'teamAbbrevs');
                 createHeader('Pos', 'positionCode');
@@ -372,10 +374,12 @@
                     const tr = document.createElement('tr');
                     tr.className = "table-row-hover transition-colors";
 
+                    // Rank logic
                     let rowHTML = `
                         <td class="p-4 w-12 text-center">
                             <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600" value="${player.playerId || ''}">
                         </td>
+                        <td class="p-4 text-center font-bold text-blue-400">${player.overall_rank || '-'}</td>
                         <td class="p-4 font-medium text-white">${player.fullName}</td>
                         <td class="p-4 text-gray-400">${player.teamAbbrevs}</td>
                         <td class="p-4 text-gray-400">${player.positionCode}</td>
@@ -420,6 +424,52 @@
                     });
                 });
 
+                // Wire up the "Apply Settings" button to run the ranking engine
+                document.getElementById('applySettingsBtn').addEventListener('click', async () => {
+                    const activeStats = {};
+
+                    const checkboxes = document.querySelectorAll('#stat-toggles input[type="checkbox"]:checked');
+
+                    checkboxes.forEach(box => {
+                        const statName = box.value;
+
+                        // Default polarity is 1 (positive).
+                        let polarity = 1;
+                        if (statName === 'proj_goalsAgainstAverage', 'proj_totalFaceoffLosses') polarity = -1;
+
+                        activeStats[statName] = polarity;
+                    });
+
+                    try {
+                        const response = await fetch('/draft-prep/api/rank-players', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ active_stats: activeStats })
+                        });
+
+                        const rankedData = await response.json();
+
+                        if (Array.isArray(rankedData)) {
+                            playerData = rankedData.map(p => ({
+                                ...p,
+                                fullName: p.fullName || p.player_name || 'Unknown',
+                                teamAbbrevs: p.teamAbbrevs || p.team || 'FA',
+                                positionCode: p.positionCode || p.position || 'N/A',
+                                productionTrend: p.productionTrend || p.Trend || 'N/A',
+                                peripheralTrend: p.peripheralTrend || 'N/A'
+                            }));
+
+                            // Automatically sort the UI by the 'overall_rank' column
+                            currentSortColumn = 'overall_rank';
+                            currentSortDirection = 'asc';
+                            currentPage = 1;
+
+                            applyFiltersAndSort();
+                        }
+                    } catch (error) {
+                        console.error("Ranking fetch failed:", error);
+                    }
+                });
 
                 await fetchAvailableStats();
                 await fetchPlayerData();
