@@ -10,6 +10,45 @@ import pandas as pd
 import math
 
 
+def calculate_player_ranks(players_data, active_stats, league_mode='categories', goalie_stat_keywords=[]):
+    """
+    Routes the request to the correct math engine based on league mode.
+    """
+
+    if league_mode == 'points':
+        return calculate_points_ranks(players_data, active_stats)
+    else:
+        return calculate_capped_z_scores(players_data, active_stats, goalie_stat_keywords)
+
+def calculate_points_ranks(players_data, active_stats):
+    """
+    Calculates Fantasy Points Per Game for Points Leagues.
+    """
+    for player in players_data:
+        total_fp = 0
+
+        for stat, weight in active_stats.items():
+            val = player.get(stat)
+            if val is not None:
+                try:
+                    total_fp += float(val) * float(weight)
+                except ValueError:
+                    pass
+
+        games = float(player.get('projectedGames', 1) or 1)
+        if games <= 0:
+            games = 1
+
+        fpg = total_fp / games
+        player['fantasy_points_per_game'] = round(fpg, 2)
+
+    players_data.sort(key=lambda x: x.get('fantasy_points_per_game', 0), reverse=True)
+
+    for index, player in enumerate(players_data):
+        player['overall_rank'] = index + 1
+
+    return players_data
+
 def calculate_capped_z_scores(players_list, active_stats, goalie_stat_keywords):
     """
     Ranks players based on Asymmetric Capped Z-Scores with Goalie Normalization.
@@ -21,7 +60,7 @@ def calculate_capped_z_scores(players_list, active_stats, goalie_stat_keywords):
     baseline_df = df[df['projectedGames'] >= 40].copy()
     df['total_value'] = 0.0
 
-    # 1. Define our Smart Categories
+    # 1. Define Stat Categories
     peripheral_stats = ['proj_hits', 'proj_blockedShots', 'proj_penaltyMinutes', 'proj_plusMinus',]
     volume_stats = ['proj_shots', 'proj_totalFaceoffs', 'proj_totalFaceoffWins', 'proj_totalFaceoffLosses', 'proj_saves', 'proj_gamesStarted', ]
 

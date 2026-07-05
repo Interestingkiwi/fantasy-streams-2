@@ -8,7 +8,7 @@ Updated - 7/5/2026
 from flask import Blueprint, render_template, jsonify, request
 from sqlalchemy import text
 from preseason_db_build.db_config import engine
-from ranking_utils import calculate_capped_z_scores
+from ranking_utils import calculate_player_ranks
 
 # Create the Blueprint with a URL prefix
 draft_bp = Blueprint('draft', __name__, url_prefix='/draft-prep')
@@ -83,6 +83,8 @@ def rank_players():
     try:
         user_settings = request.json
         active_stats = user_settings.get('active_stats', {})
+        
+        league_mode = user_settings.get('league_mode', 'categories')
 
         with engine.connect() as conn:
             skater_stats, goalie_stats = get_stat_mappings(conn)
@@ -91,7 +93,12 @@ def rank_players():
             result = conn.execute(query)
             players_data = [dict(row._mapping) for row in result]
 
-        ranked_players = calculate_capped_z_scores(players_data, active_stats, goalie_stats)
+            ranked_players = calculate_player_ranks(
+                players_data=players_data,
+                active_stats=active_stats,
+                league_mode=league_mode,
+                goalie_stat_keywords=goalie_stats
+            )
 
         return jsonify(ranked_players)
 

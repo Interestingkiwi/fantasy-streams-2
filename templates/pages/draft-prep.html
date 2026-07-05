@@ -19,6 +19,11 @@
 
 
         .table-row-hover:hover { background-color: #374151; }
+
+        /*Pill Toggle Animations */
+        input:checked ~ .dot { transform: translateX(100%); }
+        #leagueModeToggle:checked ~ .block { background-color: #8B5CF6; }
+        #pimPolarityToggle:checked ~ .dot { transform: translateX(100%); }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 </head>
@@ -32,17 +37,30 @@
     <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
 
         <section class="bg-gray-800 p-6 rounded-lg shadow-xl border border-gray-700">
-            <div class="flex justify-between items-end mb-4 border-b border-gray-700 pb-2">
-                <div>
-                    <h2 class="text-xl font-semibold text-white">League Settings</h2>
-                    <p class="text-gray-400 text-sm mt-1">Select the scoring categories used in your league to adjust projections.</p>
-                </div>
-                <button id="applySettingsBtn" class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
-            </div>
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 border-b border-gray-700 pb-4 gap-4">
+              <div>
+                  <h2 class="text-xl font-semibold text-white">League Settings</h2>
+                  <p class="text-gray-400 text-sm mt-1">Select the scoring categories used in your league to adjust projections.</p>
 
-            <div id="stat-toggles" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
-                            <span class="text-gray-500 italic col-span-full">Loading available stats...</span>
-                        </div>
+                  <div class="flex items-center space-x-3 mt-3">
+                      <span class="text-sm font-medium text-gray-300">League Structure:</span>
+                      <label class="flex items-center cursor-pointer">
+                          <div class="relative">
+                              <input type="checkbox" id="leagueModeToggle" class="sr-only">
+                              <div class="block bg-blue-600 w-10 h-6 rounded-full transition-colors duration-300"></div>
+                              <div class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform duration-300"></div>
+                          </div>
+                          <span id="leagueModeLabel" class="ml-3 text-sm font-bold text-blue-400">Categories</span>
+                      </label>
+                  </div>
+              </div>
+              <button id="applySettingsBtn" class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
+          </div>
+
+          <div id="stat-toggles" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
+              <span class="text-gray-500 italic col-span-full">Loading available stats...</span>
+          </div>
+
         </section>
 
         <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-4">
@@ -162,13 +180,20 @@
             let currentSortColumn = 'fullName';
             let currentSortDirection = 'asc';
 
+            let leagueMode = 'categories';
+            let pimPolarity = 1;
+
+            const pointsOnlyStats = ['proj_totalFaceoffLosses'];
+            const categoryOnlyStats = ['proj_goalsAgainstAverage', 'proj_savePct', 'proj_shootingPct', 'proj_winPct', 'proj_startingPct'];
+            const negativeStats = ['proj_goalsAgainstAverage', 'proj_totalFaceoffLosses', 'proj_losses', 'proj_goalsAgainst'];
+
             // --- API Calls ---
             async function fetchAvailableStats() {
                 try {
                     const response = await fetch('/draft-prep/api/available-stats');
                     const data = await response.json();
                     if (data.status === 'success') {
-                        selectedStats = [...data.skater_stats, ...data.goalie_stats];
+                        selectedStats = [];
                         buildToggles(data.skater_stats, data.goalie_stats);
                         buildTableHeaders();
                     }
@@ -228,6 +253,7 @@
             }
 
             // --- UI Builders ---
+
             function buildToggles(skaterStats, goalieStats) {
                 const toggleContainer = document.getElementById('stat-toggles');
                 toggleContainer.innerHTML = '';
@@ -243,35 +269,142 @@
                     sectionDiv.appendChild(titleEl);
 
                     const gridDiv = document.createElement('div');
-                    gridDiv.className = "grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4";
+                    gridDiv.className = "grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 items-start";
 
                     stats.forEach(stat => {
-                        const label = document.createElement('label');
-                        label.className = "flex items-center space-x-2 cursor-pointer";
+                        const wrapper = document.createElement('div');
+                        wrapper.className = "flex flex-col gap-1";
 
+                        const label = document.createElement('label');
+                        label.className = "flex items-center space-x-2 cursor-pointer h-6"; // Fixed height keeps UI stable
+
+                        // --- 1. Categories Checkbox ---
                         const checkbox = document.createElement('input');
                         checkbox.type = "checkbox";
                         checkbox.value = stat;
-                        checkbox.className = "w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600";
-                        checkbox.checked = true;
+                        checkbox.className = "stat-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600";
+                        checkbox.checked = false;
 
-                        checkbox.addEventListener('change', (e) => {
-                            if (e.target.checked) selectedStats.push(stat);
-                            else selectedStats = selectedStats.filter(s => s !== stat);
-                            buildTableHeaders();
-                            buildTableBody();
-                        });
+                        // --- 2. Points Number Input ---
+                        const numberInput = document.createElement('input');
+                        numberInput.type = "number";
+                        numberInput.step = "0.1";
+                        numberInput.value = "0";
+                        numberInput.className = "stat-weight w-16 text-center px-1 py-0.5 rounded border border-gray-600 bg-gray-700 text-blue-400 focus:ring-blue-500 text-sm outline-none hidden";
+                        numberInput.dataset.stat = stat;
+
+                        // Handle Points-Only Stats
+                        if (pointsOnlyStats.includes(stat)) {
+                            wrapper.classList.add('points-only-stat');
+                            if (leagueMode === 'categories') {
+                                wrapper.classList.add('hidden');
+                                checkbox.checked = false;
+                                numberInput.value = "0";
+                                selectedStats = selectedStats.filter(s => s !== stat);
+                            }
+                        }
+
+                        // Handle Category-Only Stats
+                        if (categoryOnlyStats.includes(stat)) {
+                            wrapper.classList.add('category-only-stat');
+                            if (leagueMode === 'points') {
+                                wrapper.classList.add('hidden');
+                                checkbox.checked = false;
+                                numberInput.value = "0";
+                                selectedStats = selectedStats.filter(s => s !== stat);
+                            }
+                        }
 
                         const span = document.createElement('span');
-                        span.className = "text-sm font-medium text-gray-300";
+                        span.className = "text-sm font-medium text-gray-300 select-none";
                         span.textContent = formatStatName(stat);
 
                         label.appendChild(checkbox);
+                        label.appendChild(numberInput);
                         label.appendChild(span);
-                        gridDiv.appendChild(label);
+                        wrapper.appendChild(label);
+
+                        // --- Special PIM Polarity Toggle Injection ---
+                        if (stat === 'proj_penaltyMinutes') {
+                            const pimToggleWrapper = document.createElement('div');
+                            pimToggleWrapper.id = "pim-toggle-wrapper";
+                            pimToggleWrapper.className = "flex items-center space-x-2 ml-6 mt-1";
+
+                            pimToggleWrapper.style.display = 'none';
+
+                            pimToggleWrapper.innerHTML = `
+                                <label class="flex items-center cursor-pointer">
+                                    <div class="relative">
+                                        <input type="checkbox" id="pimPolarityToggle" class="sr-only">
+                                        <div class="block bg-emerald-600 w-8 h-4 rounded-full transition-colors duration-300" id="pimTrack"></div>
+                                        <div class="dot absolute left-1 top-0.5 bg-white w-3 h-3 rounded-full transition-transform duration-300"></div>
+                                    </div>
+                                    <span id="pimPolarityLabel" class="ml-2 text-xs font-medium text-emerald-400">Positive Stat</span>
+                                </label>
+                            `;
+                            wrapper.appendChild(pimToggleWrapper);
+                        }
+
+                        // --- Event Listeners for Live Table Updates ---
+
+                        // Categories Event
+                        checkbox.addEventListener('change', (e) => {
+                            if (leagueMode === 'categories') {
+                                if (e.target.checked) {
+                                    if (!selectedStats.includes(stat)) selectedStats.push(stat);
+                                } else {
+                                    selectedStats = selectedStats.filter(s => s !== stat);
+                                }
+
+                                if (stat === 'proj_penaltyMinutes') {
+                                    const pimWrapper = document.getElementById('pim-toggle-wrapper');
+                                    if (pimWrapper) pimWrapper.style.display = e.target.checked ? 'flex' : 'none';
+                                }
+                                buildTableHeaders();
+                                buildTableBody();
+                            }
+                        });
+
+                        // Points Event (0 hides the column, anything else shows it)
+                        numberInput.addEventListener('input', (e) => {
+                            if (leagueMode === 'points') {
+                                const val = parseFloat(e.target.value);
+                                if (!isNaN(val) && val !== 0) {
+                                    if (!selectedStats.includes(stat)) selectedStats.push(stat);
+                                } else {
+                                    selectedStats = selectedStats.filter(s => s !== stat);
+                                }
+                                buildTableHeaders();
+                                buildTableBody();
+                            }
+                        });
+
+                        gridDiv.appendChild(wrapper);
                     });
                     sectionDiv.appendChild(gridDiv);
                     toggleContainer.appendChild(sectionDiv);
+
+                    // Wire up the PIM pill toggle logic
+                    if (stats.includes('proj_penaltyMinutes')) {
+                        const pimToggle = document.getElementById('pimPolarityToggle');
+                        if (pimToggle) {
+                            pimToggle.addEventListener('change', (e) => {
+                                pimPolarity = e.target.checked ? -1 : 1;
+                                const label = document.getElementById('pimPolarityLabel');
+                                const track = document.getElementById('pimTrack');
+
+                                if (pimPolarity === -1) {
+                                    label.textContent = "Negative Stat";
+                                    label.className = "ml-2 text-xs font-medium text-red-400";
+                                    track.classList.replace('bg-emerald-600', 'bg-red-600');
+                                } else {
+                                    label.textContent = "Positive Stat";
+                                    label.className = "ml-2 text-xs font-medium text-emerald-400";
+                                    track.classList.replace('bg-red-600', 'bg-emerald-600');
+                                }
+                            });
+                        }
+                    }
                 }
 
                 createStatSection('Skater Categories', skaterStats);
@@ -317,6 +450,11 @@
                 createHeader('Player', 'fullName');
                 createHeader('Team', 'teamAbbrevs');
                 createHeader('Pos', 'positionCode');
+
+                // Inject Fantasy Points per Game column if in points mode
+                if (leagueMode === 'points') {
+                    createHeader('FP/G', 'fantasy_points_per_game', 'text-right text-purple-400');
+                }
 
                 selectedStats.forEach(stat => {
                     createHeader(formatStatName(stat), stat, "text-right");
@@ -385,6 +523,12 @@
                         <td class="p-4 text-gray-400">${player.positionCode}</td>
                     `;
 
+                    // Inject Fantasy Points per Game data if in points mode
+                    if (leagueMode === 'points') {
+                        let fpg = player.fantasy_points_per_game !== undefined ? player.fantasy_points_per_game : '-';
+                        rowHTML += `<td class="p-4 text-right font-bold text-purple-400">${fpg}</td>`;
+                    }
+
                     selectedStats.forEach(stat => {
                         let val = player[stat];
                         if (val === undefined || val === null) val = 0;
@@ -405,46 +549,131 @@
             // --- Event Listeners ---
             document.addEventListener('DOMContentLoaded', async () => {
 
-                // Wire up Filters (resetting to page 1 on search/filter)
-                document.getElementById('search-input').addEventListener('input', () => { currentPage = 1; applyFiltersAndSort(); });
-                document.getElementById('pos-filter').addEventListener('change', () => { currentPage = 1; applyFiltersAndSort(); });
-                document.getElementById('team-filter').addEventListener('change', () => { currentPage = 1; applyFiltersAndSort(); });
+              // --- Wire up the League Mode Toggle ---
+                document.getElementById('leagueModeToggle').addEventListener('change', (e) => {
+                    leagueMode = e.target.checked ? 'points' : 'categories';
+                    const label = document.getElementById('leagueModeLabel');
 
-                // Wire up Pagination
-                document.querySelectorAll('.btn-prev').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        if (currentPage > 1) { currentPage--; buildTableBody(); }
-                    });
+                    const pointsOnlyElements = document.querySelectorAll('.points-only-stat');
+                    const categoryOnlyElements = document.querySelectorAll('.category-only-stat');
+                    const allCheckboxes = document.querySelectorAll('.stat-checkbox');
+                    const allNumberInputs = document.querySelectorAll('.stat-weight');
+                    const pimToggle = document.getElementById('pim-toggle-wrapper');
+
+                    if (leagueMode === 'points') {
+                        label.textContent = 'Points Based';
+                        label.classList.replace('text-blue-400', 'text-purple-400');
+
+                        pointsOnlyElements.forEach(el => el.classList.remove('hidden'));
+
+                        // Hide category-specific stats and zero them out
+                        categoryOnlyElements.forEach(el => {
+                            el.classList.add('hidden');
+                            const ni = el.querySelector('input[type="number"]');
+                            if (ni) {
+                                ni.value = "0";
+                                selectedStats = selectedStats.filter(s => s !== ni.dataset.stat);
+                            }
+                        });
+
+                        allCheckboxes.forEach(cb => cb.classList.add('hidden'));
+                        allNumberInputs.forEach(ni => {
+                            ni.classList.remove('hidden');
+                            const stat = ni.dataset.stat;
+                            if (!categoryOnlyStats.includes(stat)) {
+                                const val = parseFloat(ni.value);
+                                if (!isNaN(val) && val !== 0) {
+                                    if (!selectedStats.includes(stat)) selectedStats.push(stat);
+                                } else {
+                                    selectedStats = selectedStats.filter(s => s !== stat);
+                                }
+                            }
+                        });
+
+                        if (pimToggle) pimToggle.style.display = 'none';
+
+                    } else {
+                        label.textContent = 'Categories';
+                        label.classList.replace('text-purple-400', 'text-blue-400');
+
+                        // Hide points-specific stats and uncheck them
+                        pointsOnlyElements.forEach(el => {
+                            el.classList.add('hidden');
+                            const cb = el.querySelector('input[type="checkbox"]');
+                            if (cb) {
+                                cb.checked = false;
+                                selectedStats = selectedStats.filter(s => s !== cb.value);
+                            }
+                        });
+
+                        categoryOnlyElements.forEach(el => el.classList.remove('hidden'));
+
+                        allNumberInputs.forEach(ni => ni.classList.add('hidden'));
+                        allCheckboxes.forEach(cb => {
+                            cb.classList.remove('hidden');
+                            const stat = cb.value;
+                            if (!pointsOnlyStats.includes(stat)) {
+                                if (cb.checked) {
+                                    if (!selectedStats.includes(stat)) selectedStats.push(stat);
+                                } else {
+                                    selectedStats = selectedStats.filter(s => s !== stat);
+                                }
+                            }
+                        });
+
+                        if (pimToggle) {
+                            const pimCheckbox = document.querySelector('input.stat-checkbox[value="proj_penaltyMinutes"]');
+                            pimToggle.style.display = (pimCheckbox && pimCheckbox.checked) ? 'flex' : 'none';
+                        }
+                    }
+
+                    buildTableHeaders();
+                    buildTableBody();
                 });
 
-                document.querySelectorAll('.btn-next').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        const maxPage = Math.ceil(filteredData.length / itemsPerPage);
-                        if (currentPage < maxPage) { currentPage++; buildTableBody(); }
-                    });
-                });
 
-                // Wire up the "Apply Settings" button to run the ranking engine
+                // --- Wire up the "Apply Settings" button ---
                 document.getElementById('applySettingsBtn').addEventListener('click', async () => {
                     const activeStats = {};
 
-                    const checkboxes = document.querySelectorAll('#stat-toggles input[type="checkbox"]:checked');
+                    if (leagueMode === 'categories') {
+                        // Gather checked boxes
+                        const checkboxes = document.querySelectorAll('#stat-toggles input.stat-checkbox:checked');
+                        checkboxes.forEach(box => {
+                            const statName = box.value;
+                            let polarity = 1;
 
-                    checkboxes.forEach(box => {
-                        const statName = box.value;
+                            if (negativeStats.includes(statName)) {
+                                polarity = -1;
+                            } else if (statName === 'proj_penaltyMinutes') {
+                                polarity = pimPolarity;
+                            }
+                            activeStats[statName] = polarity;
+                        });
 
-                        // Default polarity is 1 (positive).
-                        let polarity = 1;
-                        if (statName === 'proj_goalsAgainstAverage', 'proj_totalFaceoffLosses') polarity = -1;
+                    } else {
+                        // Gather non-zero number inputs
+                        const numberInputs = document.querySelectorAll('#stat-toggles input.stat-weight');
+                        numberInputs.forEach(input => {
+                            const statName = input.dataset.stat;
+                            const weight = parseFloat(input.value);
 
-                        activeStats[statName] = polarity;
-                    });
+                            if (!isNaN(weight) && weight !== 0) {
+                                activeStats[statName] = weight;
+                            }
+                        });
+                    }
 
                     try {
+                        const payload = {
+                            active_stats: activeStats,
+                            league_mode: leagueMode
+                        };
+
                         const response = await fetch('/draft-prep/api/rank-players', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ active_stats: activeStats })
+                            body: JSON.stringify(payload)
                         });
 
                         const rankedData = await response.json();
