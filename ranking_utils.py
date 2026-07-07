@@ -2,7 +2,7 @@
 Calculates Player Ranks
 Author - Jason Druckenmiller
 Created - 7/5/2026
-Updated - 7/5/2026
+Updated - 7/6/2026
 """
 
 
@@ -64,7 +64,8 @@ def calculate_capped_z_scores(players_list, active_stats, goalie_stat_keywords):
     peripheral_stats = ['proj_hits', 'proj_blockedShots', 'proj_penaltyMinutes', 'proj_plusMinus',]
     volume_stats = ['proj_shots', 'proj_totalFaceoffs', 'proj_totalFaceoffWins', 'proj_totalFaceoffLosses', 'proj_saves', 'proj_gamesStarted', ]
 
-    skater_cats_count = 0
+    #Skater starts at 1 to boost goalies ranking as they fill a niche role but getting pushed down due to overall effectiveness.
+    skater_cats_count = 1
     goalie_cats_count = 0
 
     # 2. Loop through active stats, calculate Z-Scores, and count categories

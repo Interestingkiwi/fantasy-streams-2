@@ -2,7 +2,7 @@
 Projects Goalie Data using up to 5 years of NHL Data
 Author - Jason Druckenmiller
 Created - 7/4/2026
-Updated - 7/5/2026
+Updated - 7/6/2026
 """
 
 import pandas as pd
@@ -100,7 +100,7 @@ for pid in df_3yr['playerId'].unique():
             weight = [0.6, 0.3, 0.1][i]
             year_data = player_data[player_data['seasonId'] == year]
 
-            if not year_data.empty and year_data['gamesPlayed'].values[0] >= MIN_GAMES_PER_SEASON and pd.notna(year_data[stat].values[0]):
+            if not year_data.empty and pd.notna(year_data[stat].values[0]):
                 weighted_sum += (year_data[stat].values[0] * weight)
                 total_weight += weight
 

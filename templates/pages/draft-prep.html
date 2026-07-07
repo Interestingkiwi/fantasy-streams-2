@@ -114,11 +114,13 @@
               </div>
 
               <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
-                  <button class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Add to Favourites</button>
-                  <button class="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Add to DND</button>
-                  <button class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export List</button>
+                  <button id="btn-fav" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Favourite</button>
+                  <button id="btn-sleeper" class="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Sleeper</button>
+                  <button id="btn-dnd" class="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">DND</button>
+                  <button id="btn-clear-tag" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Clear Tag</button>
+                  <button id="btn-export" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export List</button>
               </div>
-          </section>
+            </section>
 
           <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
                 <span class="pagination-info">Showing ...</span>
@@ -170,7 +172,10 @@
             }
 
             // --- Global State ---
-            let selectedStats = [];
+            let selectedStats = JSON.parse(localStorage.getItem('fs_selectedStats')) || [];
+            let statWeights = JSON.parse(localStorage.getItem('fs_statWeights')) || {};
+            let leagueMode = localStorage.getItem('fs_leagueMode') || 'categories';
+            let pimPolarity = parseInt(localStorage.getItem('fs_pimPolarity')) || 1;
             let playerData = [];
             let filteredData = [];
 
@@ -180,10 +185,23 @@
             let currentSortColumn = 'fullName';
             let currentSortDirection = 'asc';
 
-            let leagueMode = 'categories';
-            let pimPolarity = 1;
 
-            const pointsOnlyStats = ['proj_totalFaceoffLosses'];
+            // Load tags from browser storage, or start fresh if empty
+            let playerTags = JSON.parse(localStorage.getItem('fantasy_streams_tags')) || {};
+            function saveSettings() {
+                localStorage.setItem('fs_selectedStats', JSON.stringify(selectedStats));
+                localStorage.setItem('fs_leagueMode', leagueMode);
+                localStorage.setItem('fs_pimPolarity', pimPolarity);
+
+                // Save the points weights so they don't reset to 0
+                const weights = {};
+                document.querySelectorAll('input.stat-weight').forEach(ni => {
+                    weights[ni.dataset.stat] = ni.value;
+                });
+                localStorage.setItem('fs_statWeights', JSON.stringify(weights));
+            }
+
+            const pointsOnlyStats = ['proj_totalFaceoffLosses', 'proj_losses', 'proj_otLosses'];
             const categoryOnlyStats = ['proj_goalsAgainstAverage', 'proj_savePct', 'proj_shootingPct', 'proj_winPct', 'proj_startingPct'];
             const negativeStats = ['proj_goalsAgainstAverage', 'proj_totalFaceoffLosses', 'proj_losses', 'proj_goalsAgainst'];
 
@@ -193,7 +211,6 @@
                     const response = await fetch('/draft-prep/api/available-stats');
                     const data = await response.json();
                     if (data.status === 'success') {
-                        selectedStats = [];
                         buildToggles(data.skater_stats, data.goalie_stats);
                         buildTableHeaders();
                     }
@@ -360,6 +377,7 @@
                                     const pimWrapper = document.getElementById('pim-toggle-wrapper');
                                     if (pimWrapper) pimWrapper.style.display = e.target.checked ? 'flex' : 'none';
                                 }
+                                saveSettings();
                                 buildTableHeaders();
                                 buildTableBody();
                             }
@@ -374,6 +392,7 @@
                                 } else {
                                     selectedStats = selectedStats.filter(s => s !== stat);
                                 }
+                                saveSettings();
                                 buildTableHeaders();
                                 buildTableBody();
                             }
@@ -390,6 +409,7 @@
                         if (pimToggle) {
                             pimToggle.addEventListener('change', (e) => {
                                 pimPolarity = e.target.checked ? -1 : 1;
+                                saveSettings();
                                 const label = document.getElementById('pimPolarityLabel');
                                 const track = document.getElementById('pimTrack');
 
@@ -510,7 +530,17 @@
 
                 playersToRender.forEach(player => {
                     const tr = document.createElement('tr');
-                    tr.className = "table-row-hover transition-colors";
+
+                    // Check our memory for tags and apply Tailwind color classes
+                    let rowClasses = "table-row-hover transition-colors border-b border-gray-700";
+                    const tag = playerTags[player.playerId];
+
+                    if (tag === 'fav') rowClasses += " bg-emerald-900 bg-opacity-40 border-l-4 border-emerald-500";
+                    else if (tag === 'dnd') rowClasses += " bg-red-900 bg-opacity-40 border-l-4 border-red-500";
+                    else if (tag === 'sleeper') rowClasses += " bg-yellow-900 bg-opacity-40 border-l-4 border-yellow-500";
+                    else rowClasses += " border-l-4 border-transparent"; // Keeps text aligned when not tagged
+
+                    tr.className = rowClasses;
 
                     // Rank logic
                     let rowHTML = `
@@ -548,10 +578,40 @@
 
             // --- Event Listeners ---
             document.addEventListener('DOMContentLoaded', async () => {
+                // 1. Initial UI setup (builds the empty toggles)
+                await fetchAvailableStats();
+
+                // 2. Restore Checkboxes and Number Inputs BEFORE triggering the mode toggle
+                selectedStats.forEach(stat => {
+                    const cb = document.querySelector(`input.stat-checkbox[value="${stat}"]`);
+                    if (cb) cb.checked = true;
+                });
+
+                Object.keys(statWeights).forEach(stat => {
+                    const ni = document.querySelector(`input.stat-weight[data-stat="${stat}"]`);
+                    if (ni) ni.value = statWeights[stat];
+                });
+
+                // 3. Restore PIM Polarity Toggle Visually
+                const pimToggleEl = document.getElementById('pimPolarityToggle');
+                if (pimToggleEl && pimPolarity === -1) {
+                    pimToggleEl.checked = true;
+                    pimToggleEl.dispatchEvent(new Event('change'));
+                }
+
+                // 4. Restore League Mode and force the UI to sync
+                const modeToggle = document.getElementById('leagueModeToggle');
+                modeToggle.checked = (leagueMode === 'points');
+                modeToggle.dispatchEvent(new Event('change')); // Runs your update safely now!
+
+                // 5. Fetch the players
+                await fetchPlayerData();
+            });
 
               // --- Wire up the League Mode Toggle ---
                 document.getElementById('leagueModeToggle').addEventListener('change', (e) => {
                     leagueMode = e.target.checked ? 'points' : 'categories';
+                    saveSettings();
                     const label = document.getElementById('leagueModeLabel');
 
                     const pointsOnlyElements = document.querySelectorAll('.points-only-stat');
@@ -700,9 +760,83 @@
                     }
                 });
 
-                await fetchAvailableStats();
-                await fetchPlayerData();
-            });
+                // --- Wire up Real-Time Filters & Search ---
+                document.getElementById('search-input').addEventListener('input', () => {
+                    currentPage = 1; // Reset to page 1 so you don't get trapped on an empty page
+                    applyFiltersAndSort();
+                });
+
+                document.getElementById('pos-filter').addEventListener('change', () => {
+                    currentPage = 1;
+                    applyFiltersAndSort();
+                });
+
+                document.getElementById('team-filter').addEventListener('change', () => {
+                    currentPage = 1;
+                    applyFiltersAndSort();
+                });
+
+                // --- Player Tagging Logic ---
+                function tagSelectedPlayers(tag) {
+                    // 1. Find all checkboxes that are currently checked
+                    const checkboxes = document.querySelectorAll('.player-checkbox:checked');
+
+                    // 2. Loop through them and update our memory map
+                    checkboxes.forEach(cb => {
+                        const pid = cb.value;
+                        if (tag === 'clear') {
+                            delete playerTags[pid];
+                        } else {
+                            playerTags[pid] = tag;
+                        }
+                    });
+
+                    // 3. Save to browser memory so tags survive page refreshes!
+                    localStorage.setItem('fantasy_streams_tags', JSON.stringify(playerTags));
+
+                    // 4. Rebuild the table (this will automatically uncheck the boxes and apply colors)
+                    const selectAll = document.getElementById('select-all');
+                    if (selectAll) selectAll.checked = false;
+                    buildTableBody();
+                }
+
+                document.getElementById('btn-fav').addEventListener('click', () => tagSelectedPlayers('fav'));
+                document.getElementById('btn-dnd').addEventListener('click', () => tagSelectedPlayers('dnd'));
+                document.getElementById('btn-sleeper').addEventListener('click', () => tagSelectedPlayers('sleeper'));
+                document.getElementById('btn-clear-tag').addEventListener('click', () => tagSelectedPlayers('clear'));
+
+                // 'Select All' Checkbox Logic
+                // We attach this to the row, because the checkbox itself gets destroyed/recreated on sort
+                document.getElementById('table-head-row').addEventListener('change', (e) => {
+                    if (e.target.id === 'select-all') {
+                        const isChecked = e.target.checked;
+                        document.querySelectorAll('.player-checkbox').forEach(cb => {
+                            cb.checked = isChecked;
+                        });
+                    }
+                });
+
+                // --- Wire up Pagination Buttons ---
+                document.querySelectorAll('.btn-prev').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (currentPage > 1) {
+                            currentPage--;
+                            buildTableBody();
+                        }
+                    });
+                });
+
+                document.querySelectorAll('.btn-next').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const maxPage = Math.ceil(filteredData.length / itemsPerPage);
+                        if (currentPage < maxPage) {
+                            currentPage++;
+                            buildTableBody();
+                        }
+                    });
+                });
+
+
         </script>
 </body>
 </html>
