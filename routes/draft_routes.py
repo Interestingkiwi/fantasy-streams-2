@@ -2,12 +2,11 @@
 Routes used by Draft Prep
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 7/5/2026
+Updated - 9/3/2026
 """
 
 from flask import Blueprint, render_template, jsonify, request
-from sqlalchemy import text
-from preseason_db_build.db_config import engine
+from db import engine, text
 from ranking_utils import calculate_player_ranks
 
 # Create the Blueprint with a URL prefix
