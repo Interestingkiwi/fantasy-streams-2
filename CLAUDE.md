@@ -49,9 +49,13 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
    60/30/10 time-decay weighting of the last 3 seasons (per-game), paced to 82 games,
    with production & peripheral trend labels; 40-game 3-yr minimum, 10-game per-season minimum
 8. `apply_injury_adjustments.py` — final downward adjustments -> `final_projections`
+9. `sync_current_rosters.py` — overwrites `teamAbbrevs` in `final_projections` and
+   `player_directory` with each player's current NHL team (offseason trades / signings);
+   pulls all 32 rosters from `api-web.nhle.com`. Players not on any current roster keep
+   their last-season team string.
 
-External data sources: `api.nhle.com`, `moneypuck.com`, `eliteprospects.com`,
-`lscluster.hockeytech.com`, `site.api.espn.com`.
+External data sources: `api.nhle.com`, `api-web.nhle.com`, `moneypuck.com`,
+`eliteprospects.com`, `lscluster.hockeytech.com`, `site.api.espn.com`.
 
 **Import-path quirk:** pipeline scripts import `from db_config import engine`
 (no package prefix), so they must be run with the working directory set to
@@ -81,9 +85,21 @@ cd preseason_db_build && python build_database.py
 - Postgres columns are camelCase and quoted in raw SQL (`"positionCode"`, `"final_projections"`).
 - Blueprints only; add new areas as a blueprint in `routes/` and register it in `app.py`.
 
+## Porting the old app
+
+`docs/MIGRATION.md` is the plan for bringing the pages from the old repo
+(`Interestingkiwi/fantasy-streams`) into this one, with the DB-idiom, background-job,
+and Yahoo-auth decisions already settled. Phase 0 starts with the Postgres-credentials
+task below.
+
 ## Known issues / cleanup backlog
 
 - **Hardcoded production Postgres credentials** in `export_postgres.py` and (via a default)
   around `preseason_db_build/db_config.py`. Agreed first task next session: move the
   connection string fully to env vars and scrub it from history if feasible.
 - Yahoo OAuth (`/login`) and the automation/streaming features are stubs.
+- Some player names carry mojibake (`Gustav Lindstr�m`) from an upstream UTF-8/latin-1
+  decode bug in the NHL/EliteProspects data handling.
+- `final_projections` still includes ~190 players not on any current NHL roster
+  (retired / UFA / minors) with full 82-game projections. `sync_current_rosters.py`'s
+  roster map is the signal to filter or flag them.
