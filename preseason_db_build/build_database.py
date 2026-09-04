@@ -55,6 +55,9 @@ def build_database():
     # 8. Final Adjustments
     run_script("apply_injury_adjustments.py")
 
+    # 9. Current Team Sync (offseason trades & signings)
+    run_script("sync_current_rosters.py")
+
     end_time = time.time()
     elapsed = round((end_time - start_time) / 60, 2)
 
