@@ -1,0 +1,40 @@
+# Render Blueprint - draft-prep deployment for Fantasy Streams.
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> select this repo -> Apply.
+# Creates one Postgres database and one web service, both paid tier.
+# See docs/DEPLOY.md for the full walkthrough (including populating the DB).
+
+databases:
+  - name: fantasy-streams-db
+    plan: basic-256mb          # smallest paid Postgres; data here is a few MB
+    databaseName: fantasy_streams
+    user: fantasy_streams
+    region: virginia
+
+services:
+  - type: web
+    name: fantasy-streams
+    runtime: python
+    plan: starter
+    region: virginia            # must match the database region
+    branch: main
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app --workers 2 --timeout 120"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fantasy-streams-db
+          property: connectionString
+
+      # --- add when Phase 0 (PR #3) is merged into main ---
+      # app.py then loads config.py (needs FLASK_SECRET_KEY in production) and
+      # runs schema init (not needed for draft-prep, so skip it).
+      # - key: APP_ENV
+      #   value: production
+      # - key: FLASK_SECRET_KEY
+      #   generateValue: true
+      # - key: SKIP_SCHEMA_INIT
+      #   value: "1"

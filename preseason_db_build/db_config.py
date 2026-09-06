@@ -2,7 +2,7 @@
 Engine for db scripts
 Author - Jason Druckenmiller
 Created - 7/2/2026
-Updated - 7/2/2026
+Updated - 9/6/2026
 """
 
 
@@ -21,4 +21,6 @@ if not DATABASE_URL:
 # Create Engine
 engine = create_engine(DATABASE_URL)
 
-print("Database engine successfully configured.")
+# Print the target so it's obvious which database a pipeline run will write to
+# (e.g. local vs. Render when DATABASE_URL is overridden on the command line).
+print(f"DB engine -> {engine.url.host or 'local'} / {engine.url.database}")
