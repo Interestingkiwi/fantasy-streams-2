@@ -27,40 +27,122 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `app.py` | Entry point; registers the `main`, `auth`, `draft` blueprints; `python app.py` -> debug server on :5000 |
 | `routes/main_routes.py` | `/`, `/standalone`, `/terms` — mostly placeholders |
 | `routes/auth_routes.py` | `/login` — **stubbed** Yahoo OAuth (returns a fake `auth_url`) |
-| `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST) |
-| `ranking_utils.py` | Ranking engine. Points leagues -> fantasy points/game. Category leagues -> asymmetric capped z-scores vs a 40+ GP baseline, with a goalie category multiplier to offset positional scarcity. |
+| `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST) |
+| `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
+| `ranking_utils.py` | Ranking engine — see *Ranking* below |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
-| `preseason_db_build/db_config.py` | Shared SQLAlchemy `engine` from `DATABASE_URL` |
+| `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
+| `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
 | `templates/index.html` | Landing/login page |
-| `templates/pages/draft-prep.html` | ~840-line draft prep UI: stat toggles, interactive projection table, trends |
+| `templates/pages/draft-prep.html` | ~1,375-line draft prep UI: League Settings modal, projection table, ranking controls |
 | `static/styles.css`, `static/tailwind.js` | Styles + vendored Tailwind |
+
+## Ranking (`ranking_utils.py`)
+
+Two value engines, then one scarcity shift on top.
+
+- **Points leagues** -> fantasy points per game.
+- **Category leagues** -> asymmetric capped z-scores against a 40+ GP baseline.
+
+**Replacement level.** `starters = num_teams x roster_slots[pos]`, with bench spots
+shared out in proportion to starters. The player one past that cutoff, among everyone
+*eligible* at the position, sets the baseline. A player's score is
+`value - (weight x min(replacement across their eligible positions))` — the minimum,
+because a multi-eligible player slots in wherever they help most. This is what makes
+the 25th-best centre worth less than the 15th-best winger when the league starts more
+centres than wingers.
+
+**Rank modes** (`SCARCITY_WEIGHTS`) set that weight:
+
+| Mode | Weight | Goalie multiplier | Column |
+|---|---|---|---|
+| `roster` | 1.0 | off | VORP |
+| `balanced` | 0.5 | `mult ** 0.5` | Score |
+| `projection` | 0.0 | full | none |
+
+The old goalie category multiplier (`skater_cats / goalie_cats`) fades out as scarcity
+fades in, via `goalie_multiplier_power`. **Do not run both at full strength** — that
+counts goalie scarcity twice and floats backup goalies into the first round. Measured:
+with the multiplier on top of replacement level the top 100 was 25% goalies against a
+roster share of 17%; with it off, 16%.
+
+Without `num_teams` and `roster_slots` the scarcity weight is forced to 0, so older
+callers get exactly the pre-existing behaviour.
+
+## Draft prep page
+
+Everything except the ranking-method control lives in the **League Settings** modal:
+league structure (categories/points + number of teams), roster settings, playoff weeks,
+and the skater/goalie category grids. **Rank Via** (Roster Setting / Projection Only /
+Balanced) sits on the page itself, in the filter bar, and re-ranks on click.
+
+State is `localStorage`, all keys prefixed `fs_`: `fs_selectedStats`, `fs_statWeights`,
+`fs_leagueMode`, `fs_pimPolarity`, `fs_numTeams`, `fs_rosterMode`, `fs_rosterSlots`,
+`fs_playoffWeeks`, `fs_rankMode` (plus `fantasy_streams_tags` for player tags).
+
+On load the page ranks against those saved settings by *replacing* the
+`/api/projections` call with `/api/rank-players`, never adding to it — the ranking maths
+costs ~40ms against a ~2s payload, so a returning user waits no longer. With no
+categories selected there is nothing to rank, and the plain call stands.
+
+**Playoff weeks** are display-only and never touch the rankings — they drive a `Playoff`
+column showing games in the selected weeks, colour-coded against the league average,
+with light-night games (dates under `LIGHT_NIGHT_MAX_GAMES`) as a suffix. Week numbers
+are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
 
 ## The projection pipeline (`preseason_db_build/`)
 
 `build_database.py` runs the steps in order via `subprocess`. Roughly:
 
 1. `add_tables.py` — schema/logs
+1b. `scrape_nhl_schedule.py` — every team's regular season from `api-web.nhle.com`
+   -> `nhl_schedule`. Runs early because the projection steps pace against its
+   season length. Reads the season from the API rather than hardcoding dates.
 2. `historic_data_skaters.py` / `historic_data_goalies.py` — NHL API season stats
 3. `append_advanced_skaters.py` / `append_advanced_goalies.py` — MoneyPuck advanced stats
 4. `create_player_directory.py`
 5. `scrape_ep_rookies.py` (EliteProspects) / `enrich_ahl_stats.py` (HockeyTech feed)
 6. `scrape_injuries.py` (ESPN injuries API)
 7. `calculate_skater_projections.py` / `calculate_goalie_projections.py` —
-   60/30/10 time-decay weighting of the last 3 seasons (per-game), paced to 82 games,
-   with production & peripheral trend labels; 40-game 3-yr minimum, 10-game per-season minimum
+   60/30/10 time-decay weighting of the last 3 seasons (per-game), paced to the
+   season length from `season_config`, with production & peripheral trend labels;
+   40-game 3-yr minimum, 10-game per-season minimum. Goalie rates are regressed
+   toward the league mean by sample size (`REGRESSION_GAMES`), which stops a
+   40-game backup out-projecting established starters on rate.
 8. `apply_injury_adjustments.py` — final downward adjustments -> `final_projections`
-9. `sync_current_rosters.py` — overwrites `teamAbbrevs` in `final_projections` and
+9. `apply_rookie_projections.py` — imported rookies the engine can't model
+10. `sync_current_rosters.py` — overwrites `teamAbbrevs` in `final_projections` and
    `player_directory` with each player's current NHL team (offseason trades / signings);
    pulls all 32 rosters from `api-web.nhle.com`. Players not on any current roster keep
    their last-season team string.
+11. `prune_inactive_players.py` — drops players finished in the NHL
+12. `apply_position_eligibility.py` — fills `eligiblePositions` from
+   `position_eligibility.csv` (a Yahoo export: `playerName,team,eligiblePositions`).
+   Matches on normalised name, then surname + team; anyone the CSV misses falls back
+   to their NHL primary widened to Yahoo's vocabulary (`L`->`LW`, `R`->`RW`).
+
+**Re-running part of the pipeline:** `apply_injury_adjustments.py` rebuilds
+`final_projections` with `to_sql(if_exists='replace')`, which drops
+`eligiblePositions`. Any re-run from step 8 must carry on through step 12.
 
 External data sources: `api.nhle.com`, `api-web.nhle.com`, `moneypuck.com`,
 `eliteprospects.com`, `lscluster.hockeytech.com`, `site.api.espn.com`.
 
+### Season length
+
+The NHL moved to **84 games** from 2026-27. Nothing hardcodes that: `season_config.
+season_game_count()` reads the max games-per-team out of `nhl_schedule`, falling back
+to 82 with a warning if the table is missing. Anything derived from *past* seasons is a
+share of an 82-game season (`HISTORICAL_SEASON_GAMES`) and is converted to a rate before
+being applied — skater durability, goalie historical GP, and the assigned starts and
+anchor in `goalie_workload.flatten_starts`. `historic_data_goalies.py`'s `/82.0` is
+correct as written: it describes seasons that really were 82 games.
+
 **Import-path quirk:** pipeline scripts import `from db_config import engine`
 (no package prefix), so they must be run with the working directory set to
-`preseason_db_build/`. The Flask app imports `from preseason_db_build.db_config import engine`
-and runs from the repo root.
+`preseason_db_build/`. The web app uses the separate root-level `db.py`
+(`from db import engine, text`) and runs from the repo root. Both read the same
+`DATABASE_URL`; the split is deliberate, see the docstring in `db.py`.
 
 ## Running
 
@@ -89,17 +171,26 @@ cd preseason_db_build && python build_database.py
 
 `docs/MIGRATION.md` is the plan for bringing the pages from the old repo
 (`Interestingkiwi/fantasy-streams`) into this one, with the DB-idiom, background-job,
-and Yahoo-auth decisions already settled. Phase 0 starts with the Postgres-credentials
-task below.
+and Yahoo-auth decisions already settled.
+
+Phase 0 (Postgres credentials -> env vars) is done. **Yahoo OAuth is the next phase.**
+
+Already pulled forward out of order: the NHL schedule (MIGRATION Phase 3 item 2) is
+built as `nhl_schedule` by `scrape_nhl_schedule.py`, because playoff-week comparison
+needed it. Note the old repo's version in `jobs/create_projection_db.py` hardcodes
+`START_DATE` / `END_DATE` to 2025-26 — don't port it, the new one reads the season
+from the API. When porting anything else from that repo, expect raw psycopg2 with `%s`
+placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 
 ## Known issues / cleanup backlog
 
-- **Hardcoded production Postgres credentials** in `export_postgres.py` and (via a default)
-  around `preseason_db_build/db_config.py`. Agreed first task next session: move the
-  connection string fully to env vars and scrub it from history if feasible.
-- Yahoo OAuth (`/login`) and the automation/streaming features are stubs.
-- Some player names carry mojibake (`Gustav Lindstr�m`) from an upstream UTF-8/latin-1
-  decode bug in the NHL/EliteProspects data handling.
-- `final_projections` still includes ~190 players not on any current NHL roster
-  (retired / UFA / minors) with full 82-game projections. `sync_current_rosters.py`'s
-  roster map is the signal to filter or flag them.
+- **Yahoo OAuth (`/login`) is a stub** — returns a fake `auth_url`. Next phase.
+- The automation / streaming features are stubs.
+- `/api/projections` and `/api/rank-players` each take **~2s**, essentially all of it
+  `SELECT *` plus jsonify of 864 rows x ~37 columns. The ranking maths is ~40ms of that.
+  Worth narrowing the column list or paginating server-side.
+- Projected goalie games sum to ~2,974 against a league total of 2,688 (32 x 84), because
+  every goalie is projected independently and a starter and his backup can't both hit
+  their assigned workload. Long-standing, and unchanged in proportion by the 84-game move.
+- `position_eligibility.csv` is a manual export and has to be refreshed each preseason;
+  the eventual source is the Yahoo API once OAuth lands.

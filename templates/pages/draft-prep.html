@@ -36,31 +36,12 @@
 
     <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
 
-        <section class="bg-gray-800 p-6 rounded-lg shadow-xl border border-gray-700">
-          <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 border-b border-gray-700 pb-4 gap-4">
-              <div>
-                  <h2 class="text-xl font-semibold text-white">League Settings</h2>
-                  <p class="text-gray-400 text-sm mt-1">Select the scoring categories used in your league to adjust projections.</p>
-
-                  <div class="flex items-center space-x-3 mt-3">
-                      <span class="text-sm font-medium text-gray-300">League Structure:</span>
-                      <label class="flex items-center cursor-pointer">
-                          <div class="relative">
-                              <input type="checkbox" id="leagueModeToggle" class="sr-only">
-                              <div class="block bg-blue-600 w-10 h-6 rounded-full transition-colors duration-300"></div>
-                              <div class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform duration-300"></div>
-                          </div>
-                          <span id="leagueModeLabel" class="ml-3 text-sm font-bold text-blue-400">Categories</span>
-                      </label>
-                  </div>
-              </div>
-              <button id="applySettingsBtn" class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
-          </div>
-
-          <div id="stat-toggles" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
-              <span class="text-gray-500 italic col-span-full">Loading available stats...</span>
-          </div>
-
+        <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h2 class="text-xl font-semibold text-white">League Settings</h2>
+                <p id="settings-summary" class="text-gray-400 text-sm mt-1">Loading settings&hellip;</p>
+            </div>
+            <button id="openLeagueSettingsBtn" class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap">League Settings</button>
         </section>
 
         <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-4">
@@ -111,6 +92,19 @@
                       <option value="WSH">Washington Capitals (WSH)</option>
                       <option value="WPG">Winnipeg Jets (WPG)</option>
                   </select>
+
+                  <div class="flex items-center gap-2">
+                      <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Rank Via:</span>
+                      <div class="inline-flex rounded-md overflow-hidden border border-gray-600"
+                           role="radiogroup" aria-label="Ranking method">
+                          <button type="button" class="rank-mode-btn px-3 py-2 text-sm font-medium transition-colors"
+                                  data-rank-mode="roster">Roster Setting</button>
+                          <button type="button" class="rank-mode-btn px-3 py-2 text-sm font-medium transition-colors border-l border-gray-600"
+                                  data-rank-mode="projection">Projection Only</button>
+                          <button type="button" class="rank-mode-btn px-3 py-2 text-sm font-medium transition-colors border-l border-gray-600"
+                                  data-rank-mode="balanced">Balanced</button>
+                      </div>
+                  </div>
               </div>
 
               <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
@@ -129,8 +123,6 @@
                     <button class="btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
                 </div>
             </div>
-
-        </section>
 
         <section class="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden flex-grow">
             <div class="overflow-x-auto">
@@ -163,9 +155,169 @@
                     <button class="btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
                 </div>
             </div>
-        </section>
 
     </main>
+
+    <!-- ===== League Settings Modal ===== -->
+    <div id="leagueSettingsModal" class="fixed inset-0 z-50 items-center justify-center p-4" style="display: none;">
+        <div class="absolute inset-0 bg-black bg-opacity-70" data-close-modal></div>
+
+        <div class="relative bg-gray-800 border border-gray-700 rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+             role="dialog" aria-modal="true" aria-labelledby="leagueSettingsTitle">
+
+            <div class="flex justify-between items-start gap-4 p-6 border-b border-gray-700">
+                <div>
+                    <h2 id="leagueSettingsTitle" class="text-xl font-semibold text-white">League Settings</h2>
+                    <p class="text-gray-400 text-sm mt-1">Set your league structure, roster spots, and scoring categories to adjust projections.</p>
+                </div>
+                <button type="button" data-close-modal aria-label="Close settings"
+                        class="text-gray-400 hover:text-white text-2xl leading-none px-2 -mt-1">&times;</button>
+            </div>
+
+            <div class="overflow-y-auto p-6 flex flex-col gap-8">
+
+                <!-- League Structure -->
+                <div>
+                    <h3 class="text-white font-semibold border-b border-gray-600 pb-2 mb-4">League Structure</h3>
+                    <label class="flex items-center cursor-pointer w-fit">
+                        <div class="relative">
+                            <input type="checkbox" id="leagueModeToggle" class="sr-only">
+                            <div class="block bg-blue-600 w-10 h-6 rounded-full transition-colors duration-300"></div>
+                            <div class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform duration-300"></div>
+                        </div>
+                        <span id="leagueModeLabel" class="ml-3 text-sm font-bold text-blue-400">Categories</span>
+                    </label>
+
+                    <div class="flex flex-col gap-1 mt-4 w-40">
+                        <label for="numTeamsInput" class="text-sm font-medium text-gray-300">Number of Teams</label>
+                        <input type="number" id="numTeamsInput" min="2" max="32" step="1" inputmode="numeric"
+                               class="form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+
+                <!-- Roster Settings -->
+                <div id="roster-settings">
+                    <h3 class="text-white font-semibold border-b border-gray-600 pb-2 mb-4">Roster Settings</h3>
+
+                    <div class="flex flex-wrap items-center gap-6 mb-5" role="radiogroup" aria-label="Forward slot style">
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="radio" name="rosterMode" value="split" checked
+                                   class="roster-mode-radio w-4 h-4 border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm font-medium text-gray-300 select-none">C / LW / RW</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="radio" name="rosterMode" value="group"
+                                   class="roster-mode-radio w-4 h-4 border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm font-medium text-gray-300 select-none">Forward Group</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 items-start">
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="split">
+                            <label for="roster-C" class="text-sm font-medium text-gray-300">C</label>
+                            <input type="number" id="roster-C" data-slot="C" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="split">
+                            <label for="roster-LW" class="text-sm font-medium text-gray-300">LW</label>
+                            <input type="number" id="roster-LW" data-slot="LW" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="split">
+                            <label for="roster-RW" class="text-sm font-medium text-gray-300">RW</label>
+                            <input type="number" id="roster-RW" data-slot="RW" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="group">
+                            <label for="roster-F" class="text-sm font-medium text-gray-300">Forward</label>
+                            <input type="number" id="roster-F" data-slot="F" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="both">
+                            <label for="roster-D" class="text-sm font-medium text-gray-300">D</label>
+                            <input type="number" id="roster-D" data-slot="D" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="both">
+                            <label for="roster-G" class="text-sm font-medium text-gray-300">G</label>
+                            <input type="number" id="roster-G" data-slot="G" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="roster-slot flex flex-col gap-1" data-slot-mode="both">
+                            <label for="roster-B" class="text-sm font-medium text-gray-300">B</label>
+                            <input type="number" id="roster-B" data-slot="B" min="0" step="1" inputmode="numeric"
+                                   class="roster-input form-input w-full text-center px-2 py-1 rounded-md text-sm outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                    </div>
+
+                    <p id="roster-total" class="text-sm text-gray-400 mt-3">Total roster spots: 0</p>
+                </div>
+
+                <!-- Playoff Weeks -->
+                <div id="playoff-weeks">
+                    <h3 class="text-white font-semibold border-b border-gray-600 pb-2 mb-2">Playoff Weeks</h3>
+                    <p class="text-gray-400 text-sm mb-4">Week numbers are based on Yahoo's schedule.</p>
+
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                        <label class="flex items-start space-x-2 cursor-pointer">
+                            <input type="checkbox" value="23" data-start="2027-03-08" data-end="2027-03-14"
+                                   class="playoff-week-checkbox mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="select-none">
+                                <span class="block text-sm font-medium text-gray-300">Week 23</span>
+                                <span class="block text-xs text-gray-500">3/8 – 3/14</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start space-x-2 cursor-pointer">
+                            <input type="checkbox" value="24" data-start="2027-03-15" data-end="2027-03-21"
+                                   class="playoff-week-checkbox mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="select-none">
+                                <span class="block text-sm font-medium text-gray-300">Week 24</span>
+                                <span class="block text-xs text-gray-500">3/15 – 3/21</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start space-x-2 cursor-pointer">
+                            <input type="checkbox" value="25" data-start="2027-03-22" data-end="2027-03-28"
+                                   class="playoff-week-checkbox mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="select-none">
+                                <span class="block text-sm font-medium text-gray-300">Week 25</span>
+                                <span class="block text-xs text-gray-500">3/22 – 3/28</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start space-x-2 cursor-pointer">
+                            <input type="checkbox" value="26" data-start="2027-03-29" data-end="2027-04-04"
+                                   class="playoff-week-checkbox mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="select-none">
+                                <span class="block text-sm font-medium text-gray-300">Week 26</span>
+                                <span class="block text-xs text-gray-500">3/29 – 4/4</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start space-x-2 cursor-pointer">
+                            <input type="checkbox" value="27" data-start="2027-04-05" data-end="2027-04-10"
+                                   class="playoff-week-checkbox mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                            <span class="select-none">
+                                <span class="block text-sm font-medium text-gray-300">Week 27</span>
+                                <span class="block text-xs text-gray-500">4/5 – 4/10</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Scoring categories (built by JS) -->
+                <div id="stat-toggles" class="flex flex-col gap-6">
+                    <span class="text-gray-500 italic">Loading available stats...</span>
+                </div>
+
+            </div>
+
+            <div class="flex justify-end gap-3 p-6 border-t border-gray-700">
+                <button type="button" data-close-modal
+                        class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Close</button>
+                <button id="applySettingsBtn"
+                        class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
+            </div>
+        </div>
+    </div>
+
     <script>
             function formatStatName(stat) {
                 return stat.replace('proj_', '').replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
@@ -176,7 +328,23 @@
             let statWeights = JSON.parse(localStorage.getItem('fs_statWeights')) || {};
             let leagueMode = localStorage.getItem('fs_leagueMode') || 'categories';
             let pimPolarity = parseInt(localStorage.getItem('fs_pimPolarity')) || 1;
+            const RANK_MODES = ['roster', 'projection', 'balanced'];
+            const NUM_TEAMS_DEFAULT = 12;
+            const NUM_TEAMS_MIN = 2;
+            const NUM_TEAMS_MAX = 32;
+            const ROSTER_SLOT_DEFAULTS = { C: 2, LW: 2, RW: 2, F: 6, D: 4, G: 2, B: 4 };
+            let rosterMode = localStorage.getItem('fs_rosterMode') === 'group' ? 'group' : 'split';
+            let rosterSlots = Object.assign({}, ROSTER_SLOT_DEFAULTS, readStoredRosterSlots());
+            let playoffWeeks = readStoredPlayoffWeeks();
+            let numTeams = readStoredNumTeams();
+            let rankMode = RANK_MODES.includes(localStorage.getItem('fs_rankMode'))
+                ? localStorage.getItem('fs_rankMode')
+                : 'roster';
             let playerData = [];
+            let hasReplacementValues = false;
+            let playoffSchedule = {};
+            let playoffAverage = 0;
+            let playoffRequestId = 0;
             let filteredData = [];
 
             let currentPage = 1;
@@ -199,6 +367,277 @@
                     weights[ni.dataset.stat] = ni.value;
                 });
                 localStorage.setItem('fs_statWeights', JSON.stringify(weights));
+                updateSettingsSummary();
+            }
+
+            // --- Playoff Schedule ---
+            // Not a ranking input: two comparable players can have very different
+            // playoff cards, and this is the at-a-glance tiebreak.
+            function selectedWeekRanges() {
+                return [...document.querySelectorAll('.playoff-week-checkbox')]
+                    .filter(cb => cb.checked)
+                    .map(cb => ({ start: cb.dataset.start, end: cb.dataset.end }))
+                    .filter(range => range.start && range.end);
+            }
+
+            async function refreshPlayoffSchedule() {
+                const weeks = selectedWeekRanges();
+
+                // Ticking several weeks in a row fires overlapping requests; only the
+                // newest may write, or a slow earlier reply resurrects stale counts.
+                const requestId = ++playoffRequestId;
+
+                if (weeks.length === 0) {
+                    playoffSchedule = {};
+                    playoffAverage = 0;
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/draft-prep/api/playoff-schedule', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ weeks })
+                    });
+                    const data = await response.json();
+
+                    if (requestId !== playoffRequestId) return;
+
+                    if (data.status === 'success') {
+                        playoffSchedule = data.teams || {};
+                        playoffAverage = data.average || 0;
+                    }
+                } catch (error) {
+                    console.error("Playoff schedule fetch failed:", error);
+                }
+            }
+
+            // teamAbbrevs can hold two teams for someone who moved mid-season
+            function playoffGamesFor(player) {
+                const team = String(player.teamAbbrevs || '').split(',')[0].trim();
+                return playoffSchedule[team] || null;
+            }
+
+            // --- Rank Via ---
+            // Roster Setting subtracts the full replacement level, Projection Only
+            // none of it, Balanced half - so the board can be read either way round.
+            const RANK_MODE_LABELS = { roster: 'VORP', balanced: 'Score', projection: null };
+
+            function renderRankMode() {
+                document.querySelectorAll('.rank-mode-btn').forEach(btn => {
+                    const active = btn.dataset.rankMode === rankMode;
+                    btn.className = 'rank-mode-btn px-3 py-2 text-sm font-medium transition-colors'
+                        + (btn.previousElementSibling ? ' border-l border-gray-600' : '')
+                        + (active ? ' bg-blue-600 text-white' : ' bg-gray-700 text-gray-300 hover:bg-gray-600');
+                    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+                });
+            }
+
+            function initRankMode() {
+                document.querySelectorAll('.rank-mode-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (btn.dataset.rankMode === rankMode) return;
+                        rankMode = btn.dataset.rankMode;
+                        localStorage.setItem('fs_rankMode', rankMode);
+                        renderRankMode();
+                        applyRankingSettings();
+                    });
+                });
+
+                renderRankMode();
+            }
+
+            // --- Number of Teams ---
+            function readStoredNumTeams() {
+                const n = parseInt(localStorage.getItem('fs_numTeams'), 10);
+                if (!Number.isInteger(n) || n < NUM_TEAMS_MIN || n > NUM_TEAMS_MAX) return NUM_TEAMS_DEFAULT;
+                return n;
+            }
+
+            function initNumTeams() {
+                const input = document.getElementById('numTeamsInput');
+                if (!input) return;
+
+                input.value = numTeams;
+
+                // type="number" still lets 'e', '+', '-' and '.' through on its own
+                input.addEventListener('keydown', (e) => {
+                    if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault();
+                });
+
+                input.addEventListener('input', (e) => {
+                    const digitsOnly = e.target.value.replace(/[^0-9]/g, '');
+                    if (e.target.value !== digitsOnly) e.target.value = digitsOnly;
+
+                    const n = parseInt(digitsOnly, 10);
+                    if (Number.isInteger(n) && n >= NUM_TEAMS_MIN && n <= NUM_TEAMS_MAX) {
+                        numTeams = n;
+                        localStorage.setItem('fs_numTeams', numTeams);
+                        updateSettingsSummary();
+                    }
+                });
+
+                // Snap an out-of-range or empty box back to something usable
+                input.addEventListener('blur', (e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!Number.isInteger(n)) numTeams = NUM_TEAMS_DEFAULT;
+                    else numTeams = Math.min(NUM_TEAMS_MAX, Math.max(NUM_TEAMS_MIN, n));
+
+                    e.target.value = numTeams;
+                    localStorage.setItem('fs_numTeams', numTeams);
+                    updateSettingsSummary();
+                });
+            }
+
+            // --- Roster Settings ---
+            // Only non-negative integers survive the trip out of localStorage
+            function readStoredRosterSlots() {
+                try {
+                    const raw = JSON.parse(localStorage.getItem('fs_rosterSlots')) || {};
+                    const clean = {};
+                    Object.keys(ROSTER_SLOT_DEFAULTS).forEach(slot => {
+                        const n = parseInt(raw[slot], 10);
+                        if (Number.isInteger(n) && n >= 0) clean[slot] = n;
+                    });
+                    return clean;
+                } catch (error) {
+                    return {};
+                }
+            }
+
+            function saveRosterSettings() {
+                localStorage.setItem('fs_rosterMode', rosterMode);
+                localStorage.setItem('fs_rosterSlots', JSON.stringify(rosterSlots));
+            }
+
+            // The slots that actually count in the current mode
+            function activeRosterSlots() {
+                const keys = rosterMode === 'group' ? ['F', 'D', 'G', 'B'] : ['C', 'LW', 'RW', 'D', 'G', 'B'];
+                const slots = {};
+                keys.forEach(key => slots[key] = rosterSlots[key] || 0);
+                return slots;
+            }
+
+            function rosterTotal() {
+                return Object.values(activeRosterSlots()).reduce((sum, n) => sum + n, 0);
+            }
+
+            function updateRosterTotal() {
+                const totalEl = document.getElementById('roster-total');
+                if (totalEl) totalEl.textContent = `Total roster spots: ${rosterTotal()}`;
+            }
+
+            function renderRosterSlots() {
+                document.querySelectorAll('#roster-settings .roster-slot').forEach(el => {
+                    const slotMode = el.dataset.slotMode;
+                    el.style.display = (slotMode === 'both' || slotMode === rosterMode) ? 'flex' : 'none';
+                });
+
+                document.querySelectorAll('.roster-input').forEach(input => {
+                    input.value = rosterSlots[input.dataset.slot];
+                });
+
+                updateRosterTotal();
+            }
+
+            function initRosterSettings() {
+                document.querySelectorAll('.roster-mode-radio').forEach(radio => {
+                    radio.checked = (radio.value === rosterMode);
+                    radio.addEventListener('change', () => {
+                        if (!radio.checked) return;
+                        rosterMode = radio.value;
+                        saveRosterSettings();
+                        renderRosterSlots();
+                        updateSettingsSummary();
+                    });
+                });
+
+                document.querySelectorAll('.roster-input').forEach(input => {
+                    // type="number" still lets 'e', '+', '-' and '.' through on its own
+                    input.addEventListener('keydown', (e) => {
+                        if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault();
+                    });
+
+                    input.addEventListener('input', (e) => {
+                        const digitsOnly = e.target.value.replace(/[^0-9]/g, '');
+                        if (e.target.value !== digitsOnly) e.target.value = digitsOnly;
+
+                        rosterSlots[e.target.dataset.slot] = digitsOnly === '' ? 0 : parseInt(digitsOnly, 10);
+                        saveRosterSettings();
+                        updateRosterTotal();
+                        updateSettingsSummary();
+                    });
+
+                    // Don't leave a blank box behind when focus moves on
+                    input.addEventListener('blur', (e) => {
+                        if (e.target.value === '') {
+                            e.target.value = 0;
+                            rosterSlots[e.target.dataset.slot] = 0;
+                            saveRosterSettings();
+                        }
+                    });
+                });
+
+                renderRosterSlots();
+            }
+
+            // --- Playoff Weeks ---
+            // Yahoo week numbers; kept sorted so the summary reads in order
+            function readStoredPlayoffWeeks() {
+                try {
+                    const raw = JSON.parse(localStorage.getItem('fs_playoffWeeks'));
+                    if (!Array.isArray(raw)) return [];
+                    return raw.map(w => parseInt(w, 10))
+                              .filter(w => Number.isInteger(w))
+                              .sort((a, b) => a - b);
+                } catch (error) {
+                    return [];
+                }
+            }
+
+            function savePlayoffWeeks() {
+                localStorage.setItem('fs_playoffWeeks', JSON.stringify(playoffWeeks));
+            }
+
+            function initPlayoffWeeks() {
+                document.querySelectorAll('.playoff-week-checkbox').forEach(cb => {
+                    const week = parseInt(cb.value, 10);
+                    cb.checked = playoffWeeks.includes(week);
+
+                    cb.addEventListener('change', () => {
+                        if (cb.checked) {
+                            if (!playoffWeeks.includes(week)) playoffWeeks.push(week);
+                        } else {
+                            playoffWeeks = playoffWeeks.filter(w => w !== week);
+                        }
+                        playoffWeeks.sort((a, b) => a - b);
+                        savePlayoffWeeks();
+                        updateSettingsSummary();
+
+                        refreshPlayoffSchedule().then(() => {
+                            decoratePlayoffGames();
+                            applyFiltersAndSort();
+                        });
+                    });
+                });
+            }
+
+            // One-line recap of the modal's contents, shown on the page itself
+            function updateSettingsSummary() {
+                const summaryEl = document.getElementById('settings-summary');
+                if (!summaryEl) return;
+
+                const structure = leagueMode === 'points' ? 'points based' : 'categories';
+                const statCount = selectedStats.length;
+                const statLabel = leagueMode === 'points'
+                    ? `${statCount} scored stat${statCount === 1 ? '' : 's'}`
+                    : `${statCount} categor${statCount === 1 ? 'y' : 'ies'}`;
+                const forwards = rosterMode === 'group' ? 'grouped forwards' : 'C/LW/RW slots';
+                const playoffs = playoffWeeks.length
+                    ? `playoff weeks ${playoffWeeks.join(', ')}`
+                    : 'no playoff weeks set';
+
+                summaryEl.textContent = `${numTeams}-team ${structure} · ${statLabel} · ${rosterTotal()} roster spots (${forwards}) · ${playoffs}`;
             }
 
             const pointsOnlyStats = ['proj_totalFaceoffLosses', 'proj_losses', 'proj_otLosses'];
@@ -227,9 +666,11 @@
                             fullName: p.fullName || p.player_name || 'Unknown',
                             teamAbbrevs: p.teamAbbrevs || p.team || 'FA',
                             positionCode: p.positionCode || p.position || 'N/A',
+                            eligiblePositions: p.eligiblePositions || p.positionCode || p.position || 'N/A',
                             productionTrend: p.productionTrend || p.Trend || 'N/A',
                             peripheralTrend: p.peripheralTrend || 'N/A'
                         }));
+                        decoratePlayoffGames();
                         applyFiltersAndSort();
                     }
                 } catch (error) { console.error("Fetch players failed:", error); }
@@ -244,7 +685,7 @@
                 // 1. Filter
                 filteredData = playerData.filter(p => {
                     const matchSearch = p.fullName.toLowerCase().includes(searchInput);
-                    const matchPos = posFilter === '' || p.positionCode.includes(posFilter);
+                    const matchPos = posFilter === '' || p.eligiblePositions.split(',').includes(posFilter);
                     const matchTeam = teamFilter === '' || p.teamAbbrevs.includes(teamFilter);
                     return matchSearch && matchPos && matchTeam;
                 });
@@ -469,19 +910,37 @@
                 createHeader('Rank', 'overall_rank', 'text-center');
                 createHeader('Player', 'fullName');
                 createHeader('Team', 'teamAbbrevs');
-                createHeader('Pos', 'positionCode');
+                createHeader('Pos', 'eligiblePositions');
 
                 // Inject Fantasy Points per Game column if in points mode
                 if (leagueMode === 'points') {
                     createHeader('FP/G', 'fantasy_points_per_game', 'text-right text-purple-400');
                 }
 
+                // Value over replacement, once the roster shape has been applied
+                if (hasReplacementValues && RANK_MODE_LABELS[rankMode]) {
+                    createHeader(RANK_MODE_LABELS[rankMode], 'value_over_replacement',
+                                 'text-right text-emerald-400');
+                }
+
                 selectedStats.forEach(stat => {
                     createHeader(formatStatName(stat), stat, "text-right");
                 });
 
+                if (playoffAverage > 0) {
+                    createHeader('Playoff', 'playoffGames', 'text-right text-sky-400');
+                }
+
                 createHeader('Prod Trend', 'productionTrend', "text-right");
                 createHeader('Periph Trend', 'peripheralTrend', "text-right");
+            }
+
+            function decoratePlayoffGames() {
+                playerData.forEach(player => {
+                    const entry = playoffGamesFor(player);
+                    player.playoffGames = entry ? entry.games : null;
+                    player.playoffLightNights = entry ? entry.lightNights : null;
+                });
             }
 
             function buildTableBody() {
@@ -550,7 +1009,7 @@
                         <td class="p-4 text-center font-bold text-blue-400">${player.overall_rank || '-'}</td>
                         <td class="p-4 font-medium text-white">${player.fullName}</td>
                         <td class="p-4 text-gray-400">${player.teamAbbrevs}</td>
-                        <td class="p-4 text-gray-400">${player.positionCode}</td>
+                        <td class="p-4 text-gray-400">${player.eligiblePositions}</td>
                     `;
 
                     // Inject Fantasy Points per Game data if in points mode
@@ -559,12 +1018,32 @@
                         rowHTML += `<td class="p-4 text-right font-bold text-purple-400">${fpg}</td>`;
                     }
 
+                    if (hasReplacementValues && RANK_MODE_LABELS[rankMode]) {
+                        const vorp = player.value_over_replacement !== undefined ? player.value_over_replacement : '-';
+                        rowHTML += `<td class="p-4 text-right font-bold text-emerald-400">${vorp}</td>`;
+                    }
+
                     selectedStats.forEach(stat => {
                         let val = player[stat];
                         if (val === undefined || val === null) val = 0;
                         if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(1);
                         rowHTML += `<td class="p-4 text-right text-gray-300">${val}</td>`;
                     });
+
+                    if (playoffAverage > 0) {
+                        const entry = playoffGamesFor(player);
+                        if (entry) {
+                            let tone = 'text-gray-300';
+                            if (entry.games > playoffAverage) tone = 'text-emerald-400 font-bold';
+                            else if (entry.games < playoffAverage) tone = 'text-red-400';
+                            rowHTML += `<td class="p-4 text-right ${tone}" title="${entry.games} games, `
+                                + `${entry.lightNights} on light nights (league average ${playoffAverage} games)">`
+                                + `${entry.games}<span class="text-xs text-gray-500 font-normal ml-1">`
+                                + `${entry.lightNights}L</span></td>`;
+                        } else {
+                            rowHTML += `<td class="p-4 text-right text-gray-600">-</td>`;
+                        }
+                    }
 
                     rowHTML += `
                         <td class="p-4 text-right text-gray-400">${player.productionTrend}</td>
@@ -604,8 +1083,18 @@
                 modeToggle.checked = (leagueMode === 'points');
                 modeToggle.dispatchEvent(new Event('change')); // Runs your update safely now!
 
-                // 5. Fetch the players
-                await fetchPlayerData();
+                // 5. Fetch the players, ranked against the saved settings straight
+                // away. This replaces the plain projections call rather than adding
+                // to it, so a returning user waits no longer than before; with no
+                // categories picked there is nothing to rank by, so the cheaper call
+                // stands and a first-time visitor sees exactly what they saw before.
+                await refreshPlayoffSchedule();
+
+                if (selectedStats.length > 0) {
+                    await applyRankingSettings();
+                } else {
+                    await fetchPlayerData();
+                }
             });
 
               // --- Wire up the League Mode Toggle ---
@@ -687,13 +1176,14 @@
                         }
                     }
 
+                    updateSettingsSummary();
                     buildTableHeaders();
                     buildTableBody();
                 });
 
 
-                // --- Wire up the "Apply Settings" button ---
-                document.getElementById('applySettingsBtn').addEventListener('click', async () => {
+                // --- Ranking request, shared by the Apply button and the Rank Via toggle ---
+                async function applyRankingSettings() {
                     const activeStats = {};
 
                     if (leagueMode === 'categories') {
@@ -727,7 +1217,11 @@
                     try {
                         const payload = {
                             active_stats: activeStats,
-                            league_mode: leagueMode
+                            league_mode: leagueMode,
+                            num_teams: numTeams,
+                            roster_slots: activeRosterSlots(),
+                            roster_mode: rosterMode,
+                            rank_mode: rankMode
                         };
 
                         const response = await fetch('/draft-prep/api/rank-players', {
@@ -744,9 +1238,13 @@
                                 fullName: p.fullName || p.player_name || 'Unknown',
                                 teamAbbrevs: p.teamAbbrevs || p.team || 'FA',
                                 positionCode: p.positionCode || p.position || 'N/A',
+                            eligiblePositions: p.eligiblePositions || p.positionCode || p.position || 'N/A',
                                 productionTrend: p.productionTrend || p.Trend || 'N/A',
                                 peripheralTrend: p.peripheralTrend || 'N/A'
                             }));
+
+                            hasReplacementValues = playerData.some(p => p.value_over_replacement !== undefined);
+                            decoratePlayoffGames();
 
                             // Automatically sort the UI by the 'overall_rank' column
                             currentSortColumn = 'overall_rank';
@@ -758,6 +1256,11 @@
                     } catch (error) {
                         console.error("Ranking fetch failed:", error);
                     }
+                }
+
+                document.getElementById('applySettingsBtn').addEventListener('click', () => {
+                    closeLeagueSettingsModal();
+                    applyRankingSettings();
                 });
 
                 // --- Wire up Real-Time Filters & Search ---
@@ -835,6 +1338,37 @@
                         }
                     });
                 });
+
+                // --- League Settings Modal ---
+                const leagueSettingsModal = document.getElementById('leagueSettingsModal');
+
+                function openLeagueSettingsModal() {
+                    leagueSettingsModal.style.display = 'flex';
+                    document.body.classList.add('overflow-hidden');
+                }
+
+                function closeLeagueSettingsModal() {
+                    leagueSettingsModal.style.display = 'none';
+                    document.body.classList.remove('overflow-hidden');
+                }
+
+                document.getElementById('openLeagueSettingsBtn').addEventListener('click', openLeagueSettingsModal);
+
+                leagueSettingsModal.querySelectorAll('[data-close-modal]').forEach(el => {
+                    el.addEventListener('click', closeLeagueSettingsModal);
+                });
+
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && leagueSettingsModal.style.display !== 'none') {
+                        closeLeagueSettingsModal();
+                    }
+                });
+
+                initRankMode();
+                initNumTeams();
+                initRosterSettings();
+                initPlayoffWeeks();
+                updateSettingsSummary();
 
 
         </script>

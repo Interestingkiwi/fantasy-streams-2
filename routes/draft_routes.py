@@ -2,8 +2,10 @@
 Routes used by Draft Prep
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 9/3/2026
+Updated - 9/6/2026
 """
+
+from collections import Counter
 
 from flask import Blueprint, render_template, jsonify, request
 from db import engine, text
@@ -12,13 +14,17 @@ from ranking_utils import calculate_player_ranks
 # Create the Blueprint with a URL prefix
 draft_bp = Blueprint('draft', __name__, url_prefix='/draft-prep')
 
+# A date carrying fewer than this many games is a light night: most of the
+# league is idle, so a manager can start players who would otherwise sit.
+LIGHT_NIGHT_MAX_GAMES = 8
+
 def get_stat_mappings(conn):
     """Helper function to dynamically classify stats as Skater or Goalie from the DB."""
     query = text("""
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name = 'final_projections'
-          AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend', 'peripheralTrend', 'projectionSource', 'onNhlRoster');
+          AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend', 'peripheralTrend', 'projectionSource', 'onNhlRoster', 'eligiblePositions');
     """)
     result = conn.execute(query)
     stats = [row[0] for row in result]
@@ -77,13 +83,79 @@ def get_projections():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@draft_bp.route('/api/playoff-schedule', methods=['POST'])
+def playoff_schedule():
+    """
+    Counts each team's games across the selected fantasy playoff weeks.
+
+    Returns games plus light-night games - those falling on a date when under
+    a quarter of the league is playing, which is when a manager can actually
+    get an extra starter into the lineup.
+    """
+    try:
+        weeks = (request.json or {}).get('weeks', [])
+        ranges = [(w.get('start'), w.get('end')) for w in weeks
+                  if w.get('start') and w.get('end')]
+
+        if not ranges:
+            return jsonify({'status': 'success', 'teams': {}, 'average': 0})
+
+        clauses = []
+        params = {}
+        for index, (start, end) in enumerate(ranges):
+            clauses.append(f'("gameDate" BETWEEN :start{index} AND :end{index})')
+            params[f'start{index}'] = start
+            params[f'end{index}'] = end
+        window = ' OR '.join(clauses)
+
+        with engine.connect() as conn:
+            rows = conn.execute(text(f'''
+                SELECT "gameDate", "homeTeam", "awayTeam"
+                FROM nhl_schedule
+                WHERE {window}
+            '''), params).fetchall()
+
+        games_on_date = Counter(row[0] for row in rows)
+        light_nights = {date for date, count in games_on_date.items()
+                        if count < LIGHT_NIGHT_MAX_GAMES}
+
+        teams = {}
+        for game_date, home, away in rows:
+            for team in (home, away):
+                entry = teams.setdefault(team, {'games': 0, 'lightNights': 0})
+                entry['games'] += 1
+                if game_date in light_nights:
+                    entry['lightNights'] += 1
+
+        counts = [entry['games'] for entry in teams.values()]
+        average = round(sum(counts) / len(counts), 1) if counts else 0
+
+        return jsonify({
+            'status': 'success',
+            'teams': teams,
+            'average': average,
+            'max': max(counts) if counts else 0,
+            'min': min(counts) if counts else 0,
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @draft_bp.route('/api/rank-players', methods=['POST'])
 def rank_players():
     try:
         user_settings = request.json
         active_stats = user_settings.get('active_stats', {})
-        
+
         league_mode = user_settings.get('league_mode', 'categories')
+
+        # Roster shape drives replacement level; absent, ranking falls back to raw value
+        num_teams = user_settings.get('num_teams')
+        roster_slots = user_settings.get('roster_slots') or {}
+        roster_mode = user_settings.get('roster_mode', 'split')
+
+        # roster | projection | balanced - how hard the board leans on scarcity
+        rank_mode = user_settings.get('rank_mode', 'roster')
 
         with engine.connect() as conn:
             skater_stats, goalie_stats = get_stat_mappings(conn)
@@ -96,7 +168,11 @@ def rank_players():
                 players_data=players_data,
                 active_stats=active_stats,
                 league_mode=league_mode,
-                goalie_stat_keywords=goalie_stats
+                goalie_stat_keywords=goalie_stats,
+                num_teams=num_teams,
+                roster_slots=roster_slots,
+                roster_mode=roster_mode,
+                rank_mode=rank_mode
             )
 
         return jsonify(ranked_players)

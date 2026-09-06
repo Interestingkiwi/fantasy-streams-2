@@ -30,6 +30,10 @@ def build_database():
     # 1. Infrastructure (Tables & Logs)
     run_script("add_tables.py")
 
+    # 1b. NHL schedule - the projection steps pace against its season length,
+    #     and the draft page reads it for fantasy-playoff week comparison
+    run_script("scrape_nhl_schedule.py")
+
     # 2. Base Historic Data
     run_script("historic_data_skaters.py")
     run_script("historic_data_goalies.py")
@@ -63,6 +67,9 @@ def build_database():
 
     # 11. Drop players who are finished in the NHL
     run_script("prune_inactive_players.py")
+
+    # 12. Yahoo multi-position eligibility (needs final teams + the pruned roster)
+    run_script("apply_position_eligibility.py")
 
     end_time = time.time()
     elapsed = round((end_time - start_time) / 60, 2)
