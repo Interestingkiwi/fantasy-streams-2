@@ -28,13 +28,10 @@ services:
         fromDatabase:
           name: fantasy-streams-db
           property: connectionString
-
-      # --- add when Phase 0 (PR #3) is merged into main ---
-      # app.py then loads config.py (needs FLASK_SECRET_KEY in production) and
-      # runs schema init (not needed for draft-prep, so skip it).
-      # - key: APP_ENV
-      #   value: production
-      # - key: FLASK_SECRET_KEY
-      #   generateValue: true
-      # - key: SKIP_SCHEMA_INIT
-      #   value: "1"
+      - key: APP_ENV
+        value: production
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      # draft-prep doesn't use the admin/league tables; skip creating them.
+      - key: SKIP_SCHEMA_INIT
+        value: "1"
