@@ -87,6 +87,10 @@ def apply_roster_map(table_name, roster_map):
     unmatched = len(df) - matched
 
     df["teamAbbrevs"] = mapped_team.fillna(df["teamAbbrevs"])
+    # Record roster membership rather than only using it to fix teams. Being
+    # absent is not proof a player is finished - unsigned RFAs drop off these
+    # feeds every offseason - so it's stored as a signal, not acted on here.
+    df["onNhlRoster"] = mapped_team.notna()
     df.to_sql(table_name, con=engine, if_exists="replace", index=False)
 
     print(
