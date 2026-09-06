@@ -2,14 +2,21 @@
 Adjusts projections based on injuries, creates final_projections table
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 7/4/2026
+Updated - 9/6/2026
 """
 
 
 import pandas as pd
 from db_config import engine
 from datetime import datetime
+from sqlalchemy import inspect
 import numpy as np
+
+REQUIRED_TABLES = (
+    "projected_skaters_baseline",
+    "projected_goalies_baseline",
+    "current_injuries",
+)
 
 #NHL Season start date (yyyy, m, d)
 SEASON_START_DATE = datetime(2026, 10, 8)
@@ -23,6 +30,15 @@ def get_return_date(details_str):
         return None
 
 print("--- APPLYING INJURY ADJUSTMENTS (VIA CROSSWALK) ---")
+
+#0. Fail clearly if an earlier step didn't produce its table
+missing = [t for t in REQUIRED_TABLES if not inspect(engine).has_table(t)]
+if missing:
+    raise SystemExit(
+        f"Missing upstream table(s): {', '.join(missing)}.\n"
+        "An earlier pipeline step did not complete. Run build_database.py, "
+        "which executes every step in order."
+    )
 
 #1. Load All Tables
 skaters = pd.read_sql("SELECT * FROM projected_skaters_baseline", con=engine)
