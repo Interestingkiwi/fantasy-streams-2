@@ -99,6 +99,32 @@ for stat in stats_to_project:
                                     df_3yr[stat] / df_3yr['gamesPlayed'],
                                     np.nan)
 
+# --- PROJECTED GAMES ---
+# Everyone used to get a flat 82, which paced every counting stat about 5% high.
+# Straight historical GP is worse in the other direction: it bakes in resolved
+# injuries, mid-season call-ups and old roles, and lands ~60 games. So blend a
+# full season against the player's own durability, weighted toward optimism.
+# Only seasons where the player was already a regular (40+ GP) count, so a
+# call-up year doesn't brand someone fragile.
+FULL_SEASON = 82
+FULL_SEASON_WEIGHT = 0.75          # remainder comes from the player's own history
+REGULAR_SEASON_MIN_GP = 40
+
+gp_num = 0.0
+gp_den = 0.0
+for season, weight in [(y1, 0.6), (y2, 0.3), (y3, 0.1)]:
+    season_gp = df_3yr[df_3yr['seasonId'] == season].set_index('playerId')['gamesPlayed']
+    season_gp = season_gp.reindex(df_3yr['playerId'].unique())
+    counts = season_gp.notna() & (season_gp >= REGULAR_SEASON_MIN_GP)
+    gp_num = gp_num + season_gp.where(counts, 0) * weight
+    gp_den = gp_den + counts * weight
+
+durability_gp = gp_num / gp_den.replace(0, np.nan)
+projected_games = (
+    FULL_SEASON_WEIGHT * FULL_SEASON
+    + (1 - FULL_SEASON_WEIGHT) * durability_gp.fillna(FULL_SEASON)
+).round().clip(upper=FULL_SEASON)
+
 latest_metadata = df_3yr.sort_values('seasonId', ascending=False).drop_duplicates(subset=['playerId'])[['playerId', 'skaterFullName', 'positionCode', 'teamAbbrevs']]
 
 pivot_df = df_3yr.pivot(
@@ -114,12 +140,17 @@ pivot_df = pd.merge(latest_metadata, pivot_df, on='playerId', how='left')
 projected_data = []
 
 for index, row in pivot_df.iterrows():
+    games = projected_games.get(row['playerId'], FULL_SEASON)
+    if pd.isna(games):
+        games = FULL_SEASON
+    games = int(games)
+
     player_proj = {
         'playerId': row['playerId'],
         'skaterFullName': row['skaterFullName'],
         'positionCode': row['positionCode'],
         'teamAbbrevs': row['teamAbbrevs'],
-        'projectedGames': 82
+        'projectedGames': games
     }
 
     y1_pts = row.get(f"points_pg_{y1}", np.nan)
@@ -151,7 +182,7 @@ for index, row in pivot_df.iterrows():
         else:
             proj_pg = 0
 
-        player_proj[f"proj_{stat}"] = round(proj_pg * 82, 1)
+        player_proj[f"proj_{stat}"] = round(proj_pg * games, 1)
 
     projected_data.append(player_proj)
 
@@ -162,4 +193,4 @@ table_name = "projected_skaters_baseline"
 final_projections_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
 print(f"\n{len(final_projections_df)} player projections written to '{table_name}'.")
-print("Math applied: 60/30/10 Dynamic Time-Decay + Paced to 82 Games + Trend Analyzed.")
+print(f"Math applied: 60/30/10 Dynamic Time-Decay + GP blend ({FULL_SEASON_WEIGHT:.0%} full season) + Trend Analyzed.")
