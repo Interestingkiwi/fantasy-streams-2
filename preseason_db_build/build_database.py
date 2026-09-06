@@ -61,6 +61,9 @@ def build_database():
     # 10. Current Team Sync (offseason trades & signings)
     run_script("sync_current_rosters.py")
 
+    # 11. Drop players who are finished in the NHL
+    run_script("prune_inactive_players.py")
+
     end_time = time.time()
     elapsed = round((end_time - start_time) / 60, 2)
 

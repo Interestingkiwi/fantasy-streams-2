@@ -18,7 +18,7 @@ def get_stat_mappings(conn):
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name = 'final_projections'
-          AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend', 'peripheralTrend', 'projectionSource');
+          AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend', 'peripheralTrend', 'projectionSource', 'onNhlRoster');
     """)
     result = conn.execute(query)
     stats = [row[0] for row in result]
