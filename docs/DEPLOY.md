@@ -19,7 +19,9 @@ from your machine to fill the database.
    - **`fantasy-streams-db`** — Postgres, `basic-256mb`, Virginia.
    - **`fantasy-streams`** — Python web service, `starter`, Virginia, running
      `gunicorn app:app`.
-   `DATABASE_URL` on the web service is wired to the database automatically.
+   `DATABASE_URL` is wired from the database; `FLASK_SECRET_KEY` is generated;
+   `APP_ENV=production` and `SKIP_SCHEMA_INIT=1` are set (draft-prep doesn't use
+   the admin/league tables).
 4. **Apply**. First build takes a few minutes (installing pandas/numpy).
 
 If Render rejects the database `plan` value, check the current slug at
@@ -76,11 +78,8 @@ Re-run step 3 whenever you want fresh numbers (new completed games, roster
 moves, injury changes). Later this can become a scheduled Render job; for now
 it's a manual local run.
 
-## When Phase 0 (PR #3) merges
+## Phase 1 note
 
-`app.py` will then load `config.py` and run schema init. Uncomment the three
-env vars at the bottom of `render.yaml`'s web service and redeploy:
-
-- `APP_ENV=production` — debug off, secure cookies, https URL scheme.
-- `FLASK_SECRET_KEY` (`generateValue: true`) — required in production.
-- `SKIP_SCHEMA_INIT=1` — draft-prep doesn't use the admin/league tables.
+When Yahoo auth lands, drop `SKIP_SCHEMA_INIT` so the admin/league tables get
+created, and add `YAHOO_CONSUMER_KEY` / `YAHOO_CONSUMER_SECRET` to the web
+service.
