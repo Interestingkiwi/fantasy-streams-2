@@ -9,6 +9,7 @@ import os
 
 import pandas as pd
 from db_config import engine
+from goalie_workload import FLATTEN_ANCHOR, FLATTEN_STRENGTH, flatten_starts
 import numpy as np
 
 # --- PROJECTED GAMES ---
@@ -21,22 +22,15 @@ import numpy as np
 OVERRIDES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "goalie_gp_overrides.csv")
 
-# Pull the assigned starts toward the middle: fewer 60-game workhorses, more
-# even tandems. 0.0 uses the table as-is, 1.0 gives everyone FLATTEN_ANCHOR.
-FLATTEN_STRENGTH = 0.15
-FLATTEN_ANCHOR = 40
-
 
 def load_gp_overrides():
-    """{playerId: projected games}, flattened toward FLATTEN_ANCHOR."""
+    """{playerId: projected games}, flattened toward the tandem anchor."""
     if not os.path.exists(OVERRIDES_FILE):
         print(f" -> No {os.path.basename(OVERRIDES_FILE)}; using historical GP for all goalies.")
         return {}
 
     table = pd.read_csv(OVERRIDES_FILE)
-    flattened = (
-        FLATTEN_ANCHOR + (table["sourceGamesPlayed"] - FLATTEN_ANCHOR) * (1 - FLATTEN_STRENGTH)
-    ).round().astype(int)
+    flattened = table["sourceGamesPlayed"].map(flatten_starts).astype(int)
     print(f" -> Loaded {len(table)} goalie GP overrides "
           f"(flattened {FLATTEN_STRENGTH:.0%} toward {FLATTEN_ANCHOR}).")
     return dict(zip(table["playerId"].astype(int), flattened))
