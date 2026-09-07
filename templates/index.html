@@ -51,7 +51,8 @@
             <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-emerald-800 flex flex-col">
                 <div class="text-center mb-6 flex-grow">
                     <h3 class="text-2xl font-semibold text-white mb-2">
-                        League Synced
+                        {# Only claim a sync when a league is actually selected. #}
+                        {% if active_league or active_league_id %}League Synced{% else %}Signed in to Yahoo{% endif %}
                         {% if dev_login %}<span class="text-xs align-middle bg-amber-700 text-amber-100 px-2 py-0.5 rounded ml-1">DEV</span>{% endif %}
                     </h3>
                     <p class="text-gray-400 text-sm mt-4">
@@ -82,7 +83,7 @@
                 </div>
                 <div class="mt-auto pt-4 space-y-3">
                     <a href="/draft-prep" class="block w-full btn-primary font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 shadow-md">
-                        Continue
+                        Go to Draft Prep
                     </a>
                     <button id="logout-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md text-sm px-5 py-2.5 text-center transition-colors border border-gray-600">
                         Sign Out
