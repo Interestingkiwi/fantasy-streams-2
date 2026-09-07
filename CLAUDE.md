@@ -87,6 +87,22 @@ in again.
 numeric string keys. `_iter_leagues()` walks for the key it wants and merges,
 rather than indexing by position, which is what made the old parsers brittle.
 
+**`YAHOO_AUTH_JSON` is deliberately not ported.** The old repo kept one
+long-lived token blob (key, secret, access, refresh, guid) in that env var and
+wrote it to a temp file for `yahoo_oauth.OAuth2`, so the ETL worker could call
+Yahoo with no browser session. It was never part of the login path. Here, each
+user's tokens live in `users` and the Phase 2 worker picks whose to use via
+`league_updaters` — no shared admin token, and no file handling.
+
+**A 403 on every Fantasy endpoint is a registration problem.** Diagnosed the
+long way once: a token response carrying no `xoauth_yahoo_guid` means Yahoo
+issued a token with no API identity, and no client change fixes it. Confirmed
+by the old repo failing identically on a fresh login while still serving
+previously-synced rows from Postgres — which is what made it *look* healthy.
+Editing a Yahoo app can silently drop its Fantasy Sports permission, and its
+Redirect URI field is single-valued, so adding one replaces the other; two
+deployments need two Yahoo apps.
+
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
 needs an HTTPS tunnel registered as the callback and set in
 `YAHOO_REDIRECT_URI`. Without one, use `DEV_BACKDOOR_PASS` — entering
