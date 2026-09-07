@@ -14,9 +14,8 @@ from ranking_utils import calculate_player_ranks
 # Create the Blueprint with a URL prefix
 draft_bp = Blueprint('draft', __name__, url_prefix='/draft-prep')
 
-# A date carrying fewer than this many games is a light night: most of the
-# league is idle, so a manager can start players who would otherwise sit.
-LIGHT_NIGHT_MAX_GAMES = 8
+# Shared with the Schedules page so the two cannot drift apart.
+from schedule_utils import LIGHT_NIGHT_MAX_GAMES  # noqa: E402
 
 def get_stat_mappings(conn):
     """Helper function to dynamically classify stats as Skater or Goalie from the DB."""

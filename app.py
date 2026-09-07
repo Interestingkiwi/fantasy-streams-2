@@ -16,6 +16,7 @@ from routes.main_routes import main_bp
 from routes.auth_routes import auth_bp
 from routes.draft_routes import draft_bp
 from routes.league_routes import league_bp
+from routes.schedule_routes import schedule_bp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -31,6 +32,7 @@ app.register_blueprint(main_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(draft_bp)
 app.register_blueprint(league_bp)
+app.register_blueprint(schedule_bp)
 
 if __name__ == '__main__':
     app.run(debug=app.config["DEBUG"], port=5000)
