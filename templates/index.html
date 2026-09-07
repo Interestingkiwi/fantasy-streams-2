@@ -5,19 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fantasy Streams</title>
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .form-input {
-            background-color: #2D2D2D;
-            color: #D4D4D4;
-            border: 1px solid #555;
-        }
-        .form-input::placeholder { color: #888; }
-        .btn-primary { background-color: #0E639C; color: white; }
-        .btn-primary:hover { background-color: #1177BB; }
-        .hidden { display: none; }
-    </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen relative">
 
