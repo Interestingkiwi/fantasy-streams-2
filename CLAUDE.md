@@ -70,11 +70,18 @@ yet, so the id_token is the one that works regardless. Its signature is not
 verified on purpose: it arrives on a server-to-server TLS call from Yahoo's
 token endpoint, not from the browser.
 
-**No `scope` is sent** — Yahoo fixes permissions at app registration, so the
-app must be registered **read/write** (Phase 4 writes rosters). A **403 from
-the Fantasy API almost always means that permission is missing**, not that the
-token is bad; `_forbidden_hint()` says so in the error rather than leaving a
-bare status code.
+**`scope` is required and is not implied by app registration.** Registration
+caps what the app *may* request; the token carries only what the authorization
+request actually asks for. `Config.YAHOO_SCOPE` defaults to `fspt-w` (Fantasy
+read/write — Phase 4 writes rosters); `fspt-r` is read-only, and adding
+`openid` also returns an `id_token`.
+
+Omitting it was a real bug, and an expensive one to read: Yahoo answers an
+unscoped token with **403 "This application is not authorized to perform this
+action"**, which points at the app registration when the app is in fact fine.
+So on a 403 suspect the scope first — `_forbidden_hint()` leads with that.
+Changing the scope does not upgrade tokens already issued; the user must sign
+in again.
 
 **Parsing Yahoo JSON:** entities come back as lists of partial dicts under
 numeric string keys. `_iter_leagues()` walks for the key it wants and merges,
