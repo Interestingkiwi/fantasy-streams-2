@@ -62,8 +62,19 @@ pair back; `api_get()` also retries once on a 401, since Yahoo can revoke a
 token before its stated hour is up. Yahoo omits `refresh_token` from some
 refresh responses, so the upsert COALESCEs it rather than nulling it.
 
+**Finding the guid** (`resolve_guid()`), cheapest source first: the token
+response's `xoauth_yahoo_guid`, then the `sub` claim of its OIDC `id_token`,
+then an API call. **Not every Yahoo app returns `xoauth_yahoo_guid`** — ours
+does not — and the API fallback needs Fantasy permission the app may not have
+yet, so the id_token is the one that works regardless. Its signature is not
+verified on purpose: it arrives on a server-to-server TLS call from Yahoo's
+token endpoint, not from the browser.
+
 **No `scope` is sent** — Yahoo fixes permissions at app registration, so the
-app must be registered **read/write** (Phase 4 writes rosters).
+app must be registered **read/write** (Phase 4 writes rosters). A **403 from
+the Fantasy API almost always means that permission is missing**, not that the
+token is bad; `_forbidden_hint()` says so in the error rather than leaving a
+bare status code.
 
 **Parsing Yahoo JSON:** entities come back as lists of partial dicts under
 numeric string keys. `_iter_leagues()` walks for the key it wants and merges,
