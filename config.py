@@ -16,6 +16,7 @@ Updated - 9/6/2026
 
 import logging
 import os
+from datetime import timedelta
 
 from dotenv import load_dotenv
 
@@ -51,9 +52,32 @@ class Config:
     # url_for(..., _external=True) scheme - https in prod, http for localhost.
     PREFERRED_URL_SCHEME = "https" if IS_PRODUCTION else "http"
 
+    # Sessions last a month, so a returning user is not asked to reauthorize
+    # Yahoo every browser restart. The refresh token behind it lives longer.
+    PERMANENT_SESSION_LIFETIME = timedelta(days=30)
+
     # Yahoo Fantasy OAuth (Phase 1). Auth simply won't work until these are set.
     YAHOO_CONSUMER_KEY = os.getenv("YAHOO_CONSUMER_KEY")
     YAHOO_CONSUMER_SECRET = os.getenv("YAHOO_CONSUMER_SECRET")
+
+    # Must match the Redirect URI registered in the Yahoo developer console
+    # character for character. Unset -> built from the incoming request, which
+    # is right for a plain deploy but wrong behind a tunnel or proxy.
+    YAHOO_REDIRECT_URI = os.getenv("YAHOO_REDIRECT_URI") or None
+
+    # Endpoint overrides. Only for pointing the OAuth flow at a local stub in
+    # tests; leave unset everywhere else.
+    YAHOO_TOKEN_URL = os.getenv("YAHOO_TOKEN_URL") or None
+    YAHOO_API_BASE = os.getenv("YAHOO_API_BASE") or None
+
+    # Terms of Service version recorded against a user at login
+    # (users.tos_accepted_version). Bump when the terms change, along with
+    # TOS_UPDATED below and CURRENT_TERMS_VERSION in templates/index.html.
+    TOS_VERSION = int(os.getenv("TOS_VERSION", "1"))
+
+    # When the terms were last revised - shown on /terms. Not today's date:
+    # "Last Updated" has to stay put until the text actually changes.
+    TOS_UPDATED = "December 12, 2025"
 
     # Background jobs (Phase 2+). Unset -> league sync runs inline.
     REDIS_URL = os.getenv("REDIS_URL") or None

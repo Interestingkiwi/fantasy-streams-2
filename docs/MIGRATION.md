@@ -10,9 +10,9 @@ SQLAlchemy Core, Postgres).
 | | Old (`fantasy-streams`) | New (this repo) |
 |---|---|---|
 | Structure | monolithic `app.py` + `db_builder.py` + `jobs/` | blueprints in `routes/`, SQLAlchemy Core |
-| Auth | full Yahoo OAuth2 (`yfpy` + `yahoo_fantasy_api` + `yahoo_oauth` + `requests_oauthlib`) | `/login` stubbed; login modal UI already built in `templates/index.html` |
+| Auth | full Yahoo OAuth2 (`yfpy` + `yahoo_fantasy_api` + `yahoo_oauth` + `requests_oauthlib`) | Yahoo OAuth2 done, hand-rolled on `requests` in `yahoo_auth.py`; no OAuth dependency |
 | DB | Postgres: **admin schema** (`users`, `league_updaters`, `job_logs`, `scheduled_transactions`) + **per-league schema** (~16 tables: `league_info`, `teams`, `scoring`, `lineup_settings`, `weeks`, `matchups`, `rosters`, `free_agents`, `waiver_players`, `rostered_players`, `transactions`, `daily_player_stats`, `daily_bench_stats`, `daily_lineups_dump`, `rosters_tall`, `db_metadata`) | projection tables only (`final_projections`, `historic_*`, `player_directory`, …) |
-| Background | Redis + RQ worker (`worker.py`), gevent/gunicorn, APScheduler | none |
+| Background | Redis + RQ worker (`worker.py`), gevent/gunicorn, APScheduler | `jobs.enqueue()` — RQ when `REDIS_URL` is set, thread when not |
 | Premium | `requires_premium` gating via `users.is_premium` | none |
 | Pages | matchup, lineups, season-history, trade-helper, schedules, free-agents, goalie-planning, league-database, settings, streaming, scheduled add/drops | draft-prep only |
 
@@ -56,8 +56,11 @@ else:
 
 ### 3. Slim-ish Yahoo auth
 
-- `requests_oauthlib` for the OAuth2 authorization-code flow (as in the old
-  `/login` + `/callback`).
+- ~~`requests_oauthlib` for the OAuth2 authorization-code flow~~ — **revised
+  when Phase 1 landed:** the flow is hand-rolled on plain `requests` in
+  `yahoo_auth.py`. Since refresh was always going to be hand-rolled, pulling in
+  `requests_oauthlib` (plus `oauthlib`) would have meant two mechanisms for one
+  job; the code exchange is a single POST. No new dependency was added.
 - **Drop `yahoo_oauth` now** — hand-roll token refresh (~15-line POST to the
   token URL). Removes the file-based token handling and the
   tempfile-per-request dance, both flagged "NOT thread-safe" in the old code.
@@ -69,14 +72,15 @@ else:
 Constraints regardless:
 
 - Redirect URI must exactly match the Yahoo Developer console registration.
-  Local dev needs an https tunnel or a registered `http://localhost` callback.
+  Yahoo refuses plain-http callbacks, `http://localhost` included, so local dev
+  needs an https tunnel — or the `DEV_BACKDOOR_PASS` login, which skips Yahoo.
 - Register the app for **read/write** scope now — scope is fixed at
   registration and Phase 4 needs writes.
 - Access tokens expire in 1 hour; refresh handling is mandatory.
 
 ## Phased plan
 
-### Phase 0 — Foundations (no user-facing pages)
+### Phase 0 — Foundations (no user-facing pages) — **done**
 
 1. Move the hardcoded Postgres credentials in `export_postgres.py` and
    `preseason_db_build/db_config.py` fully to env vars; scrub from history if
@@ -89,18 +93,28 @@ Constraints regardless:
    `REDIS_URL`.
 5. Install `rq` + `redis`; add the enqueue-or-inline helper.
 
-### Phase 1 — Yahoo OAuth + session (gates everything league-specific)
+### Phase 1 — Yahoo OAuth + session (gates everything league-specific) — **done**
 
-- `routes/auth_routes.py`: real `/login` (build Yahoo auth URL), **new
+- ✅ `routes/auth_routes.py`: real `/login` (build Yahoo auth URL), **new
   `/callback`** (code → token exchange → fetch `guid` + user's NHL leagues),
-  `/logout`, `/api/my_leagues`, `/api/switch_league`.
-- `users` table + `save_user_credentials` + hand-rolled token refresh.
-- Keep the dev-backdoor login (`DEV_BACKDOOR_PASS`) — it is how to test without
-  Yahoo.
-- Port `requires_premium` as a pass-through flag for now; real logic later.
-- Port the `home.html` shell + nav + league switcher so ported pages have
-  somewhere to live.
-- `settings` page alongside this phase.
+  `/logout`, `/api/session`, `/api/my_leagues`, `/api/switch_league`.
+- ✅ `users` table + `save_user_credentials` + hand-rolled token refresh, all in
+  `yahoo_auth.py`. `state` is verified on the callback; the session cookie
+  carries the guid and league only, never a token.
+- ✅ Dev-backdoor login (`DEV_BACKDOOR_PASS`) — the only way to reach signed-in
+  pages locally, since Yahoo refuses plain-http redirect URIs.
+- ✅ League switcher, on the landing page rather than a nav shell.
+
+Still open from this phase:
+
+- `requires_premium` pass-through flag (`users.is_premium` already exists).
+- The `home.html` shell + nav — deferred until Phase 3 gives it pages to hold.
+  The landing page carries the league switcher in the meantime.
+- `settings` page.
+
+**Before a real login works** the app must be registered at
+developer.yahoo.com for Fantasy **read/write**, and its Redirect URI must match
+`YAHOO_REDIRECT_URI` exactly (an HTTPS tunnel locally).
 
 ### Phase 2 — League ETL (everything downstream reads this)
 

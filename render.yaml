@@ -32,6 +32,17 @@ services:
         value: production
       - key: FLASK_SECRET_KEY
         generateValue: true
-      # draft-prep doesn't use the admin/league tables; skip creating them.
-      - key: SKIP_SCHEMA_INIT
-        value: "1"
+      # Yahoo OAuth. sync: false declares the variable without putting the
+      # secret in git - set both values in the Render dashboard. Until they
+      # are set the app boots fine and /login reports that Yahoo is disabled.
+      - key: YAHOO_CONSUMER_KEY
+        sync: false
+      - key: YAHOO_CONSUMER_SECRET
+        sync: false
+      # YAHOO_REDIRECT_URI is intentionally unset: it is then built from the
+      # request as https://<service>.onrender.com/callback, which is what has
+      # to be registered in the Yahoo developer console.
+      #
+      # SKIP_SCHEMA_INIT is deliberately absent. It used to be "1" because
+      # draft-prep needs no admin tables, but auth stores tokens in `users`,
+      # so the startup DDL has to run. It is CREATE TABLE IF NOT EXISTS.
