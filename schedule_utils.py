@@ -14,13 +14,12 @@ Updated - 9/7/2026
 from collections import Counter
 from datetime import date, timedelta
 
-# A date carrying fewer than this many games is a light night: enough of the
-# league is idle that a manager can start players who would otherwise sit.
+# Eight games or fewer is the standard fantasy-hockey definition of a light
+# night: enough of the league is idle that a manager can start players who
+# would otherwise sit. This is a domain convention, not a tunable - leave it.
 #
-# NOTE: 8 games is 16 of 32 teams, which flags about 56% of an 84-game season.
-# The original comment described "under a quarter of the league", which would
-# be 4. Left at 8 because it is what the draft-prep playoff column has always
-# used and changing it moves numbers users have seen; revisit deliberately.
+# Callers compare with `<`, so nights of exactly 8 games are not currently
+# flagged. That is the one detail worth a deliberate decision some time.
 LIGHT_NIGHT_MAX_GAMES = 8
 
 # Yahoo fantasy weeks run Monday to Sunday.

@@ -26,7 +26,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 
 | Path | Purpose |
 |---|---|
-| `app.py` | Entry point; registers the `main`, `auth`, `draft` blueprints; `python app.py` -> debug server on :5000 |
+| `app.py` | Entry point; registers the `main`, `auth`, `draft`, `league`, `schedules` blueprints; `python app.py` -> debug server on :5000 |
 | `routes/main_routes.py` | `/` (renders signed-in or signed-out from the session), `/terms`; `/standalone` still a placeholder |
 | `routes/auth_routes.py` | Yahoo OAuth: `/login`, `/callback`, `/logout`, `/api/session`, `/api/my_leagues`, `/api/switch_league` |
 | `yahoo_auth.py` | Yahoo OAuth2 client — consent URL, code exchange, token refresh, authenticated API calls (see *Auth* below) |
@@ -34,6 +34,9 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `schema.py` | Idempotent DDL for the admin + per-league tables; runs at startup (`SKIP_SCHEMA_INIT=1` to bypass) |
 | `jobs.py` / `worker.py` | `enqueue()` — RQ when `REDIS_URL` is set, background thread when it isn't |
 | `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST) |
+| `routes/league_routes.py` | `/league/` League Database viewer + read-only APIs, all scoped to the session's league |
+| `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
+| `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation — shared by draft-prep and Schedules |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
 | `ranking_utils.py` | Ranking engine — see *Ranking* below |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
@@ -41,7 +44,12 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
 | `templates/index.html` | Landing/login page |
 | `templates/pages/draft-prep.html` | ~1,375-line draft prep UI: League Settings modal, projection table, ranking controls |
-| `static/styles.css`, `static/tailwind.js` | Styles + vendored Tailwind |
+| `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
+| `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
+| `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
+| `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
+| `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
+| `import_legacy_league_data.py` | Transitional: copies the old deployment's per-league tables in as local fixtures |
 
 ## Auth (`yahoo_auth.py` + `routes/auth_routes.py`)
 
@@ -129,22 +137,52 @@ debug the auth code against these symptoms.
   `YAHOO_SCOPE` therefore defaults to empty; `openid` is the only useful
   setting, and only to force an `id_token` for `resolve_guid()`.
 
-**When API access is granted, re-verify in this order** — the auth code is
-believed correct but has never once completed a real Fantasy call:
+### When Yahoo API access is granted
 
-1. `python tests/run_all.py` — should still pass; it exercises the flow
-   against a stub, so it proves the code, not Yahoo.
-2. Log in and read `Yahoo token response fields:` in the log. If
-   `xoauth_yahoo_guid` is present, the token carries a user identity and the
-   rest should follow.
-3. Re-run the scope probe (see above). Yahoo may accept a Fantasy scope once
-   access is granted, in which case set `YAHOO_SCOPE` rather than assuming.
-4. Only then, if something still fails, debug the code.
+The auth code is believed correct but has **never once completed a real Fantasy
+call**, so treat the first login as unproven. Work in this order.
 
-**One arbitrary choice worth revisiting then:** `_post_token()` sends the
-client credentials in the request body rather than as HTTP Basic auth. Both
-are valid OAuth2; this matches the old repo's working caller, but nothing ever
-proved it mattered, since no request got far enough to tell.
+**0. Check `YAHOO_SCOPE` is unset on Render.** It was set to `fspt-w` during
+debugging, and while set, login fails before Yahoo even shows the consent screen
+(`error=invalid_scope`). Empty is correct.
+
+1. **`python tests/run_all.py`** — should pass unchanged. The suites run against
+   a stub Yahoo, so they prove the code, not the grant.
+
+2. **Log in and read the log line `Yahoo token response fields:`.** This is the
+   single most informative signal:
+   - `xoauth_yahoo_guid` present -> the token carries a user identity; the rest
+     should follow.
+   - absent -> `resolve_guid()` falls back to the `id_token`, then to an API
+     call. Absent *and* a 403/401 on every endpoint means the grant still is not
+     live; do not start editing the auth code.
+
+3. **Re-run the scope probe** before assuming scope is still a dead end — the
+   answer may change with a granted app. Build the authorize URL with a live
+   `client_id` and try `<none>`, `openid`, `fspt-r`, `fspt-w`; anything not
+   returning `error=invalid_scope` is accepted. Set `YAHOO_SCOPE` on evidence,
+   never on a guess.
+
+4. **Only then** debug code. One arbitrary choice to look at first: `_post_token()`
+   sends client credentials in the request body rather than as HTTP Basic auth.
+   Both are valid OAuth2; this matches the old repo's working caller, but no
+   request ever got far enough to prove it mattered.
+
+Once a real login completes, **Phase 2 (the league ETL) is what unblocks**, and
+with it every page that reads per-league tables. Carry these into that port:
+
+- **`players` -> `yahoo_players`.** The old `db_builder` / `jobs/fetch_player_ids.py`
+  write a table called `players`; here it is `yahoo_players`, kept clear of the
+  NHL-keyed `player_directory` and `final_projections`. Apply the rename.
+- **Yahoo player ids are TEXT** in `yahoo_players` but INTEGER in every
+  per-league table, inherited from the old schema. `league_routes.PLAYER_JOIN`
+  holds the cast; reconcile the column types properly here.
+- **`league_updaters.league_id` is TEXT** while the per-league tables use
+  INTEGER. Same reconciliation.
+- **The season mismatch resolves itself.** The imported fixtures are 2025-26
+  against a 2026-27 `nhl_schedule`, which is why anything joining league weeks to
+  game dates is empty. A real sync fixes it — not a bug to chase.
+- **Drop `import_legacy_league_data.py`** once a real sync populates the tables.
 
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
 needs an HTTPS tunnel registered as the callback and set in
@@ -312,8 +350,21 @@ Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 and Yahoo-auth decisions already settled.
 
 Phases 0 and 1 are done: config/schema/jobs foundations, and Yahoo OAuth end to
-end (see *Auth* above). **Phase 2 — the league ETL (`db_builder.py` ->
-`league_sync/`) — is next**; it is what turns a selected league into data.
+end (see *Auth* above), though the OAuth flow has never completed a real Fantasy
+call because Yahoo gated the API — see *When Yahoo API access is granted*.
+
+**Phase 2 — the league ETL (`db_builder.py` -> `league_sync/`) — is next and is
+blocked on that grant.** Two Phase 3 pages were built ahead of it, because both
+work without one:
+
+- **League Database viewer** (`/league/`) — Phase 3 item 1. Reads the per-league
+  tables, which `import_legacy_league_data.py` fills with real fixtures from the
+  old deployment.
+- **NHL Schedule** (`/schedules/`) — Phase 3 item 2. Reads only `nhl_schedule`,
+  so it needs neither a league nor Yahoo.
+
+Everything else in Phase 3 needs Phase 2 first. `DEV_BACKDOOR_PASS` is how to
+reach signed-in pages meanwhile.
 
 Already pulled forward out of order: the NHL schedule (MIGRATION Phase 3 item 2) is
 built as `nhl_schedule` by `scrape_nhl_schedule.py`, because playoff-week comparison
@@ -324,8 +375,14 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 
 ## Known issues / cleanup backlog
 
-- Yahoo OAuth works, but **no page consumes the session yet** — `/` shows the
-  active league and draft-prep is still league-agnostic. League ETL is Phase 2.
+- **Yahoo has gated the Fantasy API** (Sept 2026); an access application was
+  submitted 7 Sept 2026. Until it is granted nothing can sync — see *When Yahoo
+  API access is granted* for the resumption checklist.
+- The per-league tables hold **imported 2025-26 fixtures**, including other
+  people's leagues. Local development only: do not commit the data or load it
+  into a deployment.
+- `/` and `/league/` consume the session; draft-prep and `/schedules/` are
+  deliberately league-agnostic.
 - `users.tos_accepted_version` is an INTEGER (`Config.TOS_VERSION`), while
   `index.html` keeps its own `CURRENT_TERMS_VERSION` date string in
   localStorage. Two representations of one thing; reconcile when the terms next
