@@ -38,8 +38,58 @@
             </p>
         </div>
 
+        {% if auth_error %}
+        <div id="auth-banner" class="w-full max-w-6xl mb-8 bg-red-900/40 border border-red-700 text-red-200 rounded-lg px-5 py-4 text-sm flex items-start justify-between gap-4">
+            <span>{{ auth_error }}</span>
+            <button id="dismiss-auth-banner" class="text-red-300 hover:text-white text-xl leading-none" aria-label="Dismiss">&times;</button>
+        </div>
+        {% endif %}
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 w-full max-w-6xl">
 
+            {% if authenticated %}
+            <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-emerald-800 flex flex-col">
+                <div class="text-center mb-6 flex-grow">
+                    <h3 class="text-2xl font-semibold text-white mb-2">
+                        League Synced
+                        {% if dev_login %}<span class="text-xs align-middle bg-amber-700 text-amber-100 px-2 py-0.5 rounded ml-1">DEV</span>{% endif %}
+                    </h3>
+                    <p class="text-gray-400 text-sm mt-4">
+                        {% if active_league %}
+                            Active league: <span class="text-emerald-400 font-medium">{{ active_league.name }}</span>
+                            <span class="text-gray-500">({{ active_league.num_teams }} teams, {{ active_league.season }})</span>
+                        {% elif active_league_id %}
+                            Active league ID: <span class="text-emerald-400 font-medium">{{ active_league_id }}</span>
+                        {% else %}
+                            Signed in to Yahoo. Choose which league to analyse.
+                        {% endif %}
+                    </p>
+
+                    {% if leagues %}
+                    <div class="mt-5 text-left">
+                        <label for="league-select" class="block mb-1 text-xs font-medium text-gray-400">Your NHL leagues</label>
+                        <select id="league-select" class="form-input w-full p-2.5 rounded-md text-sm">
+                            {% if not active_league_id %}<option value="">Select a league…</option>{% endif %}
+                            {% for league in leagues %}
+                            <option value="{{ league.league_id }}" {% if league.league_id == active_league_id %}selected{% endif %}>
+                                {{ league.name }}{% if league.num_teams %} — {{ league.num_teams }} teams{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <p id="league-switch-status" class="text-xs mt-2 hidden"></p>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="mt-auto pt-4 space-y-3">
+                    <a href="/draft-prep" class="block w-full btn-primary font-medium rounded-md text-sm px-5 py-3 text-center transition-colors duration-200 shadow-md">
+                        Continue
+                    </a>
+                    <button id="logout-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md text-sm px-5 py-2.5 text-center transition-colors border border-gray-600">
+                        Sign Out
+                    </button>
+                </div>
+            </div>
+            {% else %}
             <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 flex flex-col">
                 <div class="text-center mb-6 flex-grow">
                     <h3 class="text-2xl font-semibold text-white mb-2">Sync Your League</h3>
@@ -53,6 +103,7 @@
                     </button>
                 </div>
             </div>
+            {% endif %}
 
             <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 flex flex-col">
                 <div class="text-center mb-6 flex-grow">
@@ -151,6 +202,14 @@
                 </button>
 
                 <h3 class="text-2xl font-semibold text-white mb-2 text-center">Yahoo Login</h3>
+
+                {% if not yahoo_configured %}
+                <div class="bg-amber-900/40 border border-amber-700 text-amber-200 rounded-md p-3 mt-4 text-xs text-center">
+                    Yahoo sign-in is not configured on this server. Set
+                    <code class="text-amber-100">YAHOO_CONSUMER_KEY</code> and
+                    <code class="text-amber-100">YAHOO_CONSUMER_SECRET</code> to enable it.
+                </div>
+                {% endif %}
 
                 <form id="credentials-form" class="space-y-4 mt-4">
                     <div>
@@ -307,12 +366,15 @@
             authError.classList.add('hidden');
         };
 
-        // Open Sync Modal
-        openSyncModalBtn.addEventListener('click', () => {
-            syncModal.classList.remove('hidden');
-            hideAllPlatformViews();
-            platformSelectionView.classList.remove('hidden');
-        });
+        // Open Sync Modal. Absent when already signed in - that card is
+        // replaced by the league panel, so guard rather than assume.
+        if (openSyncModalBtn) {
+            openSyncModalBtn.addEventListener('click', () => {
+                syncModal.classList.remove('hidden');
+                hideAllPlatformViews();
+                platformSelectionView.classList.remove('hidden');
+            });
+        }
 
         // Close Sync Modal
         const closeSyncModal = () => {
@@ -391,7 +453,7 @@
                     });
 
                     const data = await response.json();
-                    if (!response.ok) throw new Error(data.error || 'Failed to start login.');
+                    if (!response.ok) throw new Error(data.message || 'Failed to start login.');
 
                     if (data.dev_login && data.redirect_url) {
                         window.location.href = data.redirect_url;
@@ -406,6 +468,62 @@
                     showAuthError(error.message);
                     button.textContent = 'Login with Yahoo';
                     button.disabled = false;
+                }
+            });
+        }
+
+        // --- 4. SIGNED-IN CONTROLS ---
+        // These elements only exist once a session is established.
+
+        const dismissBanner = document.getElementById('dismiss-auth-banner');
+        if (dismissBanner) {
+            dismissBanner.addEventListener('click', () => {
+                document.getElementById('auth-banner').remove();
+            });
+        }
+
+        const logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', async () => {
+                logoutBtn.disabled = true;
+                logoutBtn.textContent = 'Signing out…';
+                try {
+                    const response = await fetch('/logout', { method: 'POST' });
+                    const data = await response.json();
+                    window.location.href = data.redirect_url || '/';
+                } catch (error) {
+                    logoutBtn.disabled = false;
+                    logoutBtn.textContent = 'Sign Out';
+                }
+            });
+        }
+
+        const leagueSelect = document.getElementById('league-select');
+        const leagueStatus = document.getElementById('league-switch-status');
+        if (leagueSelect) {
+            leagueSelect.addEventListener('change', async () => {
+                const leagueId = leagueSelect.value;
+                if (!leagueId) return;
+
+                leagueSelect.disabled = true;
+                leagueStatus.className = 'text-xs mt-2 text-gray-400';
+                leagueStatus.textContent = 'Switching…';
+
+                try {
+                    const response = await fetch('/api/switch_league', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ league_id: leagueId })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.message || 'Could not switch league.');
+
+                    // Reload so the server re-renders the active league line.
+                    window.location.reload();
+                } catch (error) {
+                    leagueSelect.disabled = false;
+                    leagueStatus.className = 'text-xs mt-2 text-red-400';
+                    leagueStatus.textContent = error.message;
                 }
             });
         }

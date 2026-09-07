@@ -18,15 +18,21 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 - **Scraping:** requests, BeautifulSoup4, lxml, cloudscraper
 - **Frontend:** Jinja templates + Tailwind (vendored `static/tailwind.js`), vanilla ES6,
   dark VS Code-style theme. No build step.
-- **Planned but not yet wired:** Redis + RQ workers, Gevent/Gunicorn, Yahoo OAuth
+- **Auth:** Yahoo OAuth2 (authorization-code), hand-rolled on `requests` — see *Auth*
+- **Background:** Redis + RQ (`jobs.py`, `worker.py`); falls back to a thread with no Redis
+- **Planned but not yet wired:** Gevent, the league-sync ETL, `yahoo_fantasy_api` writes
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `app.py` | Entry point; registers the `main`, `auth`, `draft` blueprints; `python app.py` -> debug server on :5000 |
-| `routes/main_routes.py` | `/`, `/standalone`, `/terms` — mostly placeholders |
-| `routes/auth_routes.py` | `/login` — **stubbed** Yahoo OAuth (returns a fake `auth_url`) |
+| `routes/main_routes.py` | `/` (renders signed-in or signed-out from the session), `/terms`; `/standalone` still a placeholder |
+| `routes/auth_routes.py` | Yahoo OAuth: `/login`, `/callback`, `/logout`, `/api/session`, `/api/my_leagues`, `/api/switch_league` |
+| `yahoo_auth.py` | Yahoo OAuth2 client — consent URL, code exchange, token refresh, authenticated API calls (see *Auth* below) |
+| `config.py` | `Config` from env + `check_config()` fail-fast at startup |
+| `schema.py` | Idempotent DDL for the admin + per-league tables; runs at startup (`SKIP_SCHEMA_INIT=1` to bypass) |
+| `jobs.py` / `worker.py` | `enqueue()` — RQ when `REDIS_URL` is set, background thread when it isn't |
 | `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST) |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
 | `ranking_utils.py` | Ranking engine — see *Ranking* below |
@@ -36,6 +42,38 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `templates/index.html` | Landing/login page |
 | `templates/pages/draft-prep.html` | ~1,375-line draft prep UI: League Settings modal, projection table, ranking controls |
 | `static/styles.css`, `static/tailwind.js` | Styles + vendored Tailwind |
+
+## Auth (`yahoo_auth.py` + `routes/auth_routes.py`)
+
+Standard OAuth2 authorization-code flow, hand-rolled on `requests`:
+
+1. `POST /login` — validates the terms tick and the League ID, then returns a
+   Yahoo consent URL. A random `state` and the typed league id go into the
+   session for the round trip.
+2. `GET /callback` — verifies `state` (a mismatch is a forged callback *or* an
+   expired session; both land back on `/` with a message, never a 500), swaps
+   the code for tokens, stores them against Yahoo's `guid`, and fetches the
+   user's NHL leagues.
+3. The signed session cookie holds only `guid`, the selected `league_id`, and
+   the cached league list — **never a token**. Tokens live in `users`.
+
+`get_valid_access_token()` refreshes 5 minutes before expiry and writes the new
+pair back; `api_get()` also retries once on a 401, since Yahoo can revoke a
+token before its stated hour is up. Yahoo omits `refresh_token` from some
+refresh responses, so the upsert COALESCEs it rather than nulling it.
+
+**No `scope` is sent** — Yahoo fixes permissions at app registration, so the
+app must be registered **read/write** (Phase 4 writes rosters).
+
+**Parsing Yahoo JSON:** entities come back as lists of partial dicts under
+numeric string keys. `_iter_leagues()` walks for the key it wants and merges,
+rather than indexing by position, which is what made the old parsers brittle.
+
+**Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
+needs an HTTPS tunnel registered as the callback and set in
+`YAHOO_REDIRECT_URI`. Without one, use `DEV_BACKDOOR_PASS` — entering
+`<league_id>-<pass>` in the League ID box signs in as `DEV_ADMIN_GUID` with no
+Yahoo call at all. A wrong password falls through to the normal Yahoo flow.
 
 ## Ranking (`ranking_utils.py`)
 
@@ -156,7 +194,8 @@ cd preseason_db_build && python build_database.py
 
 - Requires `.env` with `DATABASE_URL` (local Postgres). `.env` is git-ignored.
 - No test suite exists yet.
-- `requirements.txt` is UTF-16 encoded — it looks garbled in editors but pip reads it fine.
+- `requirements.txt` is plain UTF-8. (It used to be UTF-16; if an editor shows CJK
+  gibberish, that is a stale copy.)
 
 ## Conventions
 
@@ -173,7 +212,9 @@ cd preseason_db_build && python build_database.py
 (`Interestingkiwi/fantasy-streams`) into this one, with the DB-idiom, background-job,
 and Yahoo-auth decisions already settled.
 
-Phase 0 (Postgres credentials -> env vars) is done. **Yahoo OAuth is the next phase.**
+Phases 0 and 1 are done: config/schema/jobs foundations, and Yahoo OAuth end to
+end (see *Auth* above). **Phase 2 — the league ETL (`db_builder.py` ->
+`league_sync/`) — is next**; it is what turns a selected league into data.
 
 Already pulled forward out of order: the NHL schedule (MIGRATION Phase 3 item 2) is
 built as `nhl_schedule` by `scrape_nhl_schedule.py`, because playoff-week comparison
@@ -184,7 +225,14 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 
 ## Known issues / cleanup backlog
 
-- **Yahoo OAuth (`/login`) is a stub** — returns a fake `auth_url`. Next phase.
+- Yahoo OAuth works, but **no page consumes the session yet** — `/` shows the
+  active league and draft-prep is still league-agnostic. League ETL is Phase 2.
+- `users.tos_accepted_version` is an INTEGER (`Config.TOS_VERSION`), while
+  `index.html` keeps its own `CURRENT_TERMS_VERSION` date string in
+  localStorage. Two representations of one thing; reconcile when the terms next
+  change.
+- Token refresh has no lock: two concurrent requests on an expired token both
+  refresh, and the later write wins. Harmless now; revisit with the Phase 2 worker.
 - The automation / streaming features are stubs.
 - `/api/projections` and `/api/rank-players` each take **~2s**, essentially all of it
   `SELECT *` plus jsonify of 864 rows x ~37 columns. The ranking maths is ~40ms of that.
