@@ -91,9 +91,12 @@ def build_authorization_url():
     Returns (url, state); the caller stores state in the session and checks
     it when Yahoo redirects back.
 
-    No `scope` is sent: Yahoo fixes permissions at app registration, so the
-    app must be registered for Fantasy *read/write* (Phase 4 writes to
-    rosters). Adding scope here would not widen it.
+    `scope` is required, and registering the app for Fantasy read/write does
+    not substitute for it. Registration caps what the app *may* ask for; the
+    token only carries what this request actually asks for. Omitting it mints
+    a token with no Fantasy access, which 403s on every Fantasy endpoint with
+    "This application is not authorized to perform this action" - misleading,
+    because the app is authorized and the token is not.
     """
     state = secrets.token_urlsafe(32)
     params = {
@@ -103,6 +106,11 @@ def build_authorization_url():
         "state": state,
         "language": "en-us",
     }
+
+    scope = (current_app.config.get("YAHOO_SCOPE") or "").strip()
+    if scope:
+        params["scope"] = scope
+
     return f"{AUTH_URL}?{urlencode(params)}", state
 
 
@@ -152,15 +160,21 @@ def refresh_token(refresh):
 
 def _forbidden_hint(body):
     """
-    A 403 from the Fantasy API nearly always means the Yahoo app itself lacks
-    Fantasy Sports permission - the token is fine, the app is not authorised.
-    Worth saying outright, because Yahoo's own body is vague about it.
+    Yahoo's 403 body says "This application is not authorized", which points
+    at the app registration and is usually the wrong place to look: far more
+    often the app is fine and the *token* was minted without Fantasy scope.
+    Lead with that, since it is both the likelier cause and the easy one to
+    overlook.
     """
+    scope = (current_app.config.get("YAHOO_SCOPE") or "").strip() or "(none)"
     return (
-        "Yahoo refused the Fantasy API with 403. The usual cause is the Yahoo "
-        "app not having Fantasy Sports API permission: open the app at "
-        "developer.yahoo.com/apps, set Fantasy Sports to Read/Write, then sign "
-        f"in again to get a new token. Yahoo said: {body[:200]}"
+        f"Yahoo refused the Fantasy API with 403, using scope {scope!r}. This "
+        "usually means the token lacks Fantasy scope rather than the app "
+        "lacking permission: YAHOO_SCOPE must include 'fspt-w' (read/write) "
+        "or 'fspt-r' (read), and a token minted before the scope changed keeps "
+        "the old one - sign in again to mint a fresh token. Only if that is "
+        "already right is it worth checking Fantasy Sports permission on the "
+        f"app at developer.yahoo.com/apps. Yahoo said: {body[:200]}"
     )
 
 

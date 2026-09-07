@@ -65,6 +65,14 @@ class Config:
     # is right for a plain deploy but wrong behind a tunnel or proxy.
     YAHOO_REDIRECT_URI = os.getenv("YAHOO_REDIRECT_URI") or None
 
+    # OAuth scope requested at the consent screen. Registering the app for
+    # Fantasy read/write is NOT enough on its own - the token only carries the
+    # scopes the authorization request asks for, and a token without this gets
+    # 403 "not authorized" from every Fantasy endpoint.
+    #   fspt-w = Fantasy Sports read/write, fspt-r = read only.
+    # Add "openid" (space separated) to also get an id_token back.
+    YAHOO_SCOPE = os.getenv("YAHOO_SCOPE", "fspt-w")
+
     # Endpoint overrides. Only for pointing the OAuth flow at a local stub in
     # tests; leave unset everywhere else.
     YAHOO_TOKEN_URL = os.getenv("YAHOO_TOKEN_URL") or None
