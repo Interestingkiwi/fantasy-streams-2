@@ -189,22 +189,33 @@ def _log_yahoo_failure(url, response):
     )
 
 
-def _forbidden_hint(body):
+def _forbidden_hint(body, token_had_guid=True):
     """
-    Yahoo answers an under-permissioned token with "This application is not
-    authorized", which points at the app registration - often the wrong place.
-    Two likelier causes, in order, with the full body left to the log.
+    Yahoo's 403 body is always the same sentence regardless of cause, so the
+    useful signal is elsewhere: whether the token response carried
+    `xoauth_yahoo_guid`.
+
+    A token issued to an app with API permissions includes that field. Without
+    it, Yahoo minted a token with no API identity at all, which no amount of
+    client-side change can fix - it is the Yahoo app registration, not the
+    request. Say that plainly instead of sending people round the same loop.
     """
-    scope = (current_app.config.get("YAHOO_SCOPE") or "").strip() or "(none)"
+    if not token_had_guid:
+        return (
+            "Yahoo refused the Fantasy API with 403, and the token it issued "
+            "carried no 'xoauth_yahoo_guid'. That field is standard for a token "
+            "with Yahoo API permissions, so its absence means Yahoo granted a "
+            "token with no API access - a registration problem, not a request "
+            "one. Re-saving the app's API Permissions with Fantasy Sports "
+            "Read/Write (or creating a fresh Yahoo app and using its new key "
+            "and secret) is the fix; editing an existing app can silently drop "
+            "that permission. Revoking and re-consenting will NOT help. Full "
+            "response in the server log."
+        )
     return (
-        f"Yahoo refused the Fantasy API with 403 (scope requested: {scope!r}). "
-        "Most likely your Yahoo account already has an older authorization for "
-        "this app: Yahoo then reuses that grant, skips the consent screen, and "
-        "issues a token with the OLD permissions, so a new scope never takes "
-        "effect. Remove Fantasy Streams from the apps connected to your Yahoo "
-        "account, then sign in again to force a fresh consent. Failing that, "
-        "check Fantasy Sports permission on the app at developer.yahoo.com/apps. "
-        "The full Yahoo response is in the server log."
+        "Yahoo refused the Fantasy API with 403. The token itself looks normal, "
+        "so check Fantasy Sports Read/Write on the app at "
+        "developer.yahoo.com/apps. Full response in the server log."
     )
 
 
@@ -244,10 +255,12 @@ def resolve_guid(token):
         if guid:
             return guid
 
-    return fetch_guid(token["access_token"])
+    # Reaching here means the token had no guid of its own - a strong signal
+    # in its own right if the API call then 403s.
+    return fetch_guid(token["access_token"], token_had_guid=False)
 
 
-def fetch_guid(access_token):
+def fetch_guid(access_token, token_had_guid=True):
     """
     Last-resort guid lookup for a token we hold but have not stored yet.
     Prefer resolve_guid(), which only lands here when the token response
@@ -270,7 +283,7 @@ def fetch_guid(access_token):
     if response.status_code != 200:
         _log_yahoo_failure(response.url, response)
     if response.status_code == 403:
-        raise YahooAuthError(_forbidden_hint(response.text))
+        raise YahooAuthError(_forbidden_hint(response.text, token_had_guid))
     if response.status_code != 200:
         raise YahooAuthError(
             f"Could not identify the Yahoo user ({response.status_code}): "
