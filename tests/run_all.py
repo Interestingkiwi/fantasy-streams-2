@@ -24,6 +24,7 @@ TESTS = [
     "test_oauth_flow.py",
     "test_guid_resolution.py",
     "test_scope.py",
+    "test_league_viewer.py",
 ]
 
 

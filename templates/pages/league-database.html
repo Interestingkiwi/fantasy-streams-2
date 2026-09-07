@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>League Database - Fantasy Streams</title>
+    <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
+
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-white tracking-wide">League Database</h1>
+            <p id="league-subtitle" class="text-gray-400 text-sm mt-1">Loading&hellip;</p>
+        </div>
+        <a href="/" class="text-blue-400 hover:text-blue-300 transition-colors text-sm font-medium">Back to Home</a>
+    </header>
+
+    <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
+
+        <div id="page-error" class="hidden error-message"></div>
+
+        <!-- Row counts, so it is obvious at a glance what has been ingested. -->
+        <section id="counts" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3"></section>
+
+        <nav class="flex flex-wrap gap-1 border-b border-gray-700" role="tablist" aria-label="League data sections">
+            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="settings" role="tab">Settings</button>
+            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="teams" role="tab">Teams &amp; Rosters</button>
+            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="schedule" role="tab">Schedule</button>
+            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="transactions" role="tab">Transactions</button>
+            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="pool" role="tab">Player Pool</button>
+        </nav>
+
+        <section id="tab-settings" class="tab-panel grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+                <h2 class="text-lg font-semibold text-white mb-3">Scoring Categories</h2>
+                <div id="scoring-list" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+                <h2 class="text-lg font-semibold text-white mb-3">Roster Slots</h2>
+                <div id="roster-slots" class="flex flex-wrap gap-2"></div>
+            </div>
+        </section>
+
+        <section id="tab-teams" class="tab-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Teams</h2>
+                <ul id="team-list" class="divide-y divide-gray-700 max-h-[32rem] overflow-y-auto"></ul>
+            </div>
+            <div class="lg:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <h2 id="roster-title" class="text-lg font-semibold text-white p-4 border-b border-gray-700">Roster</h2>
+                <div id="roster-body" class="overflow-x-auto">
+                    <p class="text-gray-400 text-sm p-4">Select a team to see its roster.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-schedule" class="tab-panel hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Weeks &amp; Matchups</h2>
+            <div id="schedule-body" class="divide-y divide-gray-700 max-h-[40rem] overflow-y-auto"></div>
+        </section>
+
+        <section id="tab-transactions" class="tab-panel hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Recent Transactions</h2>
+            <div id="transactions-body" class="overflow-x-auto"></div>
+        </section>
+
+        <section id="tab-pool" class="tab-panel hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between p-4 border-b border-gray-700 gap-4 flex-wrap">
+                <h2 class="text-lg font-semibold text-white">Unrostered Players</h2>
+                <select id="pool-select" class="form-select p-2 text-sm">
+                    <option value="free_agents">Free Agents</option>
+                    <option value="waivers">Waivers</option>
+                </select>
+            </div>
+            <div id="pool-body" class="overflow-x-auto"></div>
+        </section>
+
+    </main>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const $ = id => document.getElementById(id);
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+        const showError = msg => {
+            const box = $('page-error');
+            box.textContent = msg;
+            box.classList.remove('hidden');
+        };
+
+        // Each section loads on first view, then is cached - the data is static
+        // between syncs, so re-fetching on every tab click would be waste.
+        const loaded = new Set();
+
+        async function getJSON(url) {
+            const response = await fetch(url);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message || 'Request failed.');
+            return data;
+        }
+
+        const ACTIVE = ['border-b-2', 'border-blue-500', 'text-white'];
+        const IDLE = ['text-gray-400', 'hover:text-gray-200'];
+
+        function selectTab(name) {
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+            $(`tab-${name}`).classList.remove('hidden');
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                const on = btn.dataset.tab === name;
+                btn.classList.toggle('hidden', false);
+                ACTIVE.forEach(c => btn.classList.toggle(c, on));
+                IDLE.forEach(c => btn.classList.toggle(c, !on));
+                btn.setAttribute('aria-selected', on);
+            });
+            if (!loaded.has(name)) {
+                loaded.add(name);
+                LOADERS[name]().catch(err => { loaded.delete(name); showError(err.message); });
+            }
+        }
+
+        const card = (label, value) => `
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-white">${esc(value)}</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mt-1">${esc(label)}</div>
+            </div>`;
+
+        const pill = (text, tone = 'bg-gray-700 text-gray-200') =>
+            `<span class="${tone} px-2.5 py-1 rounded text-xs font-medium">${esc(text)}</span>`;
+
+        const table = (headers, rows) => `
+            <table class="w-full text-left text-sm">
+                <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                    <tr>${headers.map(h => `<th class="px-4 py-2 font-medium">${esc(h)}</th>`).join('')}</tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700">${rows}</tbody>
+            </table>`;
+
+        const LOADERS = {
+            async settings() {
+                const data = await getJSON('/league/api/overview');
+                const name = data.info.league_name || `League ${data.league_id}`;
+                const season = data.info.start_date
+                    ? ` · ${data.info.start_date} to ${data.info.end_date}` : '';
+                $('league-subtitle').textContent =
+                    `${name} · ${data.info.num_teams || data.counts.teams} teams${season}`;
+
+                const c = data.counts;
+                $('counts').innerHTML = [
+                    card('Teams', c.teams), card('Weeks', c.weeks), card('Matchups', c.matchups),
+                    card('Rostered', c.rostered), card('Free Agents', c.free_agents),
+                    card('Waivers', c.waivers), card('Transactions', c.transactions),
+                ].join('');
+
+                $('scoring-list').innerHTML = data.scoring.length
+                    ? data.scoring.map(s => pill(s.category,
+                        s.scoring_group === 'goaltending'
+                            ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200')).join('')
+                    : '<p class="text-gray-400 text-sm">No scoring categories stored.</p>';
+
+                $('roster-slots').innerHTML = data.roster_slots.length
+                    ? data.roster_slots.map(r => pill(`${r.position} × ${r.position_count}`)).join('')
+                    : '<p class="text-gray-400 text-sm">No roster settings stored.</p>';
+            },
+
+            async teams() {
+                const { teams } = await getJSON('/league/api/teams');
+                $('team-list').innerHTML = teams.map(t => `
+                    <li>
+                        <button class="team-btn w-full text-left px-4 py-3 hover:bg-gray-700 transition-colors"
+                                data-team-id="${esc(t.team_id)}" data-team-name="${esc(t.name)}">
+                            <div class="text-white text-sm font-medium">${esc(t.name)}</div>
+                            <div class="text-gray-400 text-xs mt-0.5">
+                                ${esc(t.manager_nickname || 'Unknown manager')} · ${esc(t.roster_size)} players
+                            </div>
+                        </button>
+                    </li>`).join('');
+
+                document.querySelectorAll('.team-btn').forEach(btn =>
+                    btn.addEventListener('click', () => loadRoster(btn.dataset.teamId, btn.dataset.teamName)));
+
+                if (teams.length) loadRoster(teams[0].team_id, teams[0].name);
+            },
+
+            async schedule() {
+                const { weeks } = await getJSON('/league/api/schedule');
+                $('schedule-body').innerHTML = weeks.map(w => `
+                    <div class="p-4">
+                        <div class="flex items-baseline gap-3 mb-2">
+                            <span class="text-white font-semibold">Week ${esc(w.week_num)}</span>
+                            <span class="text-gray-400 text-xs">${esc(w.start_date)} – ${esc(w.end_date)}</span>
+                        </div>
+                        ${w.matchups.length ? `<div class="grid sm:grid-cols-2 gap-x-6 gap-y-1">${
+                            w.matchups.map(m => `<div class="text-sm text-gray-300">
+                                ${esc(m.team1)} <span class="text-gray-500">vs</span> ${esc(m.team2)}</div>`).join('')
+                        }</div>` : '<p class="text-gray-500 text-xs">No matchups stored for this week.</p>'}
+                    </div>`).join('') || '<p class="text-gray-400 text-sm p-4">No weeks stored.</p>';
+            },
+
+            async transactions() {
+                const { transactions } = await getJSON('/league/api/transactions?limit=200');
+                const tone = t => t === 'add' ? 'text-emerald-400'
+                    : t === 'drop' ? 'text-red-400' : 'text-gray-300';
+                $('transactions-body').innerHTML = transactions.length ? table(
+                    ['Date', 'Player', 'Team', 'Move'],
+                    transactions.map(t => `
+                        <tr class="table-row-hover">
+                            <td class="px-4 py-2 text-gray-400 whitespace-nowrap">${esc(t.transaction_date)}</td>
+                            <td class="px-4 py-2 text-white">${esc(t.player_name)}</td>
+                            <td class="px-4 py-2 text-gray-300">${esc(t.fantasy_team || '—')}</td>
+                            <td class="px-4 py-2 font-medium ${tone(t.move_type)}">${esc(t.move_type)}</td>
+                        </tr>`).join('')
+                ) : '<p class="text-gray-400 text-sm p-4">No transactions stored.</p>';
+            },
+
+            async pool() { await loadPool(); },
+        };
+
+        async function loadRoster(teamId, teamName) {
+            $('roster-title').textContent = `Roster — ${teamName}`;
+            $('roster-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Loading…</p>';
+            try {
+                const { players } = await getJSON(`/league/api/roster/${encodeURIComponent(teamId)}`);
+                $('roster-body').innerHTML = players.length ? table(
+                    ['Player', 'NHL Team', 'Eligible', 'Status'],
+                    players.map(p => `
+                        <tr class="table-row-hover">
+                            <td class="px-4 py-2 text-white">${esc(p.player_name || `#${p.player_id}`)}</td>
+                            <td class="px-4 py-2 text-gray-300">${esc(p.player_team || '—')}</td>
+                            <td class="px-4 py-2 text-gray-400 text-xs">${esc(p.positions || '—')}</td>
+                            <td class="px-4 py-2 text-gray-400">${
+                                p.injury_status && p.injury_status !== 'NA'
+                                    ? `<span class="text-amber-400">${esc(p.injury_status)}</span>` : '—'}</td>
+                        </tr>`).join('')
+                ) : '<p class="text-gray-400 text-sm p-4">No players stored for this team.</p>';
+            } catch (err) {
+                $('roster-body').innerHTML =
+                    `<p class="text-red-400 text-sm p-4">${esc(err.message)}</p>`;
+            }
+        }
+
+        async function loadPool() {
+            const pool = $('pool-select').value === 'waivers' ? 'waivers' : 'free_agents';
+            $('pool-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Loading…</p>';
+            try {
+                const { players } = await getJSON(`/league/api/player-pool?pool=${pool}&limit=300`);
+                $('pool-body').innerHTML = players.length ? table(
+                    ['Player', 'NHL Team', 'Positions', 'Status'],
+                    players.map(p => `
+                        <tr class="table-row-hover">
+                            <td class="px-4 py-2 text-white">${esc(p.player_name || `#${p.player_id}`)}</td>
+                            <td class="px-4 py-2 text-gray-300">${esc(p.player_team || '—')}</td>
+                            <td class="px-4 py-2 text-gray-400 text-xs">${esc(p.positions || '—')}</td>
+                            <td class="px-4 py-2 text-gray-400">${esc(p.status || '—')}</td>
+                        </tr>`).join('')
+                ) : '<p class="text-gray-400 text-sm p-4">Nothing stored for this pool.</p>';
+            } catch (err) {
+                $('pool-body').innerHTML = `<p class="text-red-400 text-sm p-4">${esc(err.message)}</p>`;
+            }
+        }
+
+        document.querySelectorAll('.tab-btn').forEach(btn =>
+            btn.addEventListener('click', () => selectTab(btn.dataset.tab)));
+        $('pool-select').addEventListener('change', loadPool);
+
+        // The header and counts come from the settings call, so load it up front
+        // regardless of which tab opens first.
+        selectTab('settings');
+    });
+    </script>
+
+</body>
+</html>
