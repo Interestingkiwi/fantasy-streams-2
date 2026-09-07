@@ -1,0 +1,27 @@
+{#
+  Shared page navigation.
+
+  Included by every inner page so they can be reached from one another
+  rather than only by URL. Set `active` before including to mark the
+  current page:
+
+      {% set active = 'schedules' %}
+      {% include 'partials/page-nav.html' %}
+
+  This is the light-weight stand-in for MIGRATION's deferred home.html
+  shell; replace it when that lands.
+#}
+<nav class="flex items-center gap-1 text-sm" aria-label="Pages">
+    {% for key, label, href in [
+        ('home', 'Home', '/'),
+        ('draft', 'Draft Prep', '/draft-prep/'),
+        ('schedules', 'NHL Schedule', '/schedules/'),
+        ('league', 'League Database', '/league/'),
+    ] %}
+    <a href="{{ href }}"
+       class="px-3 py-1.5 rounded-md transition-colors
+              {% if active == key %}bg-gray-700 text-white font-medium
+              {% else %}text-gray-400 hover:text-white hover:bg-gray-700/50{% endif %}"
+       {% if active == key %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>

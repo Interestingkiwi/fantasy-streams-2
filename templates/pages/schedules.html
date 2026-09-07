@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NHL Schedule - Fantasy Streams</title>
+    <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
+
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-white tracking-wide">NHL Schedule</h1>
+            <p id="subtitle" class="text-gray-400 text-sm mt-1">Loading&hellip;</p>
+        </div>
+        {% set active = 'schedules' %}{% include 'partials/page-nav.html' %}
+    </header>
+
+    <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
+
+        <div id="page-error" class="hidden error-message"></div>
+
+        <section class="bg-gray-800 p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-4">
+            <div>
+                <label for="window-select" class="block mb-1 text-xs font-medium text-gray-400">Window</label>
+                <select id="window-select" class="form-select p-2 text-sm min-w-[18rem]"></select>
+            </div>
+            <p id="week-source" class="text-xs text-gray-500 flex-1 min-w-[14rem]"></p>
+        </section>
+
+        <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <section class="xl:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <div class="flex items-center justify-between p-4 border-b border-gray-700 gap-4 flex-wrap">
+                    <h2 class="text-lg font-semibold text-white">Games by Team</h2>
+                    <p class="text-xs text-gray-500">Click a team for its games</p>
+                </div>
+                <div id="teams-body" class="overflow-x-auto">
+                    <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
+                </div>
+            </section>
+
+            <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Games per Night</h2>
+                <div id="calendar-body" class="p-4 max-h-[42rem] overflow-y-auto"></div>
+            </section>
+        </div>
+
+    </main>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const $ = id => document.getElementById(id);
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+        const showError = msg => {
+            const box = $('page-error');
+            box.textContent = msg;
+            box.classList.remove('hidden');
+        };
+
+        async function getJSON(url) {
+            const response = await fetch(url);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message || 'Request failed.');
+            return data;
+        }
+
+        const fmt = iso => {
+            const [y, m, d] = iso.split('-');
+            return new Date(Date.UTC(+y, +m - 1, +d))
+                .toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+        };
+
+        const card = (label, value, tone = 'text-white') => `
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold ${tone}">${esc(value)}</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mt-1">${esc(label)}</div>
+            </div>`;
+
+        // Colour a team's total against the league average for the same window,
+        // which is the only comparison that means anything week to week.
+        function tone(games, average) {
+            const diff = games - average;
+            if (diff >= 1) return 'text-emerald-400';
+            if (diff <= -1) return 'text-red-400';
+            return 'text-gray-300';
+        }
+
+        let currentWindow = null;
+
+        async function load(start, end) {
+            $('teams-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Loading…</p>';
+            try {
+                const data = await getJSON(`/schedules/api/team-games?start=${start}&end=${end}`);
+                currentWindow = data.window;
+                const { average, min, max } = data.summary;
+
+                $('summary').innerHTML = [
+                    card('Games', data.totalGames),
+                    card('Nights', data.calendar.length),
+                    card('Avg per team', average),
+                    card('Spread', `${min}–${max}`),
+                ].join('');
+
+                const teams = Object.entries(data.teams)
+                    .map(([team, v]) => ({ team, ...v }))
+                    .sort((a, b) => b.games - a.games || a.team.localeCompare(b.team));
+
+                $('teams-body').innerHTML = `
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="px-4 py-2 font-medium">Team</th>
+                                <th class="px-4 py-2 font-medium">Games</th>
+                                <th class="px-4 py-2 font-medium">vs Avg</th>
+                                <th class="px-4 py-2 font-medium">Light Nights</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700">
+                            ${teams.map(t => {
+                                const diff = (t.games - average).toFixed(1).replace(/\.0$/, '');
+                                return `
+                                <tr class="table-row-hover cursor-pointer team-row" data-team="${esc(t.team)}">
+                                    <td class="px-4 py-2 text-white font-medium">${esc(t.team)}</td>
+                                    <td class="px-4 py-2 ${tone(t.games, average)} font-semibold">${esc(t.games)}</td>
+                                    <td class="px-4 py-2 text-gray-400">${diff > 0 ? '+' : ''}${esc(diff)}</td>
+                                    <td class="px-4 py-2 text-gray-300">${esc(t.lightNights)}</td>
+                                </tr>
+                                <tr class="detail-row hidden" data-detail="${esc(t.team)}">
+                                    <td colspan="4" class="px-4 py-3 bg-gray-900"></td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>`;
+
+                document.querySelectorAll('.team-row').forEach(row =>
+                    row.addEventListener('click', () => toggleTeam(row.dataset.team)));
+
+                const busiest = Math.max(...data.calendar.map(c => c.games), 1);
+                $('calendar-body').innerHTML = data.calendar.map(c => `
+                    <div class="flex items-center gap-2 py-1">
+                        <span class="text-xs text-gray-400 w-24 shrink-0">${esc(fmt(c.date))}</span>
+                        <div class="flex-1 bg-gray-900 rounded h-4 overflow-hidden">
+                            <div class="h-full ${c.light ? 'bg-amber-500' : 'bg-blue-600'}"
+                                 style="width:${Math.round((c.games / busiest) * 100)}%"></div>
+                        </div>
+                        <span class="text-xs ${c.light ? 'text-amber-400' : 'text-gray-400'} w-6 text-right">${esc(c.games)}</span>
+                    </div>`).join('')
+                    + `<p class="text-xs text-gray-500 mt-3 pt-3 border-t border-gray-700">
+                         Amber marks a light night &mdash; fewer than ${esc(data.lightNightThreshold)} games,
+                         so most of the league is idle.</p>`;
+            } catch (err) {
+                showError(err.message);
+                $('teams-body').innerHTML = '';
+            }
+        }
+
+        async function toggleTeam(team) {
+            const row = document.querySelector(`[data-detail="${team}"]`);
+            const cell = row.firstElementChild;
+            if (!row.classList.contains('hidden')) {
+                row.classList.add('hidden');
+                return;
+            }
+            row.classList.remove('hidden');
+            cell.innerHTML = '<span class="text-gray-400 text-xs">Loading…</span>';
+            try {
+                const { games } = await getJSON(
+                    `/schedules/api/team/${encodeURIComponent(team)}` +
+                    `?start=${currentWindow.start}&end=${currentWindow.end}`);
+                cell.innerHTML = games.length
+                    ? `<div class="flex flex-wrap gap-2">${games.map(g => `
+                        <span class="px-2 py-1 rounded text-xs ${g.light
+                            ? 'bg-amber-900/50 text-amber-300' : 'bg-gray-800 text-gray-300'}">
+                            ${esc(fmt(g.date))} ${g.home ? 'vs' : '@'} ${esc(g.opponent)}
+                        </span>`).join('')}</div>`
+                    : '<span class="text-gray-500 text-xs">No games in this window.</span>';
+            } catch (err) {
+                cell.innerHTML = `<span class="text-red-400 text-xs">${esc(err.message)}</span>`;
+            }
+        }
+
+        (async () => {
+            try {
+                const data = await getJSON('/schedules/api/weeks');
+                $('subtitle').textContent =
+                    `${data.season.start} to ${data.season.end} · ${data.weeks.length} weeks`;
+                $('week-source').textContent = data.source === 'league'
+                    ? 'Weeks come from your synced league.'
+                    : 'Weeks are Monday–Sunday, derived from the schedule. A synced league supplies its own.';
+
+                $('window-select').innerHTML =
+                    `<option value="${data.season.start}|${data.season.end}">Full season</option>` +
+                    data.weeks.map(w =>
+                        `<option value="${w.start}|${w.end}">Week ${w.week} — ${w.start} to ${w.end}</option>`).join('');
+
+                $('window-select').addEventListener('change', e => {
+                    const [start, end] = e.target.value.split('|');
+                    load(start, end);
+                });
+
+                await load(data.season.start, data.season.end);
+            } catch (err) {
+                showError(err.message);
+            }
+        })();
+    });
+    </script>
+
+</body>
+</html>

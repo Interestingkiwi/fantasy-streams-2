@@ -25,6 +25,7 @@ TESTS = [
     "test_guid_resolution.py",
     "test_scope.py",
     "test_league_viewer.py",
+    "test_schedules.py",
 ]
 
 
