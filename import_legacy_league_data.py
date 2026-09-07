@@ -43,6 +43,11 @@ CHUNK = 1000
 # only Season History (last in Phase 3) reads them. Skipped unless asked for.
 SLOW_TABLES = ["daily_player_stats", "daily_bench_stats"]
 
+# Shared reference tables, copied alongside the per-league ones. The old repo
+# calls its Yahoo player directory `players`; here it is `yahoo_players`, to
+# keep it distinct from the NHL-keyed `player_directory`.
+EXTRA_TABLES = {"players": "yahoo_players"}
+
 
 def league_table_names():
     """The per-league table names, taken from schema.py so the two cannot drift."""
@@ -70,29 +75,31 @@ def table_exists(conn, name):
     ).first())
 
 
-def shared_columns(src, dst, name):
+def shared_columns(src, dst, name, dest_name=None):
     """Only copy columns both sides have, so a schema drift is skipped, not fatal."""
-    def cols(conn):
+    def cols(conn, table):
         return [r[0] for r in conn.execute(
             text("SELECT column_name FROM information_schema.columns"
                  " WHERE table_schema='public' AND table_name=:n"
                  " ORDER BY ordinal_position"),
-            {"n": name},
+            {"n": table},
         )]
 
-    source, dest = cols(src), set(cols(dst))
+    source, dest = cols(src, name), set(cols(dst, dest_name or name))
     return [c for c in source if c in dest]
 
 
-def copy_table(src, dst, name, dry_run):
+def copy_table(src, dst, name, dry_run, dest_name=None):
+    """Copy one table. `dest_name` differs only where this repo renamed it."""
+    dest_name = dest_name or name
     if not table_exists(src, name):
         log.info("%-22s source has no such table - skipped", name)
         return 0
-    if not table_exists(dst, name):
-        log.warning("%-22s destination has no such table - skipped", name)
+    if not table_exists(dst, dest_name):
+        log.warning("%-22s destination has no such table - skipped", dest_name)
         return 0
 
-    columns = shared_columns(src, dst, name)
+    columns = shared_columns(src, dst, name, dest_name)
     if not columns:
         log.warning("%-22s no columns in common - skipped", name)
         return 0
@@ -109,7 +116,7 @@ def copy_table(src, dst, name, dry_run):
     binds = ", ".join(f":{c}" for c in columns)
 
     # Replace wholesale: this is fixture data, not a merge.
-    dst.execute(text(f'DELETE FROM "{name}"'))
+    dst.execute(text(f'DELETE FROM "{dest_name}"'))
 
     rows = src.execute(text(f'SELECT {quoted} FROM "{name}"'))
     copied = 0
@@ -117,10 +124,10 @@ def copy_table(src, dst, name, dry_run):
         batch = [dict(r) for r in rows.mappings().fetchmany(CHUNK)]
         if not batch:
             break
-        dst.execute(text(f'INSERT INTO "{name}" ({quoted}) VALUES ({binds})'), batch)
+        dst.execute(text(f'INSERT INTO "{dest_name}" ({quoted}) VALUES ({binds})'), batch)
         copied += len(batch)
 
-    log.info("%-22s %7d rows", name, copied)
+    log.info("%-22s %7d rows", dest_name, copied)
     return copied
 
 
@@ -162,6 +169,11 @@ def main():
     with src_engine.connect() as src, dst_engine.begin() as dst:
         for name in names:
             total += copy_table(src, dst, name, args.dry_run)
+        # Shared reference tables come along unless a specific subset was asked
+        # for; without them the per-league rows are player ids and nothing else.
+        if not args.tables:
+            for source_name, dest_name in EXTRA_TABLES.items():
+                total += copy_table(src, dst, source_name, args.dry_run, dest_name)
 
     log.info("Done - %d rows%s.", total, " would be copied" if args.dry_run else " copied")
 

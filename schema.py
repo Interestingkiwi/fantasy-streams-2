@@ -269,6 +269,30 @@ SEEDS = [
     ),
 ]
 
+# --- Shared reference tables ---------------------------------------------------
+# Yahoo-derived data that is not per-league. Filled by the Phase 2 ETL (the old
+# repo builds it in jobs/fetch_player_ids.py).
+
+SHARED_DDL = [
+    # Yahoo's player directory, keyed by Yahoo's own player_id - a different id
+    # space from the NHL `playerId` in `player_directory` / `final_projections`,
+    # which is why this is not called `players`. Every per-league table that
+    # references a player (rosters_tall, rostered_players, free_agents,
+    # waiver_players) carries a Yahoo player_id and nothing else, so this table
+    # is the only way to show a name.
+    """
+    CREATE TABLE IF NOT EXISTS yahoo_players (
+        player_id TEXT PRIMARY KEY,
+        player_name TEXT,
+        player_team TEXT,
+        positions TEXT,
+        status TEXT,
+        player_name_normalized TEXT
+    )
+    """,
+]
+
+
 # --- Migrations --------------------------------------------------------------
 # CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so a column
 # change has to be stated separately. Every entry must be safe to re-run.
@@ -300,7 +324,7 @@ MIGRATIONS = [
     """,
 ]
 
-ALL_TABLES = ADMIN_DDL + LEAGUE_DDL
+ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL
 
 
 def init_schema(strict=False):
