@@ -87,9 +87,9 @@ def playoff_schedule():
     """
     Counts each team's games across the selected fantasy playoff weeks.
 
-    Returns games plus light-night games - those falling on a date when under
-    a quarter of the league is playing, which is when a manager can actually
-    get an extra starter into the lineup.
+    Returns games plus light-night games - those falling on a date carrying
+    eight games or fewer, the standard fantasy definition, when enough of the
+    league is idle to get an extra starter into the lineup.
     """
     try:
         weeks = (request.json or {}).get('weeks', [])
