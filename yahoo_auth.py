@@ -91,12 +91,10 @@ def build_authorization_url():
     Returns (url, state); the caller stores state in the session and checks
     it when Yahoo redirects back.
 
-    `scope` is required, and registering the app for Fantasy read/write does
-    not substitute for it. Registration caps what the app *may* ask for; the
-    token only carries what this request actually asks for. Omitting it mints
-    a token with no Fantasy access, which 403s on every Fantasy endpoint with
-    "This application is not authorized to perform this action" - misleading,
-    because the app is authorized and the token is not.
+    `scope` is omitted by default, matching the old repo's working
+    implementation, which lets the app registration decide permissions.
+    Sending "fspt-w" was tried against a live 403 and changed nothing, so do
+    not reintroduce it on the theory that it must be required.
     """
     state = secrets.token_urlsafe(32)
     params = {
@@ -115,18 +113,25 @@ def build_authorization_url():
 
 
 def _post_token(payload):
-    """POST to Yahoo's token endpoint with HTTP Basic client auth."""
-    auth = (
-        current_app.config["YAHOO_CONSUMER_KEY"],
-        current_app.config["YAHOO_CONSUMER_SECRET"],
+    """
+    POST to Yahoo's token endpoint, sending the client credentials in the
+    request body rather than as HTTP Basic auth.
+
+    Both are legal OAuth2, but the body form is what the old repo's working
+    implementation uses (via requests_oauthlib's default), and matching a
+    known-good caller beats being theoretically correct against Yahoo.
+    """
+    payload = dict(
+        payload,
+        redirect_uri=redirect_uri(),
+        client_id=current_app.config["YAHOO_CONSUMER_KEY"],
+        client_secret=current_app.config["YAHOO_CONSUMER_SECRET"],
     )
-    payload = dict(payload, redirect_uri=redirect_uri())
 
     try:
         response = requests.post(
             current_app.config.get("YAHOO_TOKEN_URL") or TOKEN_URL,
             data=payload,
-            auth=auth,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=HTTP_TIMEOUT,
         )
@@ -143,6 +148,16 @@ def _post_token(payload):
     token = response.json()
     if not token.get("access_token"):
         raise YahooAuthError("Yahoo returned no access_token.")
+
+    # Diagnostics, not secrets: field *names* only, plus the scope Yahoo says
+    # it actually granted. The granted scope is the thing worth seeing - it
+    # can differ from the one requested when Yahoo reuses an older grant.
+    log.info(
+        "Yahoo token response fields: %s | granted scope: %s | expires_in: %s",
+        sorted(token.keys()),
+        token.get("scope", "<not reported>"),
+        token.get("expires_in"),
+    )
     return token
 
 
@@ -158,23 +173,38 @@ def refresh_token(refresh):
     return _post_token({"grant_type": "refresh_token", "refresh_token": refresh})
 
 
+def _log_yahoo_failure(url, response):
+    """
+    Log a failed Yahoo call in full. Truncating the body to fit an error
+    message hides the part that names the actual problem, so the whole thing
+    goes to the log and the user-facing message stays short.
+    """
+    log.warning(
+        "Yahoo call failed: %s -> %s\nheaders: %s\nbody: %s",
+        url,
+        response.status_code,
+        {k: v for k, v in response.headers.items()
+         if k.lower() in ("www-authenticate", "content-type", "x-yahoo-request-id")},
+        response.text[:2000],
+    )
+
+
 def _forbidden_hint(body):
     """
-    Yahoo's 403 body says "This application is not authorized", which points
-    at the app registration and is usually the wrong place to look: far more
-    often the app is fine and the *token* was minted without Fantasy scope.
-    Lead with that, since it is both the likelier cause and the easy one to
-    overlook.
+    Yahoo answers an under-permissioned token with "This application is not
+    authorized", which points at the app registration - often the wrong place.
+    Two likelier causes, in order, with the full body left to the log.
     """
     scope = (current_app.config.get("YAHOO_SCOPE") or "").strip() or "(none)"
     return (
-        f"Yahoo refused the Fantasy API with 403, using scope {scope!r}. This "
-        "usually means the token lacks Fantasy scope rather than the app "
-        "lacking permission: YAHOO_SCOPE must include 'fspt-w' (read/write) "
-        "or 'fspt-r' (read), and a token minted before the scope changed keeps "
-        "the old one - sign in again to mint a fresh token. Only if that is "
-        "already right is it worth checking Fantasy Sports permission on the "
-        f"app at developer.yahoo.com/apps. Yahoo said: {body[:200]}"
+        f"Yahoo refused the Fantasy API with 403 (scope requested: {scope!r}). "
+        "Most likely your Yahoo account already has an older authorization for "
+        "this app: Yahoo then reuses that grant, skips the consent screen, and "
+        "issues a token with the OLD permissions, so a new scope never takes "
+        "effect. Remove Fantasy Streams from the apps connected to your Yahoo "
+        "account, then sign in again to force a fresh consent. Failing that, "
+        "check Fantasy Sports permission on the app at developer.yahoo.com/apps. "
+        "The full Yahoo response is in the server log."
     )
 
 
@@ -226,9 +256,10 @@ def fetch_guid(access_token):
     base = current_app.config.get("YAHOO_API_BASE") or API_BASE
     try:
         response = requests.get(
-            # The documented collection form; a bare `users` resource is not
-            # a valid Fantasy endpoint.
-            f"{base}/users;use_login=1/games",
+            # The bare users resource, matching the old repo's working
+            # implementation. An earlier guess that this was not a valid
+            # endpoint was wrong - it works there.
+            f"{base}/users;use_login=1",
             params={"format": "json"},
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=HTTP_TIMEOUT,
@@ -236,10 +267,11 @@ def fetch_guid(access_token):
     except requests.RequestException as exc:
         raise YahooAuthError(f"Could not reach Yahoo: {exc}") from exc
 
+    if response.status_code != 200:
+        _log_yahoo_failure(response.url, response)
     if response.status_code == 403:
         raise YahooAuthError(_forbidden_hint(response.text))
     if response.status_code != 200:
-        # Carry Yahoo's own words - the status alone is not diagnosable.
         raise YahooAuthError(
             f"Could not identify the Yahoo user ({response.status_code}): "
             f"{response.text[:200]}"
@@ -370,6 +402,8 @@ def api_get(guid, path, params=None):
 
         if response.status_code == 401 and attempt == 0:
             continue
+        if response.status_code != 200:
+            _log_yahoo_failure(response.url, response)
         if response.status_code == 403:
             raise YahooAuthError(_forbidden_hint(response.text))
         if response.status_code != 200:
