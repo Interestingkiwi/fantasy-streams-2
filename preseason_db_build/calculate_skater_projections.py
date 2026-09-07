@@ -7,6 +7,7 @@ Updated - 7/5/2026
 
 import pandas as pd
 from db_config import engine
+from season_config import HISTORICAL_SEASON_GAMES, season_game_count
 import numpy as np
 
 def calculate_trend(y1_pts_pg, y2_pts_pg):
@@ -100,15 +101,21 @@ for stat in stats_to_project:
                                     np.nan)
 
 # --- PROJECTED GAMES ---
-# Everyone used to get a flat 82, which paced every counting stat about 5% high.
-# Straight historical GP is worse in the other direction: it bakes in resolved
-# injuries, mid-season call-ups and old roles, and lands ~60 games. So blend a
-# full season against the player's own durability, weighted toward optimism.
-# Only seasons where the player was already a regular (40+ GP) count, so a
-# call-up year doesn't brand someone fragile.
-FULL_SEASON = 82
+# Everyone used to get a flat full season, which paced every counting stat about
+# 5% high. Straight historical GP is worse in the other direction: it bakes in
+# resolved injuries, mid-season call-ups and old roles, and lands ~60 games. So
+# blend a full season against the player's own durability, weighted toward
+# optimism. Only seasons where the player was already a regular (40+ GP) count,
+# so a call-up year doesn't brand someone fragile.
+#
+# The season length comes from the scraped schedule rather than a constant - it
+# is 84 games from 2026-27 on, and durability measured against 82-game seasons
+# has to be rescaled rather than carried across as a raw game count.
+FULL_SEASON = season_game_count()
 FULL_SEASON_WEIGHT = 0.75          # remainder comes from the player's own history
 REGULAR_SEASON_MIN_GP = 40
+
+print(f" -> Pacing projections to a {FULL_SEASON}-game season.")
 
 gp_num = 0.0
 gp_den = 0.0
@@ -120,9 +127,16 @@ for season, weight in [(y1, 0.6), (y2, 0.3), (y3, 0.1)]:
     gp_den = gp_den + counts * weight
 
 durability_gp = gp_num / gp_den.replace(0, np.nan)
+
+# Share of the season the player has been available for, so an 82-game history
+# maps onto whatever length the coming season is
+durability_rate = (durability_gp / HISTORICAL_SEASON_GAMES).clip(upper=1.0)
+
 projected_games = (
-    FULL_SEASON_WEIGHT * FULL_SEASON
-    + (1 - FULL_SEASON_WEIGHT) * durability_gp.fillna(FULL_SEASON)
+    FULL_SEASON * (
+        FULL_SEASON_WEIGHT
+        + (1 - FULL_SEASON_WEIGHT) * durability_rate.fillna(1.0)
+    )
 ).round().clip(upper=FULL_SEASON)
 
 latest_metadata = df_3yr.sort_values('seasonId', ascending=False).drop_duplicates(subset=['playerId'])[['playerId', 'skaterFullName', 'positionCode', 'teamAbbrevs']]

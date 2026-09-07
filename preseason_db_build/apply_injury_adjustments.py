@@ -21,6 +21,17 @@ REQUIRED_TABLES = (
 #NHL Season start date (yyyy, m, d)
 SEASON_START_DATE = datetime(2026, 10, 8)
 
+# Rate stats, not counting stats. Missing games does not change a goalie's save
+# percentage, and rounding one to a single decimal flattens the whole league
+# onto .9 - so these are held out of the injury scaling and keep their precision.
+RATE_COLUMNS = {
+    "proj_savePct": 3,
+    "proj_winPct": 3,
+    "proj_startPct": 3,
+    "proj_goalsAgainstAverage": 2,
+}
+COUNTING_DECIMALS = 1
+
 def get_return_date(details_str):
     """Extracts the returnDate from the dictionary-like string."""
     try:
@@ -71,7 +82,8 @@ for index, injury in valid_injuries.iterrows():
         skaters.loc[skaters['playerId'] == pid, 'projectedGames'] = new_games
 
         scaling_factor = new_games / original_games if original_games > 0 else 0
-        stat_cols = [col for col in skaters.columns if col.startswith('proj_')]
+        stat_cols = [col for col in skaters.columns
+                     if col.startswith('proj_') and col not in RATE_COLUMNS]
         for col in stat_cols:
             skaters.loc[skaters['playerId'] == pid, col] *= scaling_factor
 
@@ -90,7 +102,8 @@ for index, injury in valid_injuries.iterrows():
         goalies.loc[goalies['playerId'] == pid, 'projectedGames'] = new_games
 
         scaling_factor = new_games / original_games if original_games > 0 else 0
-        stat_cols = [col for col in goalies.columns if col.startswith('proj_')]
+        stat_cols = [col for col in goalies.columns
+                     if col.startswith('proj_') and col not in RATE_COLUMNS]
         for col in stat_cols:
             goalies.loc[goalies['playerId'] == pid, col] *= scaling_factor
 
@@ -105,7 +118,7 @@ final_df = pd.concat([skaters, goalies], ignore_index=True)
 
 for col in final_df.columns:
     if col.startswith('proj_'):
-        final_df[col] = final_df[col].round(1)
+        final_df[col] = final_df[col].round(RATE_COLUMNS.get(col, COUNTING_DECIMALS))
 
 #8. Save final adjusted projections
 final_df.to_sql("final_projections", con=engine, if_exists='replace', index=False)
