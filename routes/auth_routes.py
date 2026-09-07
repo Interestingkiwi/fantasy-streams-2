@@ -165,7 +165,7 @@ def callback():
 
     try:
         token = yahoo_auth.exchange_code_for_token(code)
-        guid = token.get('xoauth_yahoo_guid') or yahoo_auth.fetch_guid(token['access_token'])
+        guid = yahoo_auth.resolve_guid(token)
         yahoo_auth.save_user_credentials(guid, token)
         yahoo_auth.record_terms_acceptance(guid, current_app.config["TOS_VERSION"])
 

@@ -20,6 +20,8 @@ Created - 9/6/2026
 Updated - 9/6/2026
 """
 
+import base64
+import json
 import logging
 import secrets
 import time
@@ -148,16 +150,71 @@ def refresh_token(refresh):
     return _post_token({"grant_type": "refresh_token", "refresh_token": refresh})
 
 
+def _forbidden_hint(body):
+    """
+    A 403 from the Fantasy API nearly always means the Yahoo app itself lacks
+    Fantasy Sports permission - the token is fine, the app is not authorised.
+    Worth saying outright, because Yahoo's own body is vague about it.
+    """
+    return (
+        "Yahoo refused the Fantasy API with 403. The usual cause is the Yahoo "
+        "app not having Fantasy Sports API permission: open the app at "
+        "developer.yahoo.com/apps, set Fantasy Sports to Read/Write, then sign "
+        f"in again to get a new token. Yahoo said: {body[:200]}"
+    )
+
+
+def _guid_from_id_token(id_token):
+    """
+    Read the guid out of Yahoo's OpenID Connect `id_token`, whose `sub` claim
+    is the same value as `xoauth_yahoo_guid`.
+
+    The signature is not verified, and does not need to be: this JWT came
+    straight back from Yahoo's token endpoint over TLS on a server-to-server
+    call, so it is not attacker-supplied the way a client-presented token is.
+    """
+    try:
+        payload = id_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)          # restore base64 padding
+        return json.loads(base64.urlsafe_b64decode(payload)).get("sub")
+    except Exception:                                 # noqa: BLE001 - best effort
+        log.warning("Could not read a guid out of Yahoo's id_token.")
+        return None
+
+
+def resolve_guid(token):
+    """
+    The guid for a freshly issued token, cheapest source first: the token
+    response, then its OIDC `id_token`, then an API call.
+
+    Not every Yahoo app returns `xoauth_yahoo_guid`, and the API fallback
+    needs Fantasy permission the app may not have - so the id_token is the
+    one that works regardless.
+    """
+    guid = token.get("xoauth_yahoo_guid")
+    if guid:
+        return guid
+
+    if token.get("id_token"):
+        guid = _guid_from_id_token(token["id_token"])
+        if guid:
+            return guid
+
+    return fetch_guid(token["access_token"])
+
+
 def fetch_guid(access_token):
     """
-    Look up the guid for a token we hold but have not stored yet. Only used
-    as a fallback: Yahoo normally returns `xoauth_yahoo_guid` alongside the
-    token, and without a guid there is no key to store credentials under.
+    Last-resort guid lookup for a token we hold but have not stored yet.
+    Prefer resolve_guid(), which only lands here when the token response
+    carried neither the guid nor a readable id_token.
     """
     base = current_app.config.get("YAHOO_API_BASE") or API_BASE
     try:
         response = requests.get(
-            f"{base}/users;use_login=1",
+            # The documented collection form; a bare `users` resource is not
+            # a valid Fantasy endpoint.
+            f"{base}/users;use_login=1/games",
             params={"format": "json"},
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=HTTP_TIMEOUT,
@@ -165,9 +222,13 @@ def fetch_guid(access_token):
     except requests.RequestException as exc:
         raise YahooAuthError(f"Could not reach Yahoo: {exc}") from exc
 
+    if response.status_code == 403:
+        raise YahooAuthError(_forbidden_hint(response.text))
     if response.status_code != 200:
+        # Carry Yahoo's own words - the status alone is not diagnosable.
         raise YahooAuthError(
-            f"Could not identify the Yahoo user ({response.status_code})."
+            f"Could not identify the Yahoo user ({response.status_code}): "
+            f"{response.text[:200]}"
         )
 
     guid = _find_first(response.json(), "guid")
@@ -295,6 +356,8 @@ def api_get(guid, path, params=None):
 
         if response.status_code == 401 and attempt == 0:
             continue
+        if response.status_code == 403:
+            raise YahooAuthError(_forbidden_hint(response.text))
         if response.status_code != 200:
             raise YahooAuthError(
                 f"Yahoo API {path} failed ({response.status_code}): "
