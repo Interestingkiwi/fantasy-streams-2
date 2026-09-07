@@ -227,9 +227,31 @@ cd preseason_db_build && python build_database.py
 ```
 
 - Requires `.env` with `DATABASE_URL` (local Postgres). `.env` is git-ignored.
-- No test suite exists yet.
+- Tests: `python tests/run_all.py` (see *Tests* below).
 - `requirements.txt` is plain UTF-8. (It used to be UTF-16; if an editor shows CJK
   gibberish, that is a stale copy.)
+
+## Tests
+
+```bash
+python tests/run_all.py          # all suites; non-zero exit on failure
+python tests/test_scope.py       # or one at a time
+```
+
+Standalone scripts, not pytest — the repo carries no test-runner dependency
+and these need none. Each starts its own stub Yahoo server on a local port
+and points the app at it through the `YAHOO_TOKEN_URL` / `YAHOO_API_BASE`
+config seams, so the real OAuth flow runs end to end with no Yahoo
+credentials. They use the real Postgres from `DATABASE_URL`, writing rows
+under a test guid and deleting them again, so a database must be reachable.
+
+| Suite | Covers |
+|---|---|
+| `test_oauth_flow.py` | the whole journey: CSRF `state`, token storage, refresh-on-expiry, the 401 retry, league switching, logout, dev backdoor |
+| `test_guid_resolution.py` | each `resolve_guid()` path, including the shape that broke in production — a token with no guid against a 403 API |
+| `test_scope.py` | consent-URL construction and the 403 hint text |
+
+Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 
 ## Conventions
 
