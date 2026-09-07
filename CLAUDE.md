@@ -111,9 +111,21 @@ form, because it is not what the API docs imply:
 - Client type is **Confidential Client** (the server holds the secret).
 - **Redirect URI(s) accepts several** ("specify any additional redirect uris"),
   so one Yahoo app can serve more than one deployment.
-- No `scope` is sent by default. If a guid still does not come back, setting
-  `YAHOO_SCOPE=openid` is an env-only lever — it makes Yahoo return an
-  `id_token`, which `resolve_guid()` already reads.
+- **Scope cannot request Fantasy access — do not try again.** Probed against
+  Yahoo's authorize endpoint with a live client_id: only *no scope* and
+  `openid` are accepted. `fspt-w`, `fspt-r`, `profile`, `sdct-r` and
+  `openid fspt-r` each come back `error=invalid_scope`. `fspt-*` belongs to
+  Yahoo's OAuth1-era permission model and is not an OAuth2 scope value.
+  `YAHOO_SCOPE` therefore defaults to empty; `openid` is the only useful
+  setting, and only to force an `id_token` for `resolve_guid()`.
+
+**Where that leaves Fantasy access.** The console offers no Fantasy Sports
+permission, and no scope requests one, so an app's Fantasy access cannot be
+arranged from this side at all. A token that authenticates fine but answers
+`401 oauth_problem="additional_authorization_required"` (or the older `403`)
+on every Fantasy endpoint is that state. It is a Yahoo account/app matter, not
+a code one — reproduced identically by the old repo, so do not go looking for
+it in this codebase.
 
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
 needs an HTTPS tunnel registered as the callback and set in
