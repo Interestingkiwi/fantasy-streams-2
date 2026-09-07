@@ -100,17 +100,27 @@ identity, and no client change fixes it. Confirmed by the old repo failing
 identically on a fresh login while still serving previously-synced rows from
 Postgres — which is what made it *look* healthy.
 
-**Registering the Yahoo app.** Observed on the console's Create Application
-form, because it is not what the API docs imply:
+**Yahoo gated the API behind an application process (Sept 2026).** This is the
+actual cause of the 403/401 saga, and it is not a code or registration problem:
+Yahoo restricted Fantasy API access and revoked existing grants, so every app —
+old and new — now authenticates fine and is refused by every Fantasy endpoint.
+Access is requested through Yahoo's application process; an application was
+submitted 7 Sept 2026 and **nothing here can work until it is granted**. Do not
+debug the auth code against these symptoms.
+
+**Registering the Yahoo app**, as observed on the Create Application form:
 
 - There is **no Fantasy Sports permission**. The only API Permissions offered
   are *OpenID Connect Permissions* and *TW Auction* (Yahoo Taiwan Auctions,
-  irrelevant here). Fantasy access follows from the token carrying a user
-  identity, so **OpenID Connect Permissions must be ticked** — an app with no
-  permissions at all yields exactly the guid-less token and blanket 403 above.
+  irrelevant). Ticking OpenID Connect was tried and did not help — it is not a
+  substitute for Fantasy access, and an earlier claim here that it "must be
+  ticked" was a guess, now retracted.
 - Client type is **Confidential Client** (the server holds the secret).
 - **Redirect URI(s) accepts several** ("specify any additional redirect uris"),
   so one Yahoo app can serve more than one deployment.
+- Observed but unexplained: an app with *no* permissions returned an `id_token`
+  while one with OpenID Profile did not. Worth re-checking once access is
+  granted rather than reasoning about it now.
 - **Scope cannot request Fantasy access — do not try again.** Probed against
   Yahoo's authorize endpoint with a live client_id: only *no scope* and
   `openid` are accepted. `fspt-w`, `fspt-r`, `profile`, `sdct-r` and
@@ -119,13 +129,22 @@ form, because it is not what the API docs imply:
   `YAHOO_SCOPE` therefore defaults to empty; `openid` is the only useful
   setting, and only to force an `id_token` for `resolve_guid()`.
 
-**Where that leaves Fantasy access.** The console offers no Fantasy Sports
-permission, and no scope requests one, so an app's Fantasy access cannot be
-arranged from this side at all. A token that authenticates fine but answers
-`401 oauth_problem="additional_authorization_required"` (or the older `403`)
-on every Fantasy endpoint is that state. It is a Yahoo account/app matter, not
-a code one — reproduced identically by the old repo, so do not go looking for
-it in this codebase.
+**When API access is granted, re-verify in this order** — the auth code is
+believed correct but has never once completed a real Fantasy call:
+
+1. `python tests/run_all.py` — should still pass; it exercises the flow
+   against a stub, so it proves the code, not Yahoo.
+2. Log in and read `Yahoo token response fields:` in the log. If
+   `xoauth_yahoo_guid` is present, the token carries a user identity and the
+   rest should follow.
+3. Re-run the scope probe (see above). Yahoo may accept a Fantasy scope once
+   access is granted, in which case set `YAHOO_SCOPE` rather than assuming.
+4. Only then, if something still fails, debug the code.
+
+**One arbitrary choice worth revisiting then:** `_post_token()` sends the
+client credentials in the request body rather than as HTTP Basic auth. Both
+are valid OAuth2; this matches the old repo's working caller, but nothing ever
+proved it mattered, since no request got far enough to tell.
 
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
 needs an HTTPS tunnel registered as the callback and set in

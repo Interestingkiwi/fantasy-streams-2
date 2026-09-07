@@ -112,9 +112,16 @@ Still open from this phase:
   The landing page carries the league switcher in the meantime.
 - `settings` page.
 
-**Before a real login works** the app must be registered at
-developer.yahoo.com for Fantasy **read/write**, and its Redirect URI must match
-`YAHOO_REDIRECT_URI` exactly (an HTTPS tunnel locally).
+**Blocked on Yahoo, not on code (7 Sept 2026).** Yahoo has gated the Fantasy
+API behind an application process and revoked existing access, so every app —
+this one and the old repo's — authenticates fine and is then refused by every
+Fantasy endpoint. An access application has been submitted; Phase 1 cannot be
+confirmed end to end until it is granted. The *Auth* section of CLAUDE.md
+carries the evidence and the order to re-verify in.
+
+The redirect URI must still match `YAHOO_REDIRECT_URI` exactly (an HTTPS tunnel
+locally), and `DEV_BACKDOOR_PASS` remains the way to reach signed-in pages
+meanwhile — which is what makes Phase 2 work possible while this is pending.
 
 ### Phase 2 — League ETL (everything downstream reads this)
 
