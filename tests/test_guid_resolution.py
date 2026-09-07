@@ -100,10 +100,14 @@ def cleanup():
     execute("DELETE FROM users WHERE guid = :g", {"g": GUID})
 
 
+LAST_CLIENT = {}
+
+
 def run_login():
     """Drive /login -> /callback and return the resulting session error, if any."""
     cleanup()
     client = flask_app.test_client()
+    LAST_CLIENT["c"] = client
     r = client.post("/login", json={"league_id": "1", "terms_accepted": True})
     state = parse_qs(urlparse(r.get_json()["auth_url"]).query)["state"][0]
     client.get(f"/callback?code=C&state={state}")
@@ -125,6 +129,11 @@ API_HITS.clear()
 guid, err = run_login()
 check("guid read from id_token despite a 403 API", guid == GUID, err)
 check("tokens stored", fetch_one("SELECT guid FROM users WHERE guid=:g", {"g": GUID}) is not None)
+
+# Signed in, but the leagues call failed - the page must not claim a sync.
+home = LAST_CLIENT["c"].get("/").get_data(as_text=True)
+check("home does not claim League Synced", "League Synced" not in home)
+check("home says signed in instead", "Signed in to Yahoo" in home)
 
 print("\n=== C. 403 on the leagues call reports the real cause ===")
 check("leagues 403 points at app permission",
