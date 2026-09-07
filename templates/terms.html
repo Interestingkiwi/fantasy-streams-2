@@ -5,16 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Terms & Privacy - Fantasy Streams</title>
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
-        body { font-family: 'Inter', sans-serif; }
-        h2 { color: #60A5FA; font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid #374151; padding-bottom: 0.5rem; }
-        h3 { color: #9CA3AF; font-weight: 500; margin-top: 1rem; margin-bottom: 0.5rem; }
-        p, li { color: #D1D5DB; line-height: 1.6; margin-bottom: 1rem; }
+        /* Long-form prose rules, specific to this page. Colours come from the
+           shared tokens so the terms page stops drifting from the rest. */
+        h2 { color: var(--fs-link); font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--fs-border); padding-bottom: 0.5rem; }
+        h3 { color: var(--fs-text-muted); font-weight: 500; margin-top: 1rem; margin-bottom: 0.5rem; }
+        p, li { color: var(--fs-text); line-height: 1.6; margin-bottom: 1rem; }
         ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 1rem; }
-        a { color: #60A5FA; text-decoration: none; }
+        a { color: var(--fs-link); text-decoration: none; }
         a:hover { text-decoration: underline; }
     </style>
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 </head>
 <body class="bg-gray-900 text-gray-200">
 

@@ -1,14 +1,146 @@
-/* Use Inter as the default font */
-body {
-    font-family: 'Inter', sans-serif;
+/*
+ * Shared styles for Fantasy Streams.
+ *
+ * One palette, defined once. Every page links this file; nothing redefines a
+ * colour inline. Layout stays with Tailwind utilities - this file owns the
+ * design tokens and the handful of component classes the utilities cannot
+ * express, so a ported page inherits the look instead of inventing one.
+ *
+ * Previously this file was the old app's light theme and no template linked
+ * it, while index/draft-prep each redeclared the same hex values inline and
+ * terms.html used a different palette again.
+ *
+ * Author - Jason Druckenmiller
+ * Created - 7/3/2026
+ * Updated - 9/7/2026
+ */
+
+:root {
+    /* Surfaces - matched to the Tailwind greys the templates already use, so
+       adopting tokens changed nothing visually. */
+    --fs-bg: #111827;            /* page background      (gray-900) */
+    --fs-surface: #1F2937;       /* cards, headers       (gray-800) */
+    --fs-surface-raised: #2D2D2D;/* inputs, inset panels */
+    --fs-surface-hover: #374151; /* row hover            (gray-700) */
+
+    --fs-border: #374151;
+    --fs-border-strong: #555;
+
+    /* Text */
+    --fs-text: #D4D4D4;
+    --fs-text-strong: #FFFFFF;
+    --fs-text-muted: #9CA3AF;
+    --fs-text-dim: #888888;
+
+    /* Accents - the VS Code blue the buttons already used. */
+    --fs-accent: #0E639C;
+    --fs-accent-hover: #1177BB;
+    --fs-link: #60A5FA;
+    --fs-purple: #8B5CF6;        /* category/points mode toggle */
+    --fs-toggle-off: #2563EB;    /* pill toggle, unchecked */
+
+    --fs-success: #10B981;
+    --fs-success-bg: rgba(16, 185, 129, 0.15);
+    --fs-danger: #F87171;
+    --fs-danger-bg: rgba(248, 113, 113, 0.12);
+    --fs-warning: #FBBF24;
+
+    --fs-radius: 0.375rem;
+    --fs-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --fs-font-mono: 'Courier New', Courier, monospace;
 }
 
-/* Terminal Styles */
-.terminal, input.terminal { /* Target both divs and inputs with this class */
+body {
+    font-family: var(--fs-font);
+}
+
+/* Utility the templates rely on; Tailwind's own `hidden` can lose specificity
+   battles against display utilities, so it is stated here too. */
+.hidden { display: none; }
+
+/* --- Forms ---------------------------------------------------------------- */
+
+.form-input,
+.form-select {
+    background-color: var(--fs-surface-raised);
+    color: var(--fs-text);
+    border: 1px solid var(--fs-border-strong);
+    border-radius: var(--fs-radius);
+}
+
+.form-input::placeholder { color: var(--fs-text-dim); }
+
+.form-input:focus,
+.form-select:focus {
+    outline: none;
+    border-color: var(--fs-accent-hover);
+    box-shadow: 0 0 0 1px var(--fs-accent-hover);
+}
+
+/* --- Buttons -------------------------------------------------------------- */
+
+.btn-primary {
+    background-color: var(--fs-accent);
+    color: #fff;
+}
+
+.btn-primary:hover { background-color: var(--fs-accent-hover); }
+
+.btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* --- Tables --------------------------------------------------------------- */
+
+.table-row-hover:hover { background-color: var(--fs-surface-hover); }
+
+/* Marks the winning side of a category comparison (matchup, trade helper). */
+.winner {
+    font-weight: 600;
+    background-color: var(--fs-success-bg);
+    color: var(--fs-success);
+}
+
+/* --- Pill toggles --------------------------------------------------------- */
+/* A checkbox styled as a sliding pill: hidden input + track + knob.
+ *
+ * These class names are ours. The markup previously hooked `.block`, which is
+ * also Tailwind's `display: block` utility and is used as such all over the
+ * draft-prep template - so the rule both lost the cascade to Tailwind's own
+ * `.bg-blue-600` (the toggle never turned purple) and would have hit every
+ * unrelated `.block` element the moment it set a background. */
+
+.fs-toggle-track { background-color: var(--fs-toggle-off); }
+
+input:checked ~ .fs-toggle-dot { transform: translateX(100%); }
+
+/* The track's "on" colour is driven by the page's change handler rather than
+   :checked, matching how the PIM toggle already works. A sibling rule off
+   :checked proved unreliable here and this keeps both toggles on one pattern. */
+.fs-toggle-track.is-on { background-color: var(--fs-purple); }
+
+/* --- Messages ------------------------------------------------------------- */
+
+.error-message {
+    color: var(--fs-danger);
+    background-color: var(--fs-danger-bg);
+    border: 1px solid var(--fs-danger);
+    border-radius: var(--fs-radius);
+    margin: 0.75rem 0;
+    padding: 0.75rem 1rem;
+}
+
+/* --- Job log stream ------------------------------------------------------- */
+/* Used by the Phase 2 database-update progress stream. */
+
+.terminal,
+input.terminal {
     background-color: #1E1E1E;
-    color: #D4D4D4;
-    font-family: 'Courier New', Courier, monospace;
-    border: 1px solid #4a5568; /* Added a subtle border */
+    color: var(--fs-text);
+    font-family: var(--fs-font-mono);
+    border: 1px solid var(--fs-border);
+    border-radius: var(--fs-radius);
 }
 
 .terminal-output {
@@ -16,72 +148,15 @@ body {
     word-wrap: break-word;
 }
 
-/* Simple Modal Styles */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    overflow: auto;
-    background-color: rgb(0,0,0);
-    background-color: rgba(0,0,0,0.4);
-    padding-top: 60px;
-}
+/* --- Help icon ------------------------------------------------------------ */
 
-.modal-content {
-    background-color: #fefefe;
-    margin: 5% auto;
-    padding: 20px;
-    border: 1px solid #888;
-    width: 80%;
-    max-width: 400px;
-    border-radius: 8px;
-    text-align: center;
-    position: relative;
-}
-
-.close-button {
-    color: #aaa;
-    position: absolute;
-    top: 10px;
-    right: 20px;
-    font-size: 28px;
-    font-weight: bold;
-}
-
-.close-button:hover,
-.close-button:focus {
-    color: black;
-    text-decoration: none;
-    cursor: pointer;
-}
-
-.error-message {
-    color: #D8000C; /* Red for errors */
-    background-color: #FFD2D2;
-    border: 1px solid;
-    margin: 10px 0px;
-    padding: 15px 10px 15px 50px;
-    background-repeat: no-repeat;
-    background-position: 10px center;
-}
-
-.winner {
-    font-weight: bold;
-    background-color: #d4edda; /* A light green color */
-}
-
-/* Help Icon Styles */
 .help-icon {
     cursor: pointer;
     display: inline-block;
     width: 20px;
     height: 20px;
-    background-color: #4a5568;
-    color: white;
+    background-color: var(--fs-border);
+    color: var(--fs-text-strong);
     border-radius: 50%;
     text-align: center;
     line-height: 20px;
