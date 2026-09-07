@@ -94,14 +94,26 @@ Yahoo with no browser session. It was never part of the login path. Here, each
 user's tokens live in `users` and the Phase 2 worker picks whose to use via
 `league_updaters` — no shared admin token, and no file handling.
 
-**A 403 on every Fantasy endpoint is a registration problem.** Diagnosed the
-long way once: a token response carrying no `xoauth_yahoo_guid` means Yahoo
-issued a token with no API identity, and no client change fixes it. Confirmed
-by the old repo failing identically on a fresh login while still serving
-previously-synced rows from Postgres — which is what made it *look* healthy.
-Editing a Yahoo app can silently drop its Fantasy Sports permission, and its
-Redirect URI field is single-valued, so adding one replaces the other; two
-deployments need two Yahoo apps.
+**A 403 on every Fantasy endpoint is a registration problem.** A token response
+carrying no `xoauth_yahoo_guid` means Yahoo issued a token with no user
+identity, and no client change fixes it. Confirmed by the old repo failing
+identically on a fresh login while still serving previously-synced rows from
+Postgres — which is what made it *look* healthy.
+
+**Registering the Yahoo app.** Observed on the console's Create Application
+form, because it is not what the API docs imply:
+
+- There is **no Fantasy Sports permission**. The only API Permissions offered
+  are *OpenID Connect Permissions* and *TW Auction* (Yahoo Taiwan Auctions,
+  irrelevant here). Fantasy access follows from the token carrying a user
+  identity, so **OpenID Connect Permissions must be ticked** — an app with no
+  permissions at all yields exactly the guid-less token and blanket 403 above.
+- Client type is **Confidential Client** (the server holds the secret).
+- **Redirect URI(s) accepts several** ("specify any additional redirect uris"),
+  so one Yahoo app can serve more than one deployment.
+- No `scope` is sent by default. If a guid still does not come back, setting
+  `YAHOO_SCOPE=openid` is an env-only lever — it makes Yahoo return an
+  `id_token`, which `resolve_guid()` already reads.
 
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
 needs an HTTPS tunnel registered as the callback and set in
