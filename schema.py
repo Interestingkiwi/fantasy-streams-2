@@ -36,7 +36,7 @@ ADMIN_DDL = [
         refresh_token TEXT,
         token_type TEXT,
         expires_in INTEGER,
-        token_time REAL,
+        token_time DOUBLE PRECISION,
         consumer_key TEXT,
         consumer_secret TEXT,
         is_premium BOOLEAN DEFAULT FALSE,
@@ -52,7 +52,7 @@ ADMIN_DDL = [
     CREATE TABLE IF NOT EXISTS league_updaters (
         league_id TEXT PRIMARY KEY,
         user_guid TEXT,
-        last_updated_ts REAL,
+        last_updated_ts DOUBLE PRECISION,
         FOREIGN KEY (user_guid) REFERENCES users(guid)
     )
     """,
@@ -269,6 +269,37 @@ SEEDS = [
     ),
 ]
 
+# --- Migrations --------------------------------------------------------------
+# CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so a column
+# change has to be stated separately. Every entry must be safe to re-run.
+
+MIGRATIONS = [
+    # SQLite's REAL is 8 bytes; Postgres's REAL is 4 (~7 significant digits)
+    # and cannot hold a Unix epoch - 1.79e9 rounds to the nearest ~128s, so
+    # stored token_time was up to two minutes out and token expiry maths with
+    # it. Both columns came across from the old repo's SQLite DDL unchanged.
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'users'
+                      AND column_name = 'token_time'
+                      AND data_type = 'real') THEN
+            ALTER TABLE users
+                ALTER COLUMN token_time TYPE DOUBLE PRECISION;
+        END IF;
+
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'league_updaters'
+                      AND column_name = 'last_updated_ts'
+                      AND data_type = 'real') THEN
+            ALTER TABLE league_updaters
+                ALTER COLUMN last_updated_ts TYPE DOUBLE PRECISION;
+        END IF;
+    END $$;
+    """,
+]
+
 ALL_TABLES = ADMIN_DDL + LEAGUE_DDL
 
 
@@ -286,9 +317,14 @@ def init_schema(strict=False):
         with transaction() as conn:
             for ddl in ALL_TABLES:
                 conn.execute(text(ddl))
+            for migration in MIGRATIONS:
+                conn.execute(text(migration))
             for sql, params in SEEDS:
                 conn.execute(text(sql), params)
-        log.info("Schema ready (%d tables).", len(ALL_TABLES))
+        log.info(
+            "Schema ready (%d tables, %d migrations).",
+            len(ALL_TABLES), len(MIGRATIONS),
+        )
     except Exception:
         log.exception("Schema init failed.")
         if strict:
