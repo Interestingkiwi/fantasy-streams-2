@@ -45,7 +45,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `matchup_weights.py` | Weights each category by how much it is still in doubt, and iterates a week's lineups against them. See *Lineups* below |
 | `manager_profiles.py` | Classifies an opponent's add/drop style from their real transaction history. See *Lineups* below |
 | `opponent_strength.py` | Per-category nudge for which NHL team a player is facing. See *Lineups* below |
-| `scrape_team_stats.py` | Scrapes every team's strength into `team_stats`; feeds `opponent_strength.py` |
+| `scrape_team_stats.py` | Scrapes every team's strength and home/road splits into `team_stats`; feeds `opponent_strength.py` |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -293,9 +293,30 @@ matchup. Apply it to both sides or neither.
 It fades in on its own: z shrinks by games played, so October barely moves and
 the adjustment grows with the sample. No hardcoded date gate.
 
-Not done, deliberately: **home ice**, plausibly bigger than any of this and
-free from `nhl_schedule`, but sizing it needs home/road splits this module does
-not fetch, and guessing would undo the point of measuring the rest.
+**Home ice is the bigger effect, and is measured too.** On the completed
+2025-26 season teams scored 2.2% more at home, took 2.0% more shots and won
+**4.4%** more often — against an opponent adjustment that is typically 1.5%.
+`VENUE_DRIVERS` maps each category onto the quantity that actually moves it
+(wins for W, goals against for GA, shots against for SV — so a goalie at home
+allows fewer goals *and* makes fewer saves), and the multipliers are derived at
+run time from the scraped `season-home` / `season-road` windows, so they
+recalibrate each season instead of ageing into a constant.
+
+**Venue and opponent strength cannot double-count, by construction.** The worry
+is real — a team allows more goals on the road, so using an opponent's road
+numbers *and* boosting your own home player would count the league-wide home
+effect twice. It cannot happen, because an opponent's z is standardised *within
+its own split*: against the other 31 teams' road records, not the overall mean.
+The league-wide part is therefore exactly zero in z terms and survives only in
+the venue multiplier. Verified on the real league — averaging the combined
+adjustment over all 32 opponents returns the venue multiplier to 1e-9 — and
+home/road straddle 1.0, so a balanced season is unbiased.
+
+Combined, best-vs-worst moves a real player's value **6.7%**, against a rank
+1→2 gap of 0.6% and a rank 1→10 gap of 20.8%.
+
+`nhl_schedule` holds fixtures only (no scores), so none of this is derived from
+game results — the NHL stats API serves the splits directly.
 
 ### What the opponent will do (`manager_profiles.py`)
 

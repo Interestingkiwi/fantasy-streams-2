@@ -1,12 +1,14 @@
 """
 Tests for the opponent-strength adjustment.
 
-Three things carry the suite. That the adjustment is mean-neutral, because an
+Four things carry the suite. That the adjustment is mean-neutral, because an
 asymmetric drift would silently bias every matchup projection. That the
 per-category directions are right, since goals against and saves respond to
-opposite things and getting one backwards is invisible in aggregate. And that
-the adjustment is small enough to break ties without reordering tiers - the
-"never a fourth-liner over McDavid" requirement, tested directly.
+opposite things and getting one backwards is invisible in aggregate. That the
+adjustment is small enough to break ties without reordering tiers - the "never
+a fourth-liner over McDavid" requirement, tested directly. And that venue and
+opponent strength do not double-count the league-wide home advantage, which is
+the one way combining them could quietly go wrong.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
@@ -143,7 +145,86 @@ check("but a near-tie can be decided by the matchup",
 
 
 # --------------------------------------------------------------------------
-print("\n=== 5. the real 2025-26 season ===")
+print("\n=== 5. home ice ===")
+
+SPLIT_ROWS = (
+    [dict(r, statWindow="season") for r in POOL]
+    + [dict(r, statWindow="season-home", goalsForPerGame=r["goalsForPerGame"] * 1.02,
+            goalsAgainstPerGame=r["goalsAgainstPerGame"] * 0.98,
+            shotsForPerGame=r["shotsForPerGame"] * 1.02,
+            shotsAgainstPerGame=r["shotsAgainstPerGame"] * 0.98,
+            wins=24, gamesPlayed=41) for r in POOL]
+    + [dict(r, statWindow="season-road", goalsForPerGame=r["goalsForPerGame"] * 0.98,
+            goalsAgainstPerGame=r["goalsAgainstPerGame"] * 1.02,
+            shotsForPerGame=r["shotsForPerGame"] * 0.98,
+            shotsAgainstPerGame=r["shotsAgainstPerGame"] * 1.02,
+            wins=17, gamesPlayed=41) for r in POOL]
+)
+for row in SPLIT_ROWS:
+    row.setdefault("wins", 41)
+VENUE = ops.venue_multipliers(SPLIT_ROWS)
+
+check("venue effects are derived from the scraped splits",
+      abs(VENUE["goalsForPerGame"]["home"] - 1.02) < 1e-9, VENUE.get("goalsForPerGame"))
+check("scoring is better at home than away",
+      ops.venue_multiplier("G", True, VENUE) > 1.0
+      > ops.venue_multiplier("G", False, VENUE))
+check("a goalie allows fewer goals at home",
+      ops.venue_multiplier("GA", True, VENUE) < 1.0)
+check("...and makes fewer saves, because he faces fewer shots",
+      ops.venue_multiplier("SV", True, VENUE) < 1.0)
+check("...but wins more often",
+      ops.venue_multiplier("W", True, VENUE) > 1.0,
+      ops.venue_multiplier("W", True, VENUE))
+check("an inverted driver flips the split, so losses fall at home",
+      ops.venue_multiplier("L", True, VENUE) < 1.0
+      and ops.venue_multiplier("SHO", True, VENUE) > 1.0,
+      (ops.venue_multiplier("L", True, VENUE), ops.venue_multiplier("SHO", True, VENUE)))
+check("categories with no venue driver are untouched",
+      all(ops.venue_multiplier(c, True, VENUE) == 1.0 for c in ops.UNDRIVEN_CATEGORIES))
+check("with no splits scraped it degrades to venue-blind, not to nothing",
+      ops.venue_multiplier("G", True, {}) == 1.0
+      and ops.venue_multipliers([dict(r, statWindow="season") for r in POOL]) == {})
+
+check("a visiting opponent is judged on its road record",
+      ops.OPPONENT_WINDOW[True] == "season-road"
+      and ops.OPPONENT_WINDOW[False] == "season-home")
+SPLITS = ops.split_z_scores(SPLIT_ROWS)
+check("each window is standardised separately",
+      set(SPLITS) == {"season", "season-home", "season-road"}, sorted(SPLITS))
+check("the split z table is chosen by where the game is",
+      ops.opponent_z_for(True, SPLITS) is SPLITS["season-road"])
+check("...falling back to the plain season window when splits are missing",
+      ops.opponent_z_for(True, {"season": Z}) is Z)
+
+check("omitting venue leaves the old opponent-only behaviour intact",
+      ops.adjust({"G": 1.0}, "LEAK", Z)["G"]
+      == ops.adjust({"G": 1.0}, "LEAK", Z, is_home=None, venue=VENUE)["G"])
+check("including it moves the line further",
+      ops.adjust({"G": 1.0}, "LEAK", Z, is_home=True, venue=VENUE)["G"]
+      > ops.adjust({"G": 1.0}, "LEAK", Z)["G"])
+
+# The property that makes combining the two safe. Because an opponent's z is
+# standardised inside its own split, averaging over every opponent leaves
+# exactly the venue multiplier - the league-wide home effect is counted once.
+for category in ("G", "SOG", "GA", "SV"):
+    for at_home in (True, False):
+        table = ops.opponent_z_for(at_home, SPLITS)
+        combined = [ops.adjust({category: 1.0}, t, table,
+                               is_home=at_home, venue=VENUE)[category] for t in table]
+        expected = ops.venue_multiplier(category, at_home, VENUE)
+        check(f"{category} {'at home' if at_home else 'away'}: venue counted once, not twice",
+              abs(statistics.mean(combined) - expected) < 1e-9,
+              (statistics.mean(combined), expected))
+
+check("a balanced season of home and road is venue-neutral overall",
+      all(abs((ops.venue_multiplier(c, True, VENUE)
+               + ops.venue_multiplier(c, False, VENUE)) / 2 - 1.0) < 0.002
+          for c in ("G", "SOG", "GA", "SV")))
+
+
+# --------------------------------------------------------------------------
+print("\n=== 6. the real 2025-26 season ===")
 
 try:
     from db import engine, text
@@ -182,6 +263,34 @@ try:
 
     check("hits stay untouched against every real team",
           all(ops.multiplier("HIT", t, scores) == 1.0 for t in scores))
+
+    with engine.connect() as conn:
+        every = [dict(r._mapping) for r in conn.execute(text("SELECT * FROM team_stats"))]
+
+    real_venue = ops.venue_multipliers(every)
+    check("the home/road windows were scraped too",
+          set(real_venue) >= {"goalsForPerGame", "winRate"}, sorted(real_venue))
+    check("real home advantage in scoring is a couple of per cent",
+          1.01 < real_venue["goalsForPerGame"]["home"] < 1.05,
+          real_venue["goalsForPerGame"])
+    check("real home advantage in winning is the larger effect",
+          real_venue["winRate"]["home"] > real_venue["goalsForPerGame"]["home"],
+          (real_venue["winRate"], real_venue["goalsForPerGame"]))
+    check("home and road straddle one, so a full season is unbiased",
+          all(abs((e["home"] + e["road"]) / 2 - 1.0) < 0.005
+              for e in real_venue.values()),
+          real_venue)
+
+    # And the same no-double-count property, on the real league.
+    real_splits = ops.split_z_scores(every)
+    for at_home in (True, False):
+        table = ops.opponent_z_for(at_home, real_splits)
+        combined = [ops.adjust({"G": 1.0}, t, table, is_home=at_home,
+                               venue=real_venue)["G"] for t in table]
+        check(f"real league, {'home' if at_home else 'road'}: venue counted once",
+              abs(statistics.mean(combined)
+                  - ops.venue_multiplier("G", at_home, real_venue)) < 1e-9,
+              statistics.mean(combined))
 
 except Exception as exc:                                    # noqa: BLE001
     check("database-backed checks ran", False, f"{type(exc).__name__}: {exc}")

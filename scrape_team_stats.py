@@ -2,11 +2,18 @@
 Scrapes every NHL team's strength into `team_stats`.
 
 Feeds `opponent_strength.py`, which nudges a player's projection according to
-who he is playing. Two windows are written:
+who he is playing. Four windows are written:
 
-- `season`  - the season to date (or a completed season, given `--season`).
-- `week`    - a trailing seven days, which is noisy and is kept for display
-              rather than for the optimizer. See opponent_strength.py.
+- `season`       - the season to date (or a completed season, given `--season`).
+- `season-home`  - the same, restricted to home games.
+- `season-road`  - and to road games.
+- `week`         - a trailing seven days, which is noisy and is kept for
+                   display rather than for the optimizer.
+
+The home/road pair is what `opponent_strength` uses for venue: measured on the
+completed 2025-26 season, teams score 2.2% more at home, take 2.0% more shots,
+and win 4.4% more often. That is a larger effect than the opponent adjustment
+itself, and it is free from data already being fetched.
 
 Ported from the old repo's `jobs/toi_script.py` (`fetch_team_stats_summary` /
 `fetch_team_stats_weekly`) with two changes:
@@ -19,7 +26,7 @@ Ported from the old repo's `jobs/toi_script.py` (`fetch_team_stats_summary` /
   both the full name and the tricode, so the map is built at run time; all 32
   teams join on full name, and the codes match `nhl_schedule` exactly.
 
-    python scrape_team_stats.py                  # current season, both windows
+    python scrape_team_stats.py                  # current season, all windows
     python scrape_team_stats.py --season 20252026
     python scrape_team_stats.py --week-end 2026-01-18
 
@@ -48,6 +55,7 @@ TIMEOUT = 30
 # so no column needs dividing by games played later.
 FIELDS = {
     'gamesPlayed': 'gamesPlayed',
+    'wins': 'wins',
     'powerPlayPct': 'powerPlayPct',
     'penaltyKillPct': 'penaltyKillPct',
     'goalsForPerGame': 'goalsForPerGame',
@@ -61,6 +69,7 @@ CREATE TABLE IF NOT EXISTS team_stats (
     "teamCode"            TEXT NOT NULL,
     "statWindow"          TEXT NOT NULL,
     "gamesPlayed"         DOUBLE PRECISION,
+    "wins"                DOUBLE PRECISION,
     "powerPlayPct"        DOUBLE PRECISION,
     "penaltyKillPct"      DOUBLE PRECISION,
     "goalsForPerGame"     DOUBLE PRECISION,
@@ -162,6 +171,10 @@ def write(rows):
 
     with engine.begin() as conn:
         conn.execute(text(CREATE))
+        # The table predates the wins column, and CREATE IF NOT EXISTS will
+        # not add it to one that already exists.
+        conn.execute(text('ALTER TABLE team_stats '
+                          'ADD COLUMN IF NOT EXISTS "wins" DOUBLE PRECISION'))
         conn.execute(text('DELETE FROM team_stats WHERE "statWindow" = ANY(:windows)'),
                      {'windows': windows})
         conn.execute(text(f'INSERT INTO team_stats ({quoted}) VALUES ({placeholders})'),
@@ -177,7 +190,9 @@ def main():
     parser.add_argument('--week-end', help='Last day of the trailing week '
                                            '(YYYY-MM-DD). Defaults to yesterday.')
     parser.add_argument('--skip-week', action='store_true',
-                        help='Season window only.')
+                        help='Skip the trailing-week window.')
+    parser.add_argument('--skip-splits', action='store_true',
+                        help='Skip the home/road windows.')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -198,6 +213,14 @@ def main():
 
     rows = collect(f'seasonId={season} and gameTypeId=2', codes, 'season')
     log.info('Season %s: %d teams.', season, len(rows))
+
+    if not args.skip_splits:
+        for side, window in (('H', 'season-home'), ('R', 'season-road')):
+            split = collect(
+                f'seasonId={season} and gameTypeId=2 and homeRoad="{side}"',
+                codes, window)
+            log.info('%s: %d teams.', window, len(split))
+            rows += split
 
     if not args.skip_week:
         weekly = collect(

@@ -216,10 +216,25 @@ Three properties it must have:
   display-only hot/cold flag.
 - **Applied to both teams or neither.**
 
-Two effects likely **larger** than opponent GA, and free from the schedule
-already in `nhl_schedule`: **home/away** (~2–3%) and **back-to-backs** — which
-for goalies change *who starts*, not merely how well they play, and so belong in
-§3 rather than here.
+**Home ice — built, and it is the larger effect.** Measured on the completed
+2025-26 season: +2.2% goals at home, +2.0% shots, and **+4.4% wins**, against
+an opponent adjustment that is typically 1.5%. Each category maps to the
+quantity that actually moves it, and the multipliers are derived from scraped
+home/road splits rather than hardcoded, so they recalibrate each season.
+
+The double-count worry — using an opponent's road numbers *and* boosting your
+own home player — is handled by construction rather than by care: an opponent's
+z is standardised within its own split, so the league-wide home effect is
+exactly zero in z terms and lives only in the venue multiplier. Confirmed to
+1e-9 on the real league, and home/road straddle 1.0 so a balanced season is
+unbiased. Combined with opponent strength, best-vs-worst moves a real player
+6.7%, against a rank 1→2 gap of 0.6% and a rank 1→10 gap of 20.8%.
+
+Note `nhl_schedule` holds fixtures only, with no scores, so none of this comes
+from game results — the NHL stats API serves the splits directly.
+
+**Back-to-backs** stay in §3 rather than here, since for goalies they change
+*who starts* rather than how well anyone plays.
 
 ### 5. Category-weighted lineups — built
 
