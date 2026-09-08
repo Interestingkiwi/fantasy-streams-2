@@ -143,7 +143,9 @@ meanwhile — which is what makes Phase 2 work possible while this is pending.
    projections + weeks. Port the `players ⋈ final_projections` join
    (`build_player_query`) here.
 4. **Lineups / roster optimizer** — `get_optimal_lineup` + `lineup_settings`;
-   heavy logic.
+   heavy logic. Design settled ahead of the port in `docs/OPTIMIZER.md` — the
+   old bucketed category ranks are not being ported, and the four-pass greedy
+   becomes exact bipartite matching.
 5. **Free Agent Finder** — `free_agents` / `waiver_players` + projections +
    schedule density.
 6. **Goalie Planner** — schedule + goalie projections + probable starters.

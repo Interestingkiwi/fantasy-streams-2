@@ -238,9 +238,17 @@ On load the page ranks against those saved settings by *replacing* the
 costs ~40ms against a ~2s payload, so a returning user waits no longer. With no
 categories selected there is nothing to rank, and the plain call stands.
 
+**Two schedule columns**, both display-only and neither touching the rankings.
+`Light` is always on: how many of the season's games the player's team plays on a
+light night, colour-coded against the 32-team average. It reads
+`/schedules/api/team-games` rather than carrying a second copy of the maths, so
+the draft board and the Schedules page cannot disagree about what counts as
+light.
+
 **Playoff weeks** are display-only and never touch the rankings — they drive a `Playoff`
 column showing games in the selected weeks, colour-coded against the league average,
-with light-night games (dates under `LIGHT_NIGHT_MAX_GAMES`) as a suffix. Week numbers
+with light-night games (dates at or under `LIGHT_NIGHT_MAX_GAMES` — the
+comparison is inclusive, so an 8-game night counts) as a suffix. Week numbers
 are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
 
 ## The projection pipeline (`preseason_db_build/`)
@@ -348,6 +356,12 @@ Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 `docs/MIGRATION.md` is the plan for bringing the pages from the old repo
 (`Interestingkiwi/fantasy-streams`) into this one, with the DB-idiom, background-job,
 and Yahoo-auth decisions already settled.
+
+`docs/OPTIMIZER.md` is the design for Phase 3 item 4, the daily lineup
+optimizer — written before the port because the decisions in it (drop the old
+bucketed category ranks for the `ranking_utils` engine, replace the four-pass
+greedy with exact bipartite matching, give goalies start probabilities that sum
+to one per team game) are much cheaper to make now than to retrofit.
 
 Phases 0 and 1 are done: config/schema/jobs foundations, and Yahoo OAuth end to
 end (see *Auth* above), though the OAuth flow has never completed a real Fantasy
