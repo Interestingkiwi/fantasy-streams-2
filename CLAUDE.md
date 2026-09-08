@@ -40,6 +40,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
 | `ranking_utils.py` | Ranking engine — see *Ranking* below |
 | `lineup_utils.py` | Daily lineup matcher — seats a night's players into the league's slots, exactly. See *Lineups* below |
+| `daily_value.py` | Per-game, per-category player values for the matcher to score against. See *Lineups* below |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -250,6 +251,39 @@ was given.
 `seat_all=False` benches players valued at or below zero — needed once
 category weighting can make a start actively harmful.
 
+### What a start is worth (`daily_value.py`)
+
+`value_players(rows, categories)` turns `final_projections` season rows into
+per-game, per-category values plus the scalar the matcher sorts on. It also
+carries `perGame` per player, because §5's matchup weighting needs raw category
+units, not a pre-summed score.
+
+**Three things `ranking_utils` does that this must not**, all correct for a
+draft board and all wrong for a lineup:
+
+| | Draft board | Lineup |
+|---|---|---|
+| Centering | z-score vs the average player | origin is an empty slot, so real zero |
+| Capping | clip outliers so one category can't run away | linear, or §5's margin maths is in the wrong units |
+| Replacement level | prices a roster spot | the matcher enforces scarcity as a hard constraint already |
+
+So a category value is `Σ polarity × per_game / σ` and a points value is
+`Σ points_per × per_game` (fantasy points per game) — **the two league modes
+differ only in their weights**, which is the seam §5 plugs into.
+
+Per game, not per season: durability is deliberately absent, because for
+tonight's lineup a 40-game player is worth what he produces on the nights he
+plays. Goalie rates are per *start* (divided by `proj_gamesStarted`, not
+`projectedGames`) so §3 can multiply them by a start probability — which is why
+a backup with elite per-start rates currently ranks near the top and will stop
+doing so once §3 lands.
+
+Ratio categories (GAA, SVpct) are carried but kept out of the scalar; adding a
+start moves numerator and denominator together, so summing them is wrong rather
+than imprecise. `supported()` splits a league's categories into scored, rate
+and missing — GWG is in no projection column and 8 of the 25 imported leagues
+score it, so `value_players` logs a warning rather than dropping it silently.
+
 ## Draft prep page
 
 Everything except the ranking-method control lives in the **League Settings** modal:
@@ -371,6 +405,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_guid_resolution.py` | each `resolve_guid()` path, including the shape that broke in production — a token with no guid against a 403 API |
 | `test_scope.py` | consent-URL construction and the 403 hint text |
 | `test_lineup.py` | the lineup matcher: brute-forces every assignment for 400 random rosters and requires an exact match on value and starts, then seats real projections into all 25 imported league shapes |
+| `test_daily_value.py` | the value engine, leaning on the decisions a reader might mistake for bugs — no centering, no capping, no replacement level, goalie rates per start |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 

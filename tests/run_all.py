@@ -27,6 +27,7 @@ TESTS = [
     "test_league_viewer.py",
     "test_schedules.py",
     "test_lineup.py",
+    "test_daily_value.py",
 ]
 
 
