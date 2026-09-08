@@ -235,7 +235,7 @@ State is `localStorage`, all keys prefixed `fs_`: `fs_selectedStats`, `fs_statWe
 
 On load the page ranks against those saved settings by *replacing* the
 `/api/projections` call with `/api/rank-players`, never adding to it — the ranking maths
-costs ~40ms against a ~2s payload, so a returning user waits no longer. With no
+costs ~40ms against a ~30ms payload, so a returning user waits no longer. With no
 categories selected there is nothing to rank, and the plain call stands.
 
 **Two schedule columns**, both display-only and neither touching the rankings.
@@ -309,12 +309,15 @@ correct as written: it describes seasons that really were 82 games.
 
 ```bash
 # activate the existing venv, then:
-python app.py            # dev server, http://localhost:5000, debug=True
+python app.py            # dev server, http://127.0.0.1:5000, debug=True
 
 # rebuild projections (long-running, hits external APIs):
 cd preseason_db_build && python build_database.py
 ```
 
+- **Use `127.0.0.1`, never `localhost`.** Werkzeug binds one address family, so
+  on Windows `localhost` costs a flat ~2s per request while the client waits for
+  `::1` to fail. `DEV_HOST` overrides the bind address.
 - Requires `.env` with `DATABASE_URL` (local Postgres). `.env` is git-ignored.
 - Tests: `python tests/run_all.py` (see *Tests* below).
 - `requirements.txt` is plain UTF-8. (It used to be UTF-16; if an editor shows CJK
@@ -404,9 +407,15 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 - Token refresh has no lock: two concurrent requests on an expired token both
   refresh, and the later write wins. Harmless now; revisit with the Phase 2 worker.
 - The automation / streaming features are stubs.
-- `/api/projections` and `/api/rank-players` each take **~2s**, essentially all of it
-  `SELECT *` plus jsonify of 864 rows x ~37 columns. The ranking maths is ~40ms of that.
-  Worth narrowing the column list or paginating server-side.
+- ~~`/api/projections` and `/api/rank-players` each take ~2s~~ **Retired 9/7/2026 -
+  measured, and it was never the endpoints.** The query is 7ms, `jsonify` 12ms,
+  the whole request through Flask's test client ~30ms. The 2s was a flat
+  per-request stall on the dev server, identical for a 1 KB response and a
+  990 KB one: `localhost` resolves to `::1` first on Windows, Werkzeug binds
+  IPv4 only, and the client waits for the v6 connection to fail before
+  retrying. Over `127.0.0.1` the same call is 7ms. Do not paginate these -
+  there is nothing to fix. `app.py` now binds explicitly and prints the address
+  to use.
 - Projected goalie games sum to ~2,974 against a league total of 2,688 (32 x 84), because
   every goalie is projected independently and a starter and his backup can't both hit
   their assigned workload. Long-standing, and unchanged in proportion by the 84-game move.
