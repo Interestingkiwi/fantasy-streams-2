@@ -211,9 +211,16 @@ Three properties it must have:
 - **Regressed toward the mean by games played**, the same trick
   `calculate_goalie_projections.REGRESSION_GAMES` already uses. This makes the
   adjustment fade in over the first weeks of the season on its own, rather than
-  needing a hardcoded "off until October 20th" gate. The `_weekly` table is a
-  3–4 game sample and should carry little weight in the optimizer — better as a
-  display-only hot/cold flag.
+  needing a hardcoded "off until October 20th" gate.
+- **Trailing windows are collected but weighted lightly.** Measured on 2025-26:
+  season-to-date predicts next week's shots allowed at 0.35, the trailing
+  4/2/1-week windows at 0.31/0.24/0.21 — all worse alone — and form adds only
+  0.03–0.08 partial correlation over season-to-date. Blended at 25%.
+- **Hot goalies do not stay hot.** Raw, a goalie off a .935+ fortnight posts
+  .9037 next start against .8902 for an average one. Controlling for each
+  goalie's own season save percentage the effect vanishes entirely (hot −0.0067
+  vs his norm, cold +0.0019, intervals overlapping). It was skill, not form. No
+  hot-goalie adjustment should be built.
 - **Applied to both teams or neither.**
 
 **Home ice — built, and it is the larger effect.** Measured on the completed

@@ -261,8 +261,37 @@ category weighting can make a start actively harmful.
 
 A projection is an average over average opposition; on a given night the
 player faces someone specific. `scrape_team_stats.py` collects each team's
-GF/GA/SF/SA per game plus PP% and PK% into `team_stats`, for two windows —
-`season` (what the optimizer uses) and `week` (noisy, kept for display).
+GF/GA/SF/SA per game plus PP% and PK% into `team_stats`, across six windows:
+`season`, `season-home`, `season-road`, and trailing `last-1w` / `last-2w` /
+`last-4w`.
+
+**What updates and what does not.** Team rates, the z-scores built from them,
+and every venue multiplier are derived at run time, so they move with each
+nightly scrape. The *calibration constants* — `PER_STANDARD_DEVIATION`,
+`MAX_ADJUSTMENT`, `RECENT_WEIGHT`, and `matchup_weights.CATEGORY_DISPERSION` —
+are fixed, measured once against the completed 2025-26 season. That is
+deliberate: re-deriving them mid-season on a few weeks of play would chase
+noise, and the whole point of measuring was to stop guessing. Re-measure them
+between seasons, not nightly.
+
+**Recent form: real, weak, and mostly already known.** Tested by predicting
+each team-week from windows strictly before it, season-to-date correlates 0.35
+with next week's shots allowed while the trailing 4/2/1-week windows manage
+0.31/0.24/0.21 — all *worse on their own*. What form adds beyond season-to-date
+is a partial correlation of 0.03–0.08. So `RECENT_WEIGHT` folds the 4-week
+window in at 25% rather than treating form as a separate signal. That is a
+re-weighting of two estimates of the same quantity, not a new effect stacked on
+top, which is what makes a modest weight safe — a wrong weight costs precision,
+not bias.
+
+**Hot goalies do not stay hot.** Worth recording because the raw numbers look
+convincing and are not: a goalie coming off a fortnight at .935+ posts .9037 in
+his next start against .8902 for an average one. Control for each goalie's own
+season save percentage and the gap vanishes — hot −0.0067 relative to his norm,
+normal −0.0071, cold +0.0019, all three confidence intervals overlapping. The
+apparent effect was entirely skill: good goalies have hot fortnights more
+often. **Do not build a "avoid the hot goalie" adjustment**; what predicts is
+the goalie's quality, which the projections already carry.
 
 **Per category, not one blanket multiplier.** Each category has its own driver,
 and for goalies two of them respond to *opposite* things — a shot-heavy

@@ -2,13 +2,21 @@
 Scrapes every NHL team's strength into `team_stats`.
 
 Feeds `opponent_strength.py`, which nudges a player's projection according to
-who he is playing. Four windows are written:
+who he is playing. Six windows are written:
 
 - `season`       - the season to date (or a completed season, given `--season`).
 - `season-home`  - the same, restricted to home games.
 - `season-road`  - and to road games.
-- `week`         - a trailing seven days, which is noisy and is kept for
-                   display rather than for the optimizer.
+- `last-1w`      - trailing 7 days.
+- `last-2w`      - trailing 14 days.
+- `last-4w`      - trailing 28 days.
+
+The trailing windows are for form. Measured on 2025-26 they add little that
+season-to-date does not already carry - partial correlations of 0.03 to 0.08
+against next week's rate - so `opponent_strength` blends them in at a low
+weight rather than treating them as a separate signal. They are also what a
+manager wants to *look* at, and they accumulate for a better answer once more
+than one season is in hand.
 
 The home/road pair is what `opponent_strength` uses for venue: measured on the
 completed 2025-26 season, teams score 2.2% more at home, take 2.0% more shots,
@@ -63,6 +71,11 @@ FIELDS = {
     'shotsForPerGame': 'shotsForPerGame',
     'shotsAgainstPerGame': 'shotsAgainstPerGame',
 }
+
+# Window names this script no longer writes. Cleared on every run, or a
+# renamed window would sit in the table forever - write() only replaces the
+# windows it is given.
+LEGACY_WINDOWS = ('week',)
 
 CREATE = '''
 CREATE TABLE IF NOT EXISTS team_stats (
@@ -176,7 +189,7 @@ def write(rows):
         conn.execute(text('ALTER TABLE team_stats '
                           'ADD COLUMN IF NOT EXISTS "wins" DOUBLE PRECISION'))
         conn.execute(text('DELETE FROM team_stats WHERE "statWindow" = ANY(:windows)'),
-                     {'windows': windows})
+                     {'windows': windows + list(LEGACY_WINDOWS)})
         conn.execute(text(f'INSERT INTO team_stats ({quoted}) VALUES ({placeholders})'),
                      rows)
     return len(rows)
@@ -187,10 +200,10 @@ def main():
     parser.add_argument('--season', type=int,
                         help='Season id, e.g. 20252026. Defaults to the one '
                              'nhl_schedule covers.')
-    parser.add_argument('--week-end', help='Last day of the trailing week '
+    parser.add_argument('--week-end', help='Last day of the trailing windows '
                                            '(YYYY-MM-DD). Defaults to yesterday.')
     parser.add_argument('--skip-week', action='store_true',
-                        help='Skip the trailing-week window.')
+                        help='Skip the trailing-form windows.')
     parser.add_argument('--skip-splits', action='store_true',
                         help='Skip the home/road windows.')
     args = parser.parse_args()
@@ -201,7 +214,6 @@ def main():
     season = args.season or season_from_schedule()
     week_end = date.fromisoformat(args.week_end) if args.week_end \
         else date.today() - timedelta(days=1)
-    week_start = week_end - timedelta(days=6)
 
     # Standings need a date inside a season that has actually been played.
     # The season's own back half is a safe bet for a completed season, and
@@ -223,11 +235,13 @@ def main():
             rows += split
 
     if not args.skip_week:
-        weekly = collect(
-            f'gameDate>="{week_start}" and gameDate<="{week_end}" and gameTypeId=2',
-            codes, 'week')
-        log.info('Week %s..%s: %d teams.', week_start, week_end, len(weekly))
-        rows += weekly
+        for weeks, window in ((1, 'last-1w'), (2, 'last-2w'), (4, 'last-4w')):
+            span_start = week_end - timedelta(days=7 * weeks - 1)
+            form = collect(
+                f'gameDate>="{span_start}" and gameDate<="{week_end}" '
+                f'and gameTypeId=2', codes, window)
+            log.info('%s (%s..%s): %d teams.', window, span_start, week_end, len(form))
+            rows += form
 
     log.info('Wrote %d rows to team_stats.', write(rows))
 

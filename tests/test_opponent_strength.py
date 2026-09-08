@@ -258,7 +258,47 @@ check("a balanced season of home and road is venue-neutral overall",
 
 
 # --------------------------------------------------------------------------
-print("\n=== 6. the real 2025-26 season ===")
+print("\n=== 6. recent form ===")
+
+# A team that has been much leakier lately than its season line says.
+FORM_ROWS = SPLIT_ROWS + [
+    dict(team("LEAK", ga=5.0), statWindow="last-4w", gamesPlayed=12),
+    dict(team("MID", ga=3.0), statWindow="last-4w", gamesPlayed=12),
+    dict(team("WALL", ga=1.5), statWindow="last-4w", gamesPlayed=12),
+]
+
+plain = ops.split_z_scores(FORM_ROWS)
+blended = ops.blended_z_scores(FORM_ROWS)
+
+check("the trailing window is standardised like any other",
+      "last-4w" in plain and len(plain["last-4w"]) == 3, sorted(plain))
+check("blending moves the season estimate toward recent form",
+      blended["season"]["LEAK"]["goalsAgainstPerGame"]
+      != plain["season"]["LEAK"]["goalsAgainstPerGame"])
+check("...but only part of the way, since form is the weaker predictor",
+      abs(blended["season"]["LEAK"]["goalsAgainstPerGame"]
+          - plain["season"]["LEAK"]["goalsAgainstPerGame"])
+      < abs(plain["last-4w"]["LEAK"]["goalsAgainstPerGame"]
+            - plain["season"]["LEAK"]["goalsAgainstPerGame"]),
+      "a full move would mean recent form replacing the season, not informing it")
+
+check("a zero weight gives back the unblended table exactly",
+      ops.blended_z_scores(FORM_ROWS, recent_weight=0) == plain)
+check("no trailing window scraped is not a failure, just no blending",
+      ops.blended_z_scores(SPLIT_ROWS) == ops.split_z_scores(SPLIT_ROWS))
+check("the trailing window itself is left unblended",
+      blended["last-4w"] == plain["last-4w"])
+
+# Blending must not disturb the property everything else rests on.
+for window in ("season", "season-home", "season-road"):
+    table = blended[window]
+    mean = statistics.mean(ops.multiplier("G", t, table) for t in table)
+    check(f"{window} is still mean-neutral after blending",
+          abs(mean - 1.0) < 1e-9, mean)
+
+
+# --------------------------------------------------------------------------
+print("\n=== 7. the real 2025-26 season ===")
 
 try:
     from db import engine, text
@@ -305,6 +345,14 @@ try:
 
     check("hits stay untouched against every real team",
           all(ops.multiplier("HIT", t, scores) == 1.0 for t in scores))
+
+    with engine.connect() as conn:
+        windows = [r[0] for r in conn.execute(text(
+            'SELECT DISTINCT "statWindow" FROM team_stats'))]
+    check("the trailing form windows have been scraped",
+          {"last-1w", "last-2w", "last-4w"} <= set(windows), sorted(windows))
+    check("the renamed window was cleaned up rather than left behind",
+          "week" not in windows, sorted(windows))
 
     with engine.connect() as conn:
         every = [dict(r._mapping) for r in conn.execute(text("SELECT * FROM team_stats"))]

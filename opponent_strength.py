@@ -86,6 +86,23 @@ MAX_ADJUSTMENT = 0.04
 # it, z shrinks toward zero and the adjustment fades out with it.
 REGRESSION_GAMES = 20
 
+# How much of an opponent's strength comes from recent form rather than the
+# season to date.
+#
+# **Deliberately small, and the evidence is why.** Tested on 2025-26 by
+# predicting each team-week from windows strictly before it: season-to-date
+# correlates 0.35 with next week's shots allowed, while the trailing 4, 2 and 1
+# week windows manage 0.31, 0.24 and 0.21 - all *worse* on their own. What
+# recent form adds beyond season-to-date is a partial correlation of 0.03 to
+# 0.08. Real, consistently positive, and small.
+#
+# So this is a re-weighting of two estimates of the same quantity, not a new
+# effect layered on top, which is what makes a modest weight safe: getting it
+# wrong costs a little precision rather than introducing a bias. The 4-week
+# window carries it, being the steadiest of the three.
+RECENT_WINDOW = 'last-4w'
+RECENT_WEIGHT = 0.25
+
 # Which of the scraped windows to read an opponent's strength from, given
 # where the game is played. A visiting opponent is judged on its road record.
 OPPONENT_WINDOW = {True: 'season-road', False: 'season-home'}
@@ -371,6 +388,41 @@ def split_z_scores(rows, games_key='gamesPlayed'):
         windows.setdefault(row.get('statWindow'), []).append(row)
     return {window: team_z_scores(split, games_key)
             for window, split in windows.items()}
+
+
+def blended_z_scores(rows, recent_weight=RECENT_WEIGHT,
+                     recent_window=RECENT_WINDOW, games_key='gamesPlayed'):
+    """
+    {window: {team: {stat: z}}}, with recent form folded into each window.
+
+    Both the season windows and the trailing one estimate the same thing - how
+    much this opponent concedes - so blending them is a precision question, not
+    a modelling one. Recent form is standardised separately before blending, so
+    the blend mixes comparable quantities rather than raw rates.
+
+    Falls through to the plain split z-scores when no trailing window has been
+    scraped, so an old `team_stats` still works.
+    """
+    splits = split_z_scores(rows, games_key)
+    recent = splits.get(recent_window)
+    if not recent or recent_weight <= 0:
+        return splits
+
+    blended = {}
+    for window, teams in splits.items():
+        if window == recent_window:
+            blended[window] = teams
+            continue
+        merged = {}
+        for team, scores in teams.items():
+            form = recent.get(team) or {}
+            merged[team] = {
+                stat: (1 - recent_weight) * value
+                      + recent_weight * form.get(stat, value)
+                for stat, value in scores.items()
+            }
+        blended[window] = merged
+    return blended
 
 
 def opponent_z_for(is_home, splits):
