@@ -31,6 +31,7 @@ TESTS = [
     "test_goalie_starts.py",
     "test_matchup_weights.py",
     "test_manager_profiles.py",
+    "test_opponent_strength.py",
 ]
 
 

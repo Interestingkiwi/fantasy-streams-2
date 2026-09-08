@@ -6,13 +6,21 @@ the old repo (`Interestingkiwi/fantasy-streams`, `app.py:388 get_optimal_lineup`
 Written before the port, deliberately: several of the decisions below are much
 cheaper to make now than to retrofit.
 
-**Status.** Steps 1-3, 5, and step 6's Tier 3 are built and tested against
-the imported fixtures: `lineup_utils.py` (the matcher), `daily_value.py`
-(per-game category values), `goalie_starts.py` (start probabilities),
-`matchup_weights.py` (category weighting) and `manager_profiles.py` (opponent
-add/drop style). Nothing calls them yet - that needs the Phase 2 ETL for real
-rosters. Step 4 waits on in-season team stats; step 6's Tiers 1 and 2 wait on
-the ETL, since they need live free agents and rosters.
+**Status.** Steps 1-5 and step 6's Tier 3 are built and tested:
+`lineup_utils.py` (the matcher), `daily_value.py` (per-game category values),
+`goalie_starts.py` (start probabilities), `matchup_weights.py` (category
+weighting), `opponent_strength.py` + `scrape_team_stats.py` (who the player is
+facing) and `manager_profiles.py` (opponent add/drop style). Nothing calls them
+yet - that needs the Phase 2 ETL for real rosters.
+
+Only step 6's Tiers 1 and 2 remain, and they wait on the ETL for live free
+agents and rosters.
+
+Step 4 turned out to be testable after all: `api.nhle.com` serves a completed
+season on request, so the scraper, the maths and the calibration all ran
+against the real 2025-26 season. What cannot be tested without a season of
+per-game player outcomes is whether the adjustment *improves* accuracy;
+`daily_player_stats` is empty, so that stays open.
 
 Step 5 was taken ahead of step 4 because step 4 is the only one that needs data
 this repo does not have: the team-strength scraper has to be ported and would
@@ -151,7 +159,7 @@ Two details that will bite:
   assignment has done this once and doing it again double-discounts. Nail this
   down before writing the multiply.
 
-### 4. Opponent strength: per-category, small, mean-neutral
+### 4. Opponent strength: per-category, small, mean-neutral — built
 
 The old daily scrape (`jobs/toi_script.py: fetch_team_stats_summary`) collects
 `pp_pct, pk_pct, gf_gm, ga_gm, sogf_gm, soga_gm` plus trailing-7-day `_weekly`
@@ -177,7 +185,15 @@ A single "weak opponent" boost would push SV and GAA the same way, which is
 backwards. And a goals-based multiplier applied to HIT/BLK is noise dressed as
 signal — leave those flat and say so in the UI.
 
-**Shape and cap.** `1 + k·(league_mean/opp_value − 1)`, clamped to **±4%**.
+**Shape and cap — revised on measurement; the ratio form was wrong.** The real
+2025-26 spreads are +24%/−22% for goals against but only +7%/−9% for penalty
+kill, so a ratio under a shared cap would leave GA permanently clamped — the cap
+doing all the work — while PK barely moved. Use a z-score instead:
+`1 + clamp(k·z·direction, ±cap)`, comparable across categories whatever their
+spread and exactly mean-neutral where a ratio is not. Measured calibration:
+k = 1.5% per σ, cap 4%.
+
+The original sketch, kept for its reasoning: `1 + k·(league_mean/opp_value − 1)`, clamped to **±4%**.
 The arithmetic is worth stating, because it is what makes 4% the right
 neighbourhood: on a 0.8 pts/gm player, 4% is 0.032 pts/game, ~0.13 over a
 4-game week. That will essentially never move a player past someone a tier

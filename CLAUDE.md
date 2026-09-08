@@ -44,6 +44,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `goalie_starts.py` | How likely each goalie is to start each night, balanced to one start per team game. See *Lineups* below |
 | `matchup_weights.py` | Weights each category by how much it is still in doubt, and iterates a week's lineups against them. See *Lineups* below |
 | `manager_profiles.py` | Classifies an opponent's add/drop style from their real transaction history. See *Lineups* below |
+| `opponent_strength.py` | Per-category nudge for which NHL team a player is facing. See *Lineups* below |
+| `scrape_team_stats.py` | Scrapes every team's strength into `team_stats`; feeds `opponent_strength.py` |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -253,6 +255,47 @@ was given.
 `seat_all=True` (default, and the old behaviour) starts everyone who fits.
 `seat_all=False` benches players valued at or below zero — needed once
 category weighting can make a start actively harmful.
+
+### Who the player is facing (`opponent_strength.py`)
+
+A projection is an average over average opposition; on a given night the
+player faces someone specific. `scrape_team_stats.py` collects each team's
+GF/GA/SF/SA per game plus PP% and PK% into `team_stats`, for two windows —
+`season` (what the optimizer uses) and `week` (noisy, kept for display).
+
+**Per category, not one blanket multiplier.** Each category has its own driver,
+and for goalies two of them respond to *opposite* things — a shot-heavy
+opponent means more saves (good) and more goals against (bad). One "weak
+opponent" boost would push both the same way, which is backwards rather than
+merely imprecise. Hits, blocks, PIM and faceoffs are deliberately left alone;
+nothing collected predicts them.
+
+**Standard deviations, not ratios** — a correction to what OPTIMIZER.md
+sketched, and the real numbers forced it. Across the completed 2025-26 season
+goals-against spreads +24%/−22% about the mean while penalty kill spreads only
++7%/−9%. Under a shared cap a ratio would leave GA permanently clamped — the
+cap doing all the work, erasing every distinction between bad defences and
+terrible ones — while PK barely moved. A z-score is comparable whatever the
+spread, and is exactly mean-neutral where a ratio is not.
+
+**Calibrated against the real season, not guessed.** 1.5% per σ, capped at 4%.
+That puts the extreme teams at 2.6–4.3% and a typical ±1σ opponent at 1.5%.
+Measured end to end on the current board: best-vs-worst matchup moves a
+player's value **4.5%**, against a rank 1→2 gap of 0.6% and a rank 1→20 gap of
+31.3%. So it decides between near-equals and cannot reorder tiers — no
+fourth-liner over McDavid.
+
+**Mean-neutral, with a test per category.** If the league-wide average
+multiplier were not 1.0 every projected total would drift, and since the point
+is comparing your total against an opponent's, an asymmetric drift biases every
+matchup. Apply it to both sides or neither.
+
+It fades in on its own: z shrinks by games played, so October barely moves and
+the adjustment grows with the sample. No hardcoded date gate.
+
+Not done, deliberately: **home ice**, plausibly bigger than any of this and
+free from `nhl_schedule`, but sizing it needs home/road splits this module does
+not fetch, and guessing would undo the point of measuring the rest.
 
 ### What the opponent will do (`manager_profiles.py`)
 
@@ -529,6 +572,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_goalie_starts.py` | start probabilities: one start per team night exactly, season totals approximately, and the teams whose projections do not add up |
 | `test_matchup_weights.py` | category weighting: that a contested category outweighs a settled one, that inverse categories keep their sign, and that the same margin is less settled the more is still to come |
 | `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
+| `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 
