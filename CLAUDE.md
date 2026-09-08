@@ -279,12 +279,24 @@ cap doing all the work, erasing every distinction between bad defences and
 terrible ones — while PK barely moved. A z-score is comparable whatever the
 spread, and is exactly mean-neutral where a ratio is not.
 
-**Calibrated against the real season, not guessed.** 1.5% per σ, capped at 4%.
-That puts the extreme teams at 2.6–4.3% and a typical ±1σ opponent at 1.5%.
-Measured end to end on the current board: best-vs-worst matchup moves a
-player's value **4.5%**, against a rank 1→2 gap of 0.6% and a rank 1→20 gap of
-31.3%. So it decides between near-equals and cannot reorder tiers — no
-fourth-liner over McDavid.
+**Calibrated against the real season, and then validated out-of-sample.**
+2.5% per σ, capped at 4%. Two independent measurements set it: the league
+spread makes ±1σ a typical opponent and ±2.5σ the extremes, and a **split-half
+test** — team strength built from the first half of 2025-26, production
+measured in the second, so nothing in the test window fed the estimate — says
+the real effect is 3.5%/σ on points, 4.9% on goals and 8.4% on shots. Shots
+being largest is not noise; shot volume is far more predictable than finishing.
+
+The setting sits deliberately below the evidence, because it comes from one
+season and a single split, and an adjustment that reorders the board is a worse
+failure than one that under-reacts. At 2.5% the cap bites on 2 of 32 teams —
+outliers trimmed, not the league flattened — and a typical opponent moves 1.15%.
+
+**Clamping breaks mean-neutrality, so it is corrected.** Once the cap binds on
+an asymmetric z distribution the league mean drifts (~6 basis points here).
+Small, and it cancels in a matchup since both sides use the same table, but the
+guarantee is cheap to keep exact: `multiplier()` subtracts the league-average
+clamped shift, restoring a mean of exactly 1.0.
 
 **Mean-neutral, with a test per category.** If the league-wide average
 multiplier were not 1.0 every projected total would drift, and since the point
@@ -296,7 +308,18 @@ the adjustment grows with the sample. No hardcoded date gate.
 
 **Home ice is the bigger effect, and is measured too.** On the completed
 2025-26 season teams scored 2.2% more at home, took 2.0% more shots and won
-**4.4%** more often — against an opponent adjustment that is typically 1.5%.
+**4.4%** more often. Validated against 47,230 real skater-games as a
+within-player home/road comparison: observed 1.0406 for points, 1.0419 for
+goals, 1.0413 for shots, against modelled 1.045/1.045/1.040 — within 0.4
+percentage points on all three.
+
+That same check found **three venue effects that were missing**: hits **+4.6%**
+at home (larger than the goals effect), blocks −2.3%, PIM −4.8%. Saying
+"nothing we collect predicts hits" was right about *opponent* strength and
+flatly wrong about venue. `peripheral_venue()` measures them off
+`player_game_stats`, since `team_stats` has no such columns. Some of the hits
+effect is scorekeeper bias — home rinks are generous — but the recorded stat is
+what a league scores, so modelling it is right whatever its cause.
 `VENUE_DRIVERS` maps each category onto the quantity that actually moves it
 (wins for W, goals against for GA, shots against for SV — so a goalie at home
 allows fewer goals *and* makes fewer saves), and the multipliers are derived at
@@ -333,12 +356,25 @@ before a new season has played a game. Hits and blocks need a third endpoint
 (`skater/realtime`); `skater/summary` does not carry them, and 21 of the 25
 imported leagues score at least one.
 
-**The API stops paging at an offset of 10,000 and says nothing about it.** A
-season-long request came back looking healthy — 9,600 rows spanning the right
-dates — but the result is sorted before it is truncated, so it was a
-top-heavy subset masquerading as a complete season. That is the worst possible
-input to a calibration. The range is now split into weekly chunks, and
-`PAGE_CEILING` raises if any single query ever reaches the limit.
+**Two ways this endpoint corrupts data silently, both hit during the port.**
+
+*It stops paging at an offset of 10,000 and says nothing.* A season-long
+request came back looking healthy — 9,600 rows spanning the right dates — but
+the result is sorted before it is truncated, so it was a top-heavy subset
+masquerading as a complete season. The range is now split into weekly chunks,
+and `PAGE_CEILING` raises if any single query ever reaches the limit.
+
+*Paging is unstable unless the sort is **total**.* Ties are ordered however
+the server pleases between requests, so pages overlap and miss. With no sort,
+one real night returned 576 rows of which 15 were duplicates — 15 rows lost
+outright, and 15% of the hits data with them. Sorting on `playerId` alone
+(which is what the old repo's URLs did) fixes a single-day query but still
+loses ~5 rows a week, because a window spans several days and a player's own
+rows tie with each other. The sort is now `(playerId, gameId)` — the table's
+own primary key, unique across any window.
+
+Both are the worst possible input to a calibration, because both look like
+success. Each has a regression test.
 
 ### What the opponent will do (`manager_profiles.py`)
 

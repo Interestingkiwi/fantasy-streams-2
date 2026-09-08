@@ -108,6 +108,27 @@ try:
     sgr.requests.get = stub_api({window: []})
     check("an empty window is not a crash",
           sgr.fetch("skater", "2026-01-12", "2026-01-18") == [])
+
+    # Paging is only stable if the sort is total. Without a unique tiebreaker
+    # the server orders ties as it pleases between requests, so pages overlap
+    # and miss - one real night returned 576 rows with 15 duplicates, losing
+    # 15 rows outright. That cost 15% of the hits data before it was caught.
+    sent = []
+
+    def capture(url, params=None, timeout=None):
+        sent.append(params)
+        return StubResponse({'total': 0, 'data': []})
+
+    sgr.requests.get = capture
+    sgr.fetch("skater", "2026-01-12", "2026-01-18")
+    check("every request asks for a total sort order",
+          sent and all('sort' in p for p in sent), sent[:1])
+    # The tiebreaker has to be unique across the whole window, not just within
+    # a game: a window spans several days, so a player's own rows tie with each
+    # other. playerId alone still lost about five rows a week.
+    check("...tie-broken on the full key, not just playerId",
+          'playerId' in (sent[0].get('sort') or '')
+          and 'gameId' in (sent[0].get('sort') or ''), sent[0].get('sort'))
 finally:
     sgr.requests.get = original_get
 
@@ -174,6 +195,19 @@ try:
     # These two fields are the whole reason the table is worth having: they
     # are what lets opponent_strength be checked against real production.
     check("every row knows its opponent and its venue", missing == 0, missing)
+
+    with engine.connect() as conn:
+        gap = conn.execute(text(
+            'SELECT count(*) FROM player_game_stats '
+            'WHERE "positionCode" IS NOT NULL AND "hits" IS NULL')).scalar()
+        orphans = conn.execute(text(
+            'SELECT count(*) FROM player_game_stats WHERE "hits" IS NOT NULL '
+            'AND "positionCode" IS NULL AND "saves" IS NULL')).scalar()
+
+    # Both were symptoms of unstable paging: skater rows whose realtime
+    # counterpart was dropped, and realtime rows whose summary row was.
+    check("every skater row got its realtime half", gap == 0, gap)
+    check("and no realtime row was left without a summary row", orphans == 0, orphans)
     check("venue is home or road and nothing else",
           set(venues) <= {"H", "R"}, venues)
 

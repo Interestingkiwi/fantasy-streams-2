@@ -43,12 +43,24 @@ to come first - a greedy heuristic has no fixed point worth finding.
 counter-optimise against you, and assuming otherwise makes you exploitable.
 Their lineups are therefore set once, outside the loop.
 
-**σ without a season of history.** `daily_player_stats` is empty until a season
-runs, so variance is approximated as Poisson - `Var ≈ mean` for a counting
-stat, giving `σ_margin ≈ sqrt(mine + theirs)` once both sides are added. That
-is good enough for a weighting, which only needs the categories ordered
-sensibly against each other, and `dispersion` is the dial for replacing it with
-something measured later.
+**σ, now measured.** The margin is modelled as normal with variance
+`dispersion x (mine + theirs)`, Poisson being `dispersion = 1`. That started as
+an assumption for want of data; it has since been checked against a full
+2025-26 season of per-game results, by drawing random 12-skater rosters over
+real weeks and comparing what they produced against the sum of their own season
+rates.
+
+Poisson turns out to be very nearly exact for the scoring categories - goals,
+assists, points and power-play points all land between 0.95 and 0.98 - mild for
+shots, blocks and hits, and **badly wrong for penalty minutes at 3.64**, which
+is lumpy in a way the others are not: most games are zero and a fight is five
+at once. `CATEGORY_DISPERSION` carries the measured values.
+
+The distinction that makes those numbers meaningful: an NHL team's weekly total
+is overdispersed by a factor of two to nine, but almost entirely because teams
+play two to four games a week. This module already knows how many starts it is
+projecting - it sums per-game values over the actual lineup - so games-played
+variance is not its to model. Conditioned on that, Poisson holds.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
@@ -60,10 +72,29 @@ import math
 from daily_value import RATE_COLUMNS, category_polarity, score
 from lineup_utils import optimal_lineup
 
-# Categories whose weekly totals are more variable than Poisson would say.
-# One dial, applied to the variance, so a measured value can replace the
-# assumption per category once daily_player_stats has a season in it.
+# Variance of a weekly roster total over its projection, as a multiple of
+# Poisson. Measured on the 2025-26 season (see the module docstring); anything
+# not listed falls back to Poisson, which is what the scoring categories
+# measured at anyway.
+CATEGORY_DISPERSION = {
+    'G': 1.0, 'A': 1.0, 'P': 1.0, 'PPP': 1.0, 'PPG': 1.0, 'PPA': 1.0,
+    'SOG': 1.1,
+    'BLK': 1.1,
+    'HIT': 1.3,
+    # Most games are zero and a fight is five minutes at once. Treating this as
+    # Poisson overstates its marginal worth by about 90%, since sigma is nearly
+    # double what Poisson predicts.
+    'PIM': 3.6,
+}
+
 DEFAULT_DISPERSION = 1.0
+
+
+def dispersion_for(category, dispersion=None):
+    """The measured dispersion for a category, or an explicit override."""
+    if dispersion is not None:
+        return dispersion
+    return CATEGORY_DISPERSION.get(category, DEFAULT_DISPERSION)
 
 # A margin's σ can collapse toward zero in a low-volume category, and a
 # vanishing σ sends the weight to infinity. Floor it.
@@ -110,7 +141,7 @@ def marginal_worth(margin, sigma):
 
 
 def category_weights(mine, theirs, categories, polarity=None,
-                     banked_margin=None, dispersion=DEFAULT_DISPERSION,
+                     banked_margin=None, dispersion=None,
                      floor=WEIGHT_FLOOR):
     """
     {category: weight} from what both sides still have to come.
@@ -148,7 +179,8 @@ def category_weights(mine, theirs, categories, polarity=None,
         # whether the category rewards more of the stat or less.
         margin = sign * (remaining_mine - remaining_theirs
                          + banked_margin.get(category, 0.0))
-        sigma = margin_sigma(remaining_mine, remaining_theirs, dispersion)
+        sigma = margin_sigma(remaining_mine, remaining_theirs,
+                             dispersion_for(category, dispersion))
         raw[category] = sign * marginal_worth(margin, sigma)
 
     return _normalise(raw, floor)
@@ -175,9 +207,9 @@ def project_totals(lineups, categories):
 
 
 def optimise_week(days, roster_slots, categories, flat_weights,
-                  polarity=None, banked_margin=None,
-                  dispersion=DEFAULT_DISPERSION, iterations=ITERATIONS,
-                  damping=DAMPING, floor=WEIGHT_FLOOR, seat_all=True):
+                  polarity=None, banked_margin=None, dispersion=None,
+                  iterations=ITERATIONS, damping=DAMPING, floor=WEIGHT_FLOOR,
+                  seat_all=True):
     """
     Set a week's lineups against the categories that are actually in doubt.
 

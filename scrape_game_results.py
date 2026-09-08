@@ -49,6 +49,7 @@ Updated - 9/8/2026
 """
 
 import argparse
+import json
 import logging
 import time
 from datetime import date, timedelta
@@ -68,6 +69,16 @@ PAUSE = 0.15          # polite gap between requests
 # The API refuses offsets past this and just stops, without an error. Anything
 # reaching it has been truncated, so treat it as a failure rather than a result.
 PAGE_CEILING = 10000
+
+# Paging is only stable if the sort is total - the tiebreaker has to be unique
+# across the whole result set, not merely within a game. Without any sort, one
+# busy night returned 576 rows of which 15 were duplicates, losing 15 rows
+# outright. Sorting on playerId alone fixes a single day but still loses about
+# five rows a week, because a player appears in several games in a window and
+# those rows tie with each other. (playerId, gameId) is the table's own primary
+# key and settles every tie.
+STABLE_SORT = json.dumps([{'property': 'playerId', 'direction': 'ASC'},
+                          {'property': 'gameId', 'direction': 'ASC'}])
 
 # Days per query. A week of skater rows is about 1,950, so this leaves a wide
 # margin under the ceiling while keeping the request count reasonable.
@@ -210,6 +221,7 @@ def _fetch_window(kind, start, end, kind_path=None):
             'cayenneExp': (f'gameDate>="{start}" and gameDate<="{end}" '
                            f'and gameTypeId=2'),
             'factCayenneExp': 'gamesPlayed>=1',
+            'sort': STABLE_SORT,
         }
         url = (BASE_URL + kind_path) if kind_path else SUMMARY_URL.format(kind=kind)
         response = requests.get(url, params=params, timeout=TIMEOUT)

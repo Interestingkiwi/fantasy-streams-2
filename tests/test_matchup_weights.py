@@ -101,6 +101,29 @@ check("banked production shifts the margin",
 check("...but adds no variance, because it has already happened",
       mw.margin_sigma(20, 20) == mw.margin_sigma(20, 20))
 
+# Dispersion, measured on the 2025-26 season rather than assumed.
+check("scoring categories measured as Poisson and are left there",
+      all(mw.dispersion_for(c) == 1.0 for c in ("G", "A", "P", "PPP")))
+check("penalty minutes are the badly overdispersed one",
+      mw.dispersion_for("PIM") > 3.0, mw.dispersion_for("PIM"))
+check("hits and shots are mildly over",
+      1.0 < mw.dispersion_for("HIT") < 2.0 and 1.0 < mw.dispersion_for("SOG") < 2.0)
+check("an unmeasured category falls back to Poisson",
+      mw.dispersion_for("SOMETHING") == mw.DEFAULT_DISPERSION)
+check("an explicit override still wins", mw.dispersion_for("PIM", 1.0) == 1.0)
+
+# The consequence: treating PIM as Poisson overstates how much a unit of it is
+# worth, because its true sigma is nearly double what Poisson predicts.
+even_both = {"P": 50.0, "PIM": 40.0}
+measured = mw.category_weights(even_both, dict(even_both), ["P", "PIM"])
+poisson = mw.category_weights(even_both, dict(even_both), ["P", "PIM"], dispersion=1.0)
+check("measuring dispersion lowers PIM's pull relative to points",
+      abs(measured["PIM"] / measured["P"]) < abs(poisson["PIM"] / poisson["P"]),
+      (measured, poisson))
+check("...by roughly the square root of its dispersion",
+      abs(abs(poisson["PIM"] / poisson["P"]) / abs(measured["PIM"] / measured["P"])
+          - mw.dispersion_for("PIM") ** 0.5) < 0.1)
+
 check("rate categories get no weight at all",
       mw.category_weights({"SVpct": 0.91}, {"SVpct": 0.90}, ["SVpct"])["SVpct"] == 0.0)
 

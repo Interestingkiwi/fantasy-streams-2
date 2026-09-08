@@ -24,10 +24,13 @@ while penalty kill barely moved. A z-score is comparable across categories
 whatever their spread, and it is exactly mean-neutral, which a ratio is not.
 
 **Calibration, measured rather than guessed.** `PER_STANDARD_DEVIATION` is
-1.5% per σ, capped at 4%. Against the real 2025-26 spread that puts the
-extreme teams at 2.6-4.3% - so the cap bites only on genuine outliers - and a
-typical ±1σ opponent at 1.5%. Enough to break ties between near-equals, never
-enough to lift a fourth-liner over McDavid.
+2.5% per σ, capped at 4%. Two independent measurements set it. The league
+spread says a ±1σ opponent is a typical case and ±2.5σ the extremes; a
+split-half test - strength from the first half of 2025-26, production from the
+second - says the real effect is 3.5%/σ on points and 8.4% on shots. The
+setting sits deliberately below that, because those come from one season and
+an adjustment that reorders the board is a worse failure than one that
+under-reacts.
 
 **Mean-neutral, and there is a test.** If the average multiplier across the
 league is not 1.0, every projected total drifts, and since the whole point is
@@ -64,10 +67,19 @@ Updated - 9/8/2026
 import math
 
 # How much a one-standard-deviation opponent moves a projection, and the most
-# any opponent may move it. See the calibration note above - both are measured
-# against the real spread, and both are meant to be re-tuned once a season of
-# play is in hand.
-PER_STANDARD_DEVIATION = 0.015
+# any opponent may move it.
+#
+# **Deliberately below what the evidence supports.** Split-half on 2025-26 -
+# team strength built from the first half of the season, tested on the second,
+# so nothing in the test window fed the estimate - says a weak-defence opponent
+# is worth 3.5%/sigma on points, 4.9% on goals and 8.4% on shots. Shots being
+# the largest is not noise: shot volume is far more predictable than finishing.
+#
+# 2.5% is roughly halfway. The conservatism is a choice, not an oversight: the
+# figures above come from one season and a single split, and an adjustment that
+# reorders the board is a worse failure than one that under-reacts. Extreme
+# opponents now reach MAX_ADJUSTMENT rather than sitting under it.
+PER_STANDARD_DEVIATION = 0.025
 MAX_ADJUSTMENT = 0.04
 
 # Games before an opponent's rate is taken at anything like face value. Below
@@ -132,10 +144,23 @@ CATEGORY_DRIVERS = {
     'SA': ('shotsForPerGame', 1),
 }
 
-# Named so the omission reads as a decision rather than an oversight. Nothing
-# collected predicts these, and a goals-based multiplier on hits would be
-# noise presented as insight.
+# No OPPONENT adjustment for these: nothing collected predicts them, and a
+# goals-based multiplier on hits would be noise presented as insight. Note this
+# says nothing about venue - measured on the 2025-26 season, hits, blocks and
+# penalty minutes all have a real home/road effect, and PERIPHERAL_VENUE below
+# applies it.
 UNDRIVEN_CATEGORIES = frozenset({'HIT', 'BLK', 'PIM', 'FW', 'FL', 'FOT', 'TOI'})
+
+# Categories whose venue effect cannot come from `team_stats` - the team
+# endpoint carries no hits, blocks or penalty minutes - so it is measured from
+# `player_game_stats` instead. Worth the extra source: on 2025-26 the home
+# effect on hits was +4.7%, larger than the +4.5% on goals that was already
+# modelled, and blocks and PIM both run the other way.
+PERIPHERAL_VENUE = {
+    'HIT': 'hits',
+    'BLK': 'blockedShots',
+    'PIM': 'penaltyMinutes',
+}
 
 
 def team_z_scores(team_stats, games_key='gamesPlayed'):
@@ -207,6 +232,47 @@ def venue_multipliers(rows):
     return effects
 
 
+def peripheral_venue(game_rows):
+    """
+    {quantity: {'home': m, 'road': m}} for hits, blocks and PIM.
+
+    Measured straight off per-game player rows, since `team_stats` has no such
+    columns. Each is the league's home per-game average over the overall
+    average, the same shape `venue_multipliers` produces, so the two merge.
+
+    Some of this is scorekeeper bias rather than play - home rinks are known to
+    be generous with hits - but the recorded stat is what a league scores, so
+    modelling it is right whatever its cause.
+    """
+    totals = {column: {'H': [0.0, 0], 'R': [0.0, 0]}
+              for column in PERIPHERAL_VENUE.values()}
+
+    for row in game_rows or []:
+        side = row.get('homeRoad')
+        if side not in ('H', 'R'):
+            continue
+        for column in totals:
+            value = row.get(column)
+            if value is None:
+                continue
+            totals[column][side][0] += _number(value)
+            totals[column][side][1] += 1
+
+    effects = {}
+    for column, sides in totals.items():
+        home_sum, home_n = sides['H']
+        road_sum, road_n = sides['R']
+        if home_n < 100 or road_n < 100:
+            continue
+        home_rate = home_sum / home_n
+        road_rate = road_sum / road_n
+        overall = (home_sum + road_sum) / (home_n + road_n)
+        if overall <= 0:
+            continue
+        effects[column] = {'home': home_rate / overall, 'road': road_rate / overall}
+    return effects
+
+
 def venue_multiplier(category, is_home, effects):
     """
     What playing at home (or away) does to one category. 1.0 if unknown.
@@ -215,6 +281,8 @@ def venue_multiplier(category, is_home, effects):
     passes through unchanged rather than guessing.
     """
     driver = VENUE_DRIVERS.get(category)
+    if driver is None and category in PERIPHERAL_VENUE:
+        driver = (PERIPHERAL_VENUE[category], 1)
     if not driver or not effects:
         return 1.0
 
@@ -242,8 +310,27 @@ def multiplier(category, opponent, z_scores,
     if z is None:
         return 1.0
 
-    shift = per_sd * z * direction
-    return 1.0 + max(-cap, min(cap, shift))
+    shift = _clamp(per_sd * z * direction, cap)
+    # Clamping is what breaks neutrality: the z distribution is not symmetric,
+    # so once the cap bites on one tail the league mean drifts off 1.0 - about
+    # 6 basis points at the current setting. Small, and it cancels in a matchup
+    # because both sides use the same table, but the guarantee is cheap to keep
+    # exact and much easier to reason about when it is.
+    return 1.0 + shift - _mean_shift(stat, direction, z_scores, per_sd, cap)
+
+
+def _clamp(value, cap):
+    return max(-cap, min(cap, value))
+
+
+def _mean_shift(stat, direction, z_scores, per_sd, cap):
+    """
+    The league-average clamped shift for one stat, which is what has to come
+    back off to leave the mean multiplier at exactly 1.0.
+    """
+    shifts = [_clamp(per_sd * scores[stat] * direction, cap)
+              for scores in z_scores.values() if stat in scores]
+    return (sum(shifts) / len(shifts)) if shifts else 0.0
 
 
 def adjust(per_game, opponent, z_scores, is_home=None, venue=None,

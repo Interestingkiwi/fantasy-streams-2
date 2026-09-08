@@ -261,9 +261,13 @@ different system.
 Four things that will bite:
 
 - **σ per category is not optional.** "Winning by 5" is meaningless without it —
-  5 points is a lock, 5 hits is a coin flip. `daily_player_stats` can supply an
-  empirical σ; a Poisson approximation (`σ² ≈ mean`) is a serviceable first cut
-  for counting stats.
+  5 points is a lock, 5 hits is a coin flip. **Now measured** against a full
+  2025-26 season of per-game results, by drawing random 12-skater rosters over
+  real weeks: Poisson is very nearly exact for the scoring categories (0.95–0.98)
+  and badly wrong for PIM (3.64), which was being over-weighted by 1.9×. The
+  distinction that makes those numbers meaningful is that an NHL team-week is
+  overdispersed 2–9× almost entirely through games-played variation, which this
+  module already models explicitly — conditioned on starts, Poisson holds.
 - **Weights depend on the lineup, which depends on the weights.** Marginal worth
   is a function of the projected end-of-week margin, which is a function of
   lineups not yet set. Iterate: flat weights → project margins → recompute
