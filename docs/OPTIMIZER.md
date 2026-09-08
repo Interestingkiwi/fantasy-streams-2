@@ -114,8 +114,12 @@ value(G, night) = P(start | this game) × per-start projection
 ```
 
 **Measured while building it.** The league-wide overcount is only 0.3% (2,697
-projected starts against 2,688 team games) but per team it is severe: PIT 43,
-DET 113. And the two directions need opposite treatment - over the game count
+projected starts against 2,688 team games) but per team it is severe: DET is
+projected for 113 starts across 84 games. Teams falling *short* mostly do so
+because `apply_rookie_projections.py` leaves `proj_gamesStarted` NULL on
+imported rookies (4 goalies, on BOS/MTL/PIT/UTA) - a pipeline gap worth
+closing on the next preseason run, worked around meanwhile by falling back to
+projected appearances. And the two directions need opposite treatment - over the game count
 is real competition and everyone scales down, under it means the pipeline has
 no projection for whoever takes the rest, and scaling up would hand one goalie
 all 84 starts. The shortfall goes to a residual goalie who only absorbs it.

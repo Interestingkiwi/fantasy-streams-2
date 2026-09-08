@@ -274,14 +274,23 @@ Two things measured while building it, both worth knowing:
   harmless. Per team it is not: PIT's goalies are projected for 43 starts
   across 84 games, DET's for 113.
 - **The two directions are not symmetric.** Over the game count means real
-  competition, so everyone scales down. Under it means the pipeline has no
-  projection for whoever takes the rest (PIT's second goalie was pruned as
-  inactive), and scaling up would hand one goalie all 84 starts. The shortfall
+  competition, so everyone scales down. Under it means nobody is projected for
+  the rest, and scaling up would hand one goalie all 84 starts. The shortfall
   goes to a residual goalie who exists only to absorb it. Expected starts
-  therefore total ~2,491, not 2,688; the gap is goalies nobody projected.
+  therefore total ~2,584, not 2,688; the gap is third-stringers nobody
+  projected.
 
 The back-to-back tilt only fires when there is a clear number one — a level
 tandem gets no invented hierarchy, or row order silently becomes a depth chart.
+
+**Known data gap:** `apply_rookie_projections.py` writes imported rookies with
+counting stats but no `proj_gamesStarted` — 4 of the 82 goalies, one each on
+BOS, MTL, PIT and UTA, and the reason those teams' projected starts fall short
+of their games. `goalie_starts` falls back to `projectedGames`, which slightly
+overstates starts and is the right direction to be wrong in. Populating the
+column in the rookie step would retire the fallback; it needs a preseason
+re-run, and per *The projection pipeline* any re-run from step 8 has to carry
+through to step 12 or `eligiblePositions` is dropped.
 
 ### What a start is worth (`daily_value.py`)
 

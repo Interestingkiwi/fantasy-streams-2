@@ -23,9 +23,13 @@ a lineup is set one night at a time.
 **Why per-team normalisation matters more than the totals suggest.** Across
 the league, projected starts already come to 2,697 against 2,688 real team
 games - a 0.3% overcount that looks harmless. Per team it is nothing of the
-kind: PIT's goalies are projected for 43 starts across 84 games and DET's for
-113. Normalising moves a PIT goalie's nightly probability up by three quarters
-and a DET goalie's down by a quarter.
+kind: DET's goalies are projected for 113 starts across 84 games.
+
+The teams that fall *short* mostly do so for a fixable reason: the four
+rookie-imported goalies carry counting stats but no `proj_gamesStarted`, so
+`_starts` falls back to projected appearances rather than reading them as
+never starting. Populating that column in `apply_rookie_projections.py` would
+retire the fallback.
 
 Not modelled, because it needs live data: confirmed starters. When that feed
 exists it belongs here as a column override - fix the known starter at 1.0 and
@@ -64,6 +68,7 @@ def second_nights(game_dates):
 
 
 def start_probabilities(goalies, game_dates, starts_key='proj_gamesStarted',
+                        fallback_key='projectedGames',
                         damping=B2B_STARTER_DAMPING):
     """
     [{date: probability}] for one team's goalies, aligned to `goalies`.
@@ -78,7 +83,7 @@ def start_probabilities(goalies, game_dates, starts_key='proj_gamesStarted',
     if not goalies or not dates:
         return [{} for _ in goalies]
 
-    targets = _targets(goalies, starts_key, len(dates))
+    targets = _targets(goalies, starts_key, fallback_key, len(dates))
     tilt = _tilt(targets, dates, damping)
     real = len(goalies)
 
@@ -96,6 +101,7 @@ def start_probabilities(goalies, game_dates, starts_key='proj_gamesStarted',
 
 def start_probabilities_by_team(goalies, schedule_rows, team_key='teamAbbrevs',
                                 starts_key='proj_gamesStarted',
+                                fallback_key='projectedGames',
                                 damping=B2B_STARTER_DAMPING):
     """
     {index in `goalies`: {date: probability}}, grouping by NHL team.
@@ -119,7 +125,8 @@ def start_probabilities_by_team(goalies, schedule_rows, team_key='teamAbbrevs',
         if not dates:
             continue
         rows = start_probabilities([goalies[i] for i in indexes], dates,
-                                   starts_key=starts_key, damping=damping)
+                                   starts_key=starts_key,
+                                   fallback_key=fallback_key, damping=damping)
         for index, row in zip(indexes, rows):
             probabilities[index] = row
     return probabilities
@@ -155,7 +162,7 @@ def expected_value(player, probability, value_key='value'):
     return scaled
 
 
-def _targets(goalies, starts_key, game_count):
+def _targets(goalies, starts_key, fallback_key, game_count):
     """
     Each goalie's projected starts, reconciled against the team's game count,
     plus a residual for the starts nobody accounts for.
@@ -172,7 +179,7 @@ def _targets(goalies, starts_key, game_count):
     shortfall goes to a residual goalie who exists only to absorb it, leaving
     the real ones on the totals they were projected for.
     """
-    raw = [max(0.0, _number(goalie.get(starts_key))) for goalie in goalies]
+    raw = [max(0.0, _starts(goalie, starts_key, fallback_key)) for goalie in goalies]
     total = sum(raw)
 
     if total <= 0:
@@ -203,6 +210,23 @@ def _tilt(targets, dates, damping):
             for game_date in dates
         ])
     return grid
+
+
+def _starts(goalie, starts_key, fallback_key):
+    """
+    A goalie's projected starts, falling back to projected appearances.
+
+    `apply_rookie_projections.py` writes imported rookies with counting stats
+    but no `proj_gamesStarted` - 4 of the 82 goalies, one each on BOS, MTL,
+    PIT and UTA. Reading that as zero starts is what made PIT look like a
+    one-goalie team and handed Silovs all 84 games. Appearances slightly
+    overstate starts, which is the right direction to be wrong in: it beats
+    leaving a real backup permanently unstartable.
+    """
+    starts = _number(goalie.get(starts_key))
+    if starts > 0:
+        return starts
+    return _number(goalie.get(fallback_key))
 
 
 def _clear_starter(targets):

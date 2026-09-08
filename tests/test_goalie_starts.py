@@ -109,6 +109,17 @@ check("a lone goalie keeps his projected total instead of starting everything",
 check("...so his nightly probability stays under one",
       max(lone[0].values()) < 1.0, max(lone[0].values()))
 
+# The rookie import writes counting stats but no proj_gamesStarted. Reading
+# that as "never starts" is what made PIT look like a one-goalie team.
+rookie = [goalie("Veteran", 3.0),
+          {"fullName": "Rookie", "teamAbbrevs": "TOR",
+           "proj_gamesStarted": None, "projectedGames": 2}]
+rookie_rows = gs.start_probabilities(rookie, DATES)
+check("a goalie with no projected starts falls back to projected appearances",
+      sum(rookie_rows[1].values()) > 1.5, sum(rookie_rows[1].values()))
+check("...and the pair still covers every night exactly once",
+      all(abs(rookie_rows[0][d] + rookie_rows[1][d] - 1.0) < 1e-9 for d in rookie_rows[0]))
+
 check("a team projected for no starts shares the work evenly",
       all(abs(p - 0.5) < 1e-9
           for row in gs.start_probabilities([goalie("X", 0), goalie("Y", 0)], DATES)
