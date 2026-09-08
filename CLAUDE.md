@@ -41,6 +41,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `ranking_utils.py` | Ranking engine — see *Ranking* below |
 | `lineup_utils.py` | Daily lineup matcher — seats a night's players into the league's slots, exactly. See *Lineups* below |
 | `daily_value.py` | Per-game, per-category player values for the matcher to score against. See *Lineups* below |
+| `goalie_starts.py` | How likely each goalie is to start each night, balanced to one start per team game. See *Lineups* below |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -251,6 +252,37 @@ was given.
 `seat_all=False` benches players valued at or below zero — needed once
 category weighting can make a start actively harmful.
 
+### Whether a goalie starts (`goalie_starts.py`)
+
+`daily_value` gives goalies **per-start** numbers, so something has to turn
+them into per-scheduled-game ones. The invariant doing the work: **exactly one
+goalie starts each NHL game**, so probabilities across a team's goalies sum to
+one on any night. That subsumes the back-to-back case rather than
+special-casing it — a back-to-back distributes two starts across the tandem
+instead of giving each goalie two.
+
+A second constraint pulls the other way: a goalie's probabilities should add up
+over the season to the starts he was projected for. Both at once is matrix
+balancing, done by iterative proportional fitting. **The nightly constraint is
+exact and the season one approximate** — the right way round, since a lineup is
+set one night at a time.
+
+Two things measured while building it, both worth knowing:
+
+- **Per-team imbalance is far worse than the league total suggests.** Projected
+  starts come to 2,697 against 2,688 real team games — 0.3%, apparently
+  harmless. Per team it is not: PIT's goalies are projected for 43 starts
+  across 84 games, DET's for 113.
+- **The two directions are not symmetric.** Over the game count means real
+  competition, so everyone scales down. Under it means the pipeline has no
+  projection for whoever takes the rest (PIT's second goalie was pruned as
+  inactive), and scaling up would hand one goalie all 84 starts. The shortfall
+  goes to a residual goalie who exists only to absorb it. Expected starts
+  therefore total ~2,491, not 2,688; the gap is goalies nobody projected.
+
+The back-to-back tilt only fires when there is a clear number one — a level
+tandem gets no invented hierarchy, or row order silently becomes a depth chart.
+
 ### What a start is worth (`daily_value.py`)
 
 `value_players(rows, categories)` turns `final_projections` season rows into
@@ -406,6 +438,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_scope.py` | consent-URL construction and the 403 hint text |
 | `test_lineup.py` | the lineup matcher: brute-forces every assignment for 400 random rosters and requires an exact match on value and starts, then seats real projections into all 25 imported league shapes |
 | `test_daily_value.py` | the value engine, leaning on the decisions a reader might mistake for bugs — no centering, no capping, no replacement level, goalie rates per start |
+| `test_goalie_starts.py` | start probabilities: one start per team night exactly, season totals approximately, and the teams whose projections do not add up |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 

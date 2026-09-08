@@ -4,7 +4,13 @@ Design notes for MIGRATION Phase 3 item 4 — porting the roster optimizer out o
 the old repo (`Interestingkiwi/fantasy-streams`, `app.py:388 get_optimal_lineup`).
 
 Written before the port, deliberately: several of the decisions below are much
-cheaper to make now than to retrofit. Nothing here is built yet.
+cheaper to make now than to retrofit.
+
+**Status.** Steps 1-3 of the build order are built and tested against the
+imported fixtures: `lineup_utils.py` (the matcher), `daily_value.py` (per-game
+category values) and `goalie_starts.py` (start probabilities). Nothing calls
+them yet - that needs the Phase 2 ETL for real rosters. Steps 4-6 are still
+design only.
 
 ## What the old app does
 
@@ -24,7 +30,7 @@ sides of the matchup. What follows is what to change on the way in.
 
 ## Decisions
 
-### 1. `total_rank` goes; the draft-prep value engine comes in
+### 1. `total_rank` goes; the draft-prep value engine comes in — built
 
 **Decided: drop `calculate_and_add_category_ranks` entirely. Do not port it.**
 
@@ -65,7 +71,7 @@ scalar only at the last step, via weights. With weights `1/σ_population` this
 reproduces z-sum exactly; §5 swaps in matchup-aware weights. Pre-summing throws
 away the information §5 needs.
 
-### 2. Replace the four greedy passes with exact matching
+### 2. Replace the four greedy passes with exact matching — built
 
 Seating players into slots subject to eligibility **is max-weight bipartite
 matching**. Rosters are ~20 players and ~12 slots, so an exact solve (Hungarian
@@ -88,7 +94,7 @@ unintended and not analysable.
 Do this step **first**, keeping the existing objective, so there is a testable
 baseline before the objective changes underneath it.
 
-### 3. Goalies: expected starts, not "his team plays, so he starts"
+### 3. Goalies: expected starts, not "his team plays, so he starts" — built
 
 Today a goalie whose NHL team plays is seated at his full per-game projection.
 Roster both of a team's goalies in a 2-G league and both "start". This is the
@@ -106,6 +112,13 @@ Per-night value:
 ```
 value(G, night) = P(start | this game) × per-start projection
 ```
+
+**Measured while building it.** The league-wide overcount is only 0.3% (2,697
+projected starts against 2,688 team games) but per team it is severe: PIT 43,
+DET 113. And the two directions need opposite treatment - over the game count
+is real competition and everyone scales down, under it means the pipeline has
+no projection for whoever takes the rest, and scaling up would hand one goalie
+all 84 starts. The shortfall goes to a residual goalie who only absorbs it.
 
 Sources for `P(start)`, cheapest first:
 
