@@ -276,20 +276,10 @@ def write(rows, start, end):
     return len(rows)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--start', help='First game date (YYYY-MM-DD).')
-    parser.add_argument('--end', help='Last game date (YYYY-MM-DD).')
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s %(levelname)s %(message)s')
-
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
-    start = args.start or yesterday
-    end = args.end or start
+def run(start, end):
+    """Scrape a date range into player_game_stats. Returns the row count."""
     if start > end:
-        raise SystemExit('--start must not be after --end.')
+        raise ValueError('start must not be after end.')
 
     log.info('Fetching %s..%s in %d-day chunks', start, end, CHUNK_DAYS)
     skaters = [shape(row, SKATER) for row in fetch('skater', start, end)]
@@ -320,7 +310,23 @@ def main():
     # useful one, so it wins.
     merged.update({(row['playerId'], row['gameId']): row for row in goalies})
 
-    log.info('Wrote %d rows.', write(list(merged.values()), start, end))
+    written = write(list(merged.values()), start, end)
+    log.info('Wrote %d rows.', written)
+    return written
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--start', help='First game date (YYYY-MM-DD).')
+    parser.add_argument('--end', help='Last game date (YYYY-MM-DD).')
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
+
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    start = args.start or yesterday
+    run(start, args.end or start)
 
 
 if __name__ == '__main__':

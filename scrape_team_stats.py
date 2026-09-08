@@ -114,23 +114,46 @@ def season_from_schedule():
     return int(f'{start.year}{start.year + 1}')
 
 
-def team_codes(on_date):
-    """{team full name: tricode}, from the standings on `on_date`."""
+def _standings_on(on_date):
+    """{team full name: tricode} from the standings on one date, or {}."""
     response = requests.get(STANDINGS_URL.format(on_date=on_date), timeout=TIMEOUT)
     response.raise_for_status()
-    rows = response.json().get('standings', [])
 
     codes = {}
-    for row in rows:
+    for row in response.json().get('standings', []):
         name = (row.get('teamName') or {}).get('default')
         code = (row.get('teamAbbrev') or {}).get('default')
         if name and code:
             codes[name] = code
-
-    if not codes:
-        raise RuntimeError(
-            f'No standings for {on_date}; pick a date inside a played season.')
     return codes
+
+
+def team_codes(on_date):
+    """
+    {team full name: tricode}, from the standings.
+
+    Tries `on_date` first, then falls back through earlier dates. The endpoint
+    returns nothing for a day before a season has been played, which is the
+    normal state in September and would otherwise make the first run of the
+    year - the morning after opening night - the one most likely to fail. The
+    mapping barely changes between seasons, so an older date is a fine source
+    for it.
+    """
+    asked = date.fromisoformat(on_date) if isinstance(on_date, str) else on_date
+    candidates = [asked,
+                  date(asked.year, 4, 1),
+                  date(asked.year - 1, 4, 1)]
+
+    for candidate in candidates:
+        codes = _standings_on(candidate.isoformat())
+        if codes:
+            if candidate != asked:
+                log.info('No standings on %s; used %s for team codes.',
+                         asked, candidate)
+            return codes
+
+    raise RuntimeError(
+        f'No standings on any of {[c.isoformat() for c in candidates]}.')
 
 
 def fetch_summary(cayenne):
@@ -195,6 +218,44 @@ def write(rows):
     return len(rows)
 
 
+def run(season=None, week_end=None, skip_week=False, skip_splits=False):
+    """Scrape every window into team_stats. Returns the row count."""
+    season = season or season_from_schedule()
+    week_end = week_end or (date.today() - timedelta(days=1))
+
+    # Standings need a date inside a season that has actually been played.
+    # The season's own back half is a safe bet for a completed season, and
+    # today works for one in progress.
+    standings_date = min(date.today(), date(season // 10000 + 1, 4, 1))
+    codes = team_codes(standings_date.isoformat())
+    log.info('Resolved %d team codes from the standings on %s.',
+             len(codes), standings_date)
+
+    rows = collect(f'seasonId={season} and gameTypeId=2', codes, 'season')
+    log.info('Season %s: %d teams.', season, len(rows))
+
+    if not skip_splits:
+        for side, window in (('H', 'season-home'), ('R', 'season-road')):
+            split = collect(
+                f'seasonId={season} and gameTypeId=2 and homeRoad="{side}"',
+                codes, window)
+            log.info('%s: %d teams.', window, len(split))
+            rows += split
+
+    if not skip_week:
+        for weeks, window in ((1, 'last-1w'), (2, 'last-2w'), (4, 'last-4w')):
+            span_start = week_end - timedelta(days=7 * weeks - 1)
+            form = collect(
+                f'gameDate>="{span_start}" and gameDate<="{week_end}" '
+                f'and gameTypeId=2', codes, window)
+            log.info('%s (%s..%s): %d teams.', window, span_start, week_end, len(form))
+            rows += form
+
+    written = write(rows)
+    log.info('Wrote %d rows to team_stats.', written)
+    return written
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--season', type=int,
@@ -211,39 +272,9 @@ def main():
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(levelname)s %(message)s')
 
-    season = args.season or season_from_schedule()
-    week_end = date.fromisoformat(args.week_end) if args.week_end \
-        else date.today() - timedelta(days=1)
-
-    # Standings need a date inside a season that has actually been played.
-    # The season's own back half is a safe bet for a completed season, and
-    # today works for one in progress.
-    standings_date = min(date.today(), date(season // 10000 + 1, 4, 1))
-    codes = team_codes(standings_date.isoformat())
-    log.info('Resolved %d team codes from the standings on %s.',
-             len(codes), standings_date)
-
-    rows = collect(f'seasonId={season} and gameTypeId=2', codes, 'season')
-    log.info('Season %s: %d teams.', season, len(rows))
-
-    if not args.skip_splits:
-        for side, window in (('H', 'season-home'), ('R', 'season-road')):
-            split = collect(
-                f'seasonId={season} and gameTypeId=2 and homeRoad="{side}"',
-                codes, window)
-            log.info('%s: %d teams.', window, len(split))
-            rows += split
-
-    if not args.skip_week:
-        for weeks, window in ((1, 'last-1w'), (2, 'last-2w'), (4, 'last-4w')):
-            span_start = week_end - timedelta(days=7 * weeks - 1)
-            form = collect(
-                f'gameDate>="{span_start}" and gameDate<="{week_end}" '
-                f'and gameTypeId=2', codes, window)
-            log.info('%s (%s..%s): %d teams.', window, span_start, week_end, len(form))
-            rows += form
-
-    log.info('Wrote %d rows to team_stats.', write(rows))
+    run(season=args.season,
+        week_end=date.fromisoformat(args.week_end) if args.week_end else None,
+        skip_week=args.skip_week, skip_splits=args.skip_splits)
 
 
 if __name__ == '__main__':

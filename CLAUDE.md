@@ -33,6 +33,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `config.py` | `Config` from env + `check_config()` fail-fast at startup |
 | `schema.py` | Idempotent DDL for the admin + per-league tables; runs at startup (`SKIP_SCHEMA_INIT=1` to bypass) |
 | `jobs.py` / `worker.py` | `enqueue()` — RQ when `REDIS_URL` is set, background thread when it isn't |
+| `nightly_update.py` | The nightly NHL scrape: last night's results, then every team-strength window. Gated on the season having started; deployed as a Render cron |
 | `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST) |
 | `routes/league_routes.py` | `/league/` League Database viewer + read-only APIs, all scoped to the session's league |
 | `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
@@ -371,6 +372,31 @@ Combined, best-vs-worst moves a real player's value **6.7%**, against a rank
 The splits come from the NHL stats API directly rather than being derived from
 game results — `nhl_schedule` holds fixtures only, with no scores.
 
+### The nightly job (`nightly_update.py`)
+
+`scrape_game_results` for one night, then `scrape_team_stats` for all six
+windows — in that order, since the team windows roll up from games that have to
+be in already. Deployed as a **Render cron** (`render.yaml`, 08:30 UTC =
+04:30 EDT / 03:30 EST, after even a late west-coast game in either offset).
+
+**Not an `enqueue()` job, deliberately.** It runs on a wall clock rather than in
+response to a user, needs no cross-process dedup, and an always-on RQ worker to
+run one command a day would be the wrong trade. `jobs.py` and `worker.py` stay
+for the Phase 2 league sync, which is user-triggered and does need dedup.
+
+**It waits for the season, so the cron can exist now.** Before opening night it
+logs why and exits 0 — a job that failed every night until October would train
+its own alerts to be ignored by the time they mattered. Opening night is read
+from `nhl_schedule` rather than hardcoded, the same way `season_config` reads
+the season length. 2026-27 opens **2026-09-29**, so the first run that does any
+work is the morning of the 30th. `--force` overrides the gate for backfills.
+
+One trap this exposed: `scrape_team_stats.team_codes()` asked the standings
+endpoint for *today*, which returns nothing before a season has been played —
+so the first live run of the year was the one most likely to fail. It now falls
+back through earlier dates for the name→tricode mapping, which barely changes
+between seasons.
+
 ### Per-game results (`scrape_game_results.py`)
 
 The port of the old repo's nightly job (`jobs/toi_script.py`) down to what
@@ -682,6 +708,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
+| `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 

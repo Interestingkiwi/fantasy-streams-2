@@ -46,3 +46,40 @@ services:
       # SKIP_SCHEMA_INIT is deliberately absent. It used to be "1" because
       # draft-prep needs no admin tables, but auth stores tokens in `users`,
       # so the startup DDL has to run. It is CREATE TABLE IF NOT EXISTS.
+
+  # --- Nightly NHL update ----------------------------------------------
+  #
+  # Last night's per-game results, then every team-strength window. A cron
+  # service, not the RQ worker: this runs on a wall clock rather than in
+  # response to a user, needs no cross-process dedup, and an always-on worker
+  # to run one command a day would be the wrong trade. `worker.py` stays for
+  # the Phase 2 league sync, which is user-triggered and does need dedup.
+  #
+  # **This is a new billable service.** Render creates it on the next
+  # Blueprint sync; a cron service is billed for the time it actually runs,
+  # which here is a couple of minutes a night.
+  #
+  # 08:30 UTC is 04:30 EDT / 03:30 EST - after even a late west-coast game
+  # in either offset, which is why it is not closer to midnight.
+  #
+  # Safe to create now: `nightly_update.py` reads opening night out of
+  # nhl_schedule and exits cleanly having done nothing until the season has
+  # actually started. The 2026-27 season opens 2026-09-29, so the first run
+  # that does any work is the morning of the 30th.
+  - type: cron
+    name: fantasy-streams-nightly
+    runtime: python
+    plan: starter
+    region: virginia            # must match the database region
+    schedule: "30 8 * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python nightly_update.py"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fantasy-streams-db
+          property: connectionString
+      - key: APP_ENV
+        value: production

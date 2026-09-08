@@ -33,6 +33,7 @@ TESTS = [
     "test_manager_profiles.py",
     "test_opponent_strength.py",
     "test_game_results.py",
+    "test_nightly.py",
 ]
 
 
