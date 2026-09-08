@@ -6,11 +6,15 @@ the old repo (`Interestingkiwi/fantasy-streams`, `app.py:388 get_optimal_lineup`
 Written before the port, deliberately: several of the decisions below are much
 cheaper to make now than to retrofit.
 
-**Status.** Steps 1-3 of the build order are built and tested against the
-imported fixtures: `lineup_utils.py` (the matcher), `daily_value.py` (per-game
-category values) and `goalie_starts.py` (start probabilities). Nothing calls
-them yet - that needs the Phase 2 ETL for real rosters. Steps 4-6 are still
-design only.
+**Status.** Steps 1-3 and 5 are built and tested against the imported
+fixtures: `lineup_utils.py` (the matcher), `daily_value.py` (per-game category
+values), `goalie_starts.py` (start probabilities) and `matchup_weights.py`
+(category weighting). Nothing calls them yet - that needs the Phase 2 ETL for
+real rosters. Step 4 waits on in-season team stats and step 6 on the ETL.
+
+Step 5 was taken ahead of step 4 because step 4 is the only one that needs data
+this repo does not have: the team-strength scraper has to be ported and would
+read as zeros until a couple of weeks into a season.
 
 ## What the old app does
 
@@ -199,7 +203,7 @@ already in `nhl_schedule`: **home/away** (~2–3%) and **back-to-backs** — whi
 for goalies change *who starts*, not merely how well they play, and so belong in
 §3 rather than here.
 
-### 5. Category-weighted lineups
+### 5. Category-weighted lineups — built
 
 A H2H category league is not won by maximising production. It is won by
 maximising **expected categories won**. A unit of production in a category

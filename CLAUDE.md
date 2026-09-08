@@ -42,6 +42,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `lineup_utils.py` | Daily lineup matcher — seats a night's players into the league's slots, exactly. See *Lineups* below |
 | `daily_value.py` | Per-game, per-category player values for the matcher to score against. See *Lineups* below |
 | `goalie_starts.py` | How likely each goalie is to start each night, balanced to one start per team game. See *Lineups* below |
+| `matchup_weights.py` | Weights each category by how much it is still in doubt, and iterates a week's lineups against them. See *Lineups* below |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -252,6 +253,40 @@ was given.
 `seat_all=False` benches players valued at or below zero — needed once
 category weighting can make a start actively harmful.
 
+### Which categories are worth chasing (`matchup_weights.py`)
+
+A head-to-head category league is won by maximising **expected categories
+won**, not production. So a player's nightly value is
+`Σ projection[cat] × marginal_worth(cat)`, where marginal worth is how much one
+more unit moves the odds of taking that category — the normal density at the
+projected margin, `φ(margin/σ) / σ`. It peaks at a tie and decays fast.
+
+**Weight the projected final margin, never the realised one.** That single rule
+resolves what looks like a contradiction — wanting to write off a hopeless
+category on day 1, while not wanting to punt one prematurely. A category the
+projections say you lose by 3σ is genuinely worth ~0 on Monday. A category
+where you are currently down ten hits but the rest-of-week projection closes it
+is still live. Both follow if the margin fed to φ is `banked + remaining`.
+
+**Banked production moves the margin but adds no variance**, because it has
+already happened — so σ comes from the remaining totals alone. Five points
+ahead with 115 points still to play is a coin flip; five ahead with seven left
+is nearly banked. Getting this backwards is easy, and there is a test for it.
+
+The weights depend on the lineups and the lineups depend on the weights, so
+`optimise_week` iterates — flat weights, project, re-weight, re-optimise — with
+damping, settling in two or three passes. The **opponent stays on flat weights
+and is projected once**: they will play their best team, not counter-optimise,
+and assuming otherwise makes you exploitable.
+
+σ is Poisson (`Var ≈ mean`, so `σ_margin ≈ sqrt(mine + theirs)`) because
+`daily_player_stats` is empty until a season runs; `dispersion` is the dial for
+replacing it with something measured. A `WEIGHT_FLOOR` keeps a written-off
+category from reaching exactly zero, since a 3σ projection can be wrong.
+
+Weights are relative — they normalise to a mean absolute value of one, so a
+single-category league always returns 1.0 and says nothing.
+
 ### Whether a goalie starts (`goalie_starts.py`)
 
 `daily_value` gives goalies **per-start** numbers, so something has to turn
@@ -448,6 +483,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_lineup.py` | the lineup matcher: brute-forces every assignment for 400 random rosters and requires an exact match on value and starts, then seats real projections into all 25 imported league shapes |
 | `test_daily_value.py` | the value engine, leaning on the decisions a reader might mistake for bugs — no centering, no capping, no replacement level, goalie rates per start |
 | `test_goalie_starts.py` | start probabilities: one start per team night exactly, season totals approximately, and the teams whose projections do not add up |
+| `test_matchup_weights.py` | category weighting: that a contested category outweighs a settled one, that inverse categories keep their sign, and that the same margin is less settled the more is still to come |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 
