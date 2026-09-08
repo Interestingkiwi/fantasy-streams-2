@@ -369,12 +369,26 @@ Balanced) sits on the page itself, in the filter bar, and re-ranks on click.
 
 State is `localStorage`, all keys prefixed `fs_`: `fs_selectedStats`, `fs_statWeights`,
 `fs_leagueMode`, `fs_pimPolarity`, `fs_numTeams`, `fs_rosterMode`, `fs_rosterSlots`,
-`fs_playoffWeeks`, `fs_rankMode` (plus `fantasy_streams_tags` for player tags).
+`fs_playoffWeeks`, `fs_rankMode`, `fs_heatmap` (plus `fantasy_streams_tags` for
+player tags).
 
 On load the page ranks against those saved settings by *replacing* the
 `/api/projections` call with `/api/rank-players`, never adding to it — the ranking maths
 costs ~40ms against a ~30ms payload, so a returning user waits no longer. With no
 categories selected there is nothing to rank, and the plain call stands.
+
+**Category heatmap** (`fs_heatmap`, toggled in the filter bar) shades every
+category cell green to red. It exists for one drafting mistake in particular:
+taking four players who are all strong in the same categories and all weak in
+the same others. Two deliberate choices — the scale is anchored on the **mean**,
+not the midpoint of min..max, because most categories are heavily skewed
+(several hundred players near zero in PPP or hits) and a plain min-max scale
+paints nearly everyone red; and nulls are excluded rather than read as zero, so
+a skater's absent save total does not drag the goalie scale down. Polarity is
+respected via `statPolarity()`, or goals against would glow green exactly when
+it should not. The scale is computed over the whole pool rather than the
+filtered view, so a green cell means the same thing whatever is filtered in
+front of it.
 
 **Two schedule columns**, both display-only and neither touching the rankings.
 `Light` is always on: how many of the season's games the player's team plays on a

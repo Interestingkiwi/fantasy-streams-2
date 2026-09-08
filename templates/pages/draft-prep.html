@@ -86,6 +86,13 @@
                                   data-rank-mode="balanced">Balanced</button>
                       </div>
                   </div>
+
+                  <div class="flex items-center gap-2">
+                      <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Heatmap:</span>
+                      <button type="button" id="heatmap-toggle" aria-pressed="false"
+                              class="px-3 py-2 text-sm font-medium rounded-md border border-gray-600 transition-colors"
+                              title="Shade each category green to red against the whole player pool, so it is obvious which categories a shortlist already covers">Off</button>
+                  </div>
               </div>
 
               <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
@@ -328,6 +335,8 @@
             let playoffRequestId = 0;
             let seasonSchedule = {};
             let seasonLightAverage = 0;
+            let heatmapOn = localStorage.getItem('fs_heatmap') === '1';
+            let statRanges = {};
             let filteredData = [];
 
             let currentPage = 1;
@@ -656,6 +665,88 @@
             const categoryOnlyStats = ['proj_goalsAgainstAverage', 'proj_savePct', 'proj_shootingPct', 'proj_winPct', 'proj_startingPct'];
             const negativeStats = ['proj_goalsAgainstAverage', 'proj_totalFaceoffLosses', 'proj_losses', 'proj_goalsAgainst'];
 
+            // +1 where more is better, -1 where less is. PIM is the one a league
+            // really does flip, so it follows the setting rather than the list.
+            function statPolarity(stat) {
+                if (negativeStats.includes(stat)) return -1;
+                if (stat === 'proj_penaltyMinutes') return pimPolarity;
+                return 1;
+            }
+
+            // --- Category heatmap ---
+            // Shades every category cell against the whole player pool, so a
+            // shortlist's gaps show up at a glance: four players who are all green
+            // in points and all red in hits is the mistake this exists to catch.
+            //
+            // Anchored on the mean rather than the midpoint of min..max. Most
+            // categories are heavily skewed - several hundred players sit at or
+            // near zero in PPP or hits - and a plain min-max scale would paint
+            // nearly everyone red and reserve the greens for a few outliers.
+            // Nulls are excluded rather than read as zero, so a skater's absent
+            // save total does not drag the goalie scale down.
+            function computeStatRanges() {
+                statRanges = {};
+                selectedStats.forEach(stat => {
+                    const values = [];
+                    playerData.forEach(player => {
+                        const value = player[stat];
+                        if (value === null || value === undefined) return;
+                        const number = Number(value);
+                        if (Number.isFinite(number)) values.push(number);
+                    });
+                    if (values.length < 2) return;
+                    statRanges[stat] = {
+                        min: Math.min(...values),
+                        max: Math.max(...values),
+                        mean: values.reduce((a, b) => a + b, 0) / values.length,
+                    };
+                });
+            }
+
+            // Green above the mean, red below, opacity scaled by how far. Kept
+            // translucent so the text stays readable on the dark theme.
+            function heatStyle(stat, value) {
+                if (!heatmapOn) return '';
+                const range = statRanges[stat];
+                if (!range || value === null || value === undefined) return '';
+
+                const number = Number(value);
+                if (!Number.isFinite(number)) return '';
+
+                const above = number >= range.mean;
+                const span = above ? range.max - range.mean : range.mean - range.min;
+                if (span <= 0) return '';
+
+                const strength = Math.min(1, Math.abs(number - range.mean) / span);
+                // Flipped for categories where less is better, or goals against
+                // would glow green precisely when it should not.
+                const good = above === (statPolarity(stat) > 0);
+                const rgb = good ? '16, 185, 129' : '239, 68, 68';
+                const alpha = (strength * 0.45).toFixed(3);
+                return ' style="background-color: rgba(' + rgb + ', ' + alpha + ')"';
+            }
+
+            function renderHeatmapToggle() {
+                const button = document.getElementById('heatmap-toggle');
+                if (!button) return;
+                button.textContent = heatmapOn ? 'On' : 'Off';
+                button.setAttribute('aria-pressed', heatmapOn ? 'true' : 'false');
+                button.className = 'px-3 py-2 text-sm font-medium rounded-md border border-gray-600 transition-colors'
+                    + (heatmapOn ? ' bg-blue-600 text-white' : ' bg-gray-700 text-gray-300 hover:bg-gray-600');
+            }
+
+            function initHeatmap() {
+                const button = document.getElementById('heatmap-toggle');
+                if (!button) return;
+                button.addEventListener('click', () => {
+                    heatmapOn = !heatmapOn;
+                    localStorage.setItem('fs_heatmap', heatmapOn ? '1' : '0');
+                    renderHeatmapToggle();
+                    buildTableBody();
+                });
+                renderHeatmapToggle();
+            }
+
             // --- API Calls ---
             async function fetchAvailableStats() {
                 try {
@@ -690,6 +781,10 @@
 
             // --- Core Engine ---
             function applyFiltersAndSort() {
+                // The scale is the whole pool, not the filtered view, so a green
+                // cell means the same thing whatever is filtered in front of it.
+                computeStatRanges();
+
                 const searchInput = document.getElementById('search-input').value.toLowerCase();
                 const posFilter = document.getElementById('pos-filter').value;
                 const teamFilter = document.getElementById('team-filter').value;
@@ -1045,10 +1140,10 @@
                     }
 
                     selectedStats.forEach(stat => {
-                        let val = player[stat];
-                        if (val === undefined || val === null) val = 0;
+                        const raw = player[stat];
+                        let val = (raw === undefined || raw === null) ? 0 : raw;
                         if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(1);
-                        rowHTML += `<td class="p-4 text-right text-gray-300">${val}</td>`;
+                        rowHTML += `<td class="p-4 text-right text-gray-300"${heatStyle(stat, raw)}>${val}</td>`;
                     });
 
                     if (seasonLightAverage > 0) {
@@ -1228,15 +1323,7 @@
                         // Gather checked boxes
                         const checkboxes = document.querySelectorAll('#stat-toggles input.stat-checkbox:checked');
                         checkboxes.forEach(box => {
-                            const statName = box.value;
-                            let polarity = 1;
-
-                            if (negativeStats.includes(statName)) {
-                                polarity = -1;
-                            } else if (statName === 'proj_penaltyMinutes') {
-                                polarity = pimPolarity;
-                            }
-                            activeStats[statName] = polarity;
+                            activeStats[box.value] = statPolarity(box.value);
                         });
 
                     } else {
@@ -1403,6 +1490,7 @@
                 });
 
                 initRankMode();
+                initHeatmap();
                 initNumTeams();
                 initRosterSettings();
                 initPlayoffWeeks();
