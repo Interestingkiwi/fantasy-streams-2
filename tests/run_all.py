@@ -26,6 +26,7 @@ TESTS = [
     "test_scope.py",
     "test_league_viewer.py",
     "test_schedules.py",
+    "test_lineup.py",
 ]
 
 
