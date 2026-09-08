@@ -2,10 +2,8 @@
 Routes used by Draft Prep
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 9/6/2026
+Updated - 9/7/2026
 """
-
-from collections import Counter
 
 from flask import Blueprint, render_template, jsonify, request
 from db import engine, text
@@ -15,7 +13,7 @@ from ranking_utils import calculate_player_ranks
 draft_bp = Blueprint('draft', __name__, url_prefix='/draft-prep')
 
 # Shared with the Schedules page so the two cannot drift apart.
-from schedule_utils import LIGHT_NIGHT_MAX_GAMES  # noqa: E402
+from schedule_utils import team_game_counts  # noqa: E402
 
 def get_stat_mappings(conn):
     """Helper function to dynamically classify stats as Skater or Goalie from the DB."""
@@ -89,7 +87,8 @@ def playoff_schedule():
 
     Returns games plus light-night games - those falling on a date carrying
     eight games or fewer, the standard fantasy definition, when enough of the
-    league is idle to get an extra starter into the lineup.
+    league is idle to get an extra starter into the lineup. The threshold
+    itself lives in schedule_utils; this route must not restate it.
     """
     try:
         weeks = (request.json or {}).get('weeks', [])
@@ -114,17 +113,7 @@ def playoff_schedule():
                 WHERE {window}
             '''), params).fetchall()
 
-        games_on_date = Counter(row[0] for row in rows)
-        light_nights = {date for date, count in games_on_date.items()
-                        if count < LIGHT_NIGHT_MAX_GAMES}
-
-        teams = {}
-        for game_date, home, away in rows:
-            for team in (home, away):
-                entry = teams.setdefault(team, {'games': 0, 'lightNights': 0})
-                entry['games'] += 1
-                if game_date in light_nights:
-                    entry['lightNights'] += 1
+        teams = team_game_counts(rows)
 
         counts = [entry['games'] for entry in teams.values()]
         average = round(sum(counts) / len(counts), 1) if counts else 0

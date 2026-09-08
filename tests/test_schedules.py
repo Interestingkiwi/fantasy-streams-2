@@ -51,14 +51,17 @@ GAMES = [
 ]
 
 print("\n=== 1. schedule_utils ===")
-check("light nights below the threshold",
-      light_nights(GAMES, threshold=3) == {"2027-01-01", "2027-01-03"},
+check("the threshold is inclusive - a 3-game night is light at threshold 3",
+      light_nights(GAMES, threshold=3) == {"2027-01-01", "2027-01-02", "2027-01-03"},
       light_nights(GAMES, threshold=3))
-check("nothing is light at threshold 1", light_nights(GAMES, threshold=1) == set())
+check("nights above the threshold are not light",
+      light_nights(GAMES, threshold=2) == {"2027-01-01", "2027-01-03"},
+      light_nights(GAMES, threshold=2))
+check("nothing is light at threshold 0", light_nights(GAMES, threshold=0) == set())
 check("games per date", games_per_date(GAMES) == {"2027-01-01": 1, "2027-01-02": 3, "2027-01-03": 1},
       games_per_date(GAMES))
 
-teams = team_game_counts(GAMES, threshold=3)
+teams = team_game_counts(GAMES, threshold=2)
 check("home and away both counted", teams["TOR"]["games"] == 2, teams.get("TOR"))
 check("light nights attributed", teams["MTL"] == {"games": 2, "lightNights": 2}, teams.get("MTL"))
 check("busy night not counted light", teams["EDM"] == {"games": 1, "lightNights": 0}, teams.get("EDM"))

@@ -18,8 +18,9 @@ from datetime import date, timedelta
 # night: enough of the league is idle that a manager can start players who
 # would otherwise sit. This is a domain convention, not a tunable - leave it.
 #
-# Callers compare with `<`, so nights of exactly 8 games are not currently
-# flagged. That is the one detail worth a deliberate decision some time.
+# The comparison is inclusive (`<=`): an 8-game night IS light. It read `<`
+# until 9/7/2026, which silently moved the line to seven and threw away the
+# most common light night of all.
 LIGHT_NIGHT_MAX_GAMES = 8
 
 # Yahoo fantasy weeks run Monday to Sunday.
@@ -28,11 +29,11 @@ WEEK_END_WEEKDAY = 6   # Sunday, in Python's Monday=0 numbering
 
 def light_nights(rows, threshold=LIGHT_NIGHT_MAX_GAMES):
     """
-    The set of dates in `rows` carrying fewer than `threshold` games.
+    The set of dates in `rows` carrying `threshold` games or fewer.
     `rows` is any iterable of (game_date, home, away).
     """
     per_date = Counter(row[0] for row in rows)
-    return {game_date for game_date, count in per_date.items() if count < threshold}
+    return {game_date for game_date, count in per_date.items() if count <= threshold}
 
 
 def games_per_date(rows):

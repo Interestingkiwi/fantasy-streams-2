@@ -326,6 +326,8 @@
             let playoffSchedule = {};
             let playoffAverage = 0;
             let playoffRequestId = 0;
+            let seasonSchedule = {};
+            let seasonLightAverage = 0;
             let filteredData = [];
 
             let currentPage = 1;
@@ -394,9 +396,38 @@
             }
 
             // teamAbbrevs can hold two teams for someone who moved mid-season
+            function primaryTeam(player) {
+                return String(player.teamAbbrevs || '').split(',')[0].trim();
+            }
+
             function playoffGamesFor(player) {
-                const team = String(player.teamAbbrevs || '').split(',')[0].trim();
-                return playoffSchedule[team] || null;
+                return playoffSchedule[primaryTeam(player)] || null;
+            }
+
+            // --- Season light nights ---
+            // How many of a team's games fall on a night the rest of the league is
+            // largely idle, across the whole season. Read from the Schedules page's
+            // own endpoint rather than a second copy of the maths here, so the two
+            // pages can never disagree about what counts as light. Unlike the
+            // playoff column this depends on no settings, so it is fetched once.
+            async function loadSeasonSchedule() {
+                try {
+                    const response = await fetch('/schedules/api/team-games');
+                    const data = await response.json();
+                    if (data.status !== 'success') return;
+
+                    seasonSchedule = data.teams || {};
+                    const counts = Object.values(seasonSchedule).map(t => t.lightNights);
+                    seasonLightAverage = counts.length
+                        ? Math.round((counts.reduce((a, b) => a + b, 0) / counts.length) * 10) / 10
+                        : 0;
+                } catch (error) {
+                    console.error("Season schedule fetch failed:", error);
+                }
+            }
+
+            function lightNightsFor(player) {
+                return seasonSchedule[primaryTeam(player)] || null;
             }
 
             // --- Rank Via ---
@@ -596,7 +627,7 @@
                         updateSettingsSummary();
 
                         refreshPlayoffSchedule().then(() => {
-                            decoratePlayoffGames();
+                            decorateScheduleColumns();
                             applyFiltersAndSort();
                         });
                     });
@@ -651,7 +682,7 @@
                             productionTrend: p.productionTrend || p.Trend || 'N/A',
                             peripheralTrend: p.peripheralTrend || 'N/A'
                         }));
-                        decoratePlayoffGames();
+                        decorateScheduleColumns();
                         applyFiltersAndSort();
                     }
                 } catch (error) { console.error("Fetch players failed:", error); }
@@ -908,6 +939,10 @@
                     createHeader(formatStatName(stat), stat, "text-right");
                 });
 
+                if (seasonLightAverage > 0) {
+                    createHeader('Light', 'lightNights', 'text-right text-amber-400');
+                }
+
                 if (playoffAverage > 0) {
                     createHeader('Playoff', 'playoffGames', 'text-right text-sky-400');
                 }
@@ -916,11 +951,16 @@
                 createHeader('Periph Trend', 'peripheralTrend', "text-right");
             }
 
-            function decoratePlayoffGames() {
+            // Both schedule columns are sortable, so their values have to live on
+            // the player rows the sort reads, not only in the render.
+            function decorateScheduleColumns() {
                 playerData.forEach(player => {
-                    const entry = playoffGamesFor(player);
-                    player.playoffGames = entry ? entry.games : null;
-                    player.playoffLightNights = entry ? entry.lightNights : null;
+                    const playoff = playoffGamesFor(player);
+                    player.playoffGames = playoff ? playoff.games : null;
+                    player.playoffLightNights = playoff ? playoff.lightNights : null;
+
+                    const season = lightNightsFor(player);
+                    player.lightNights = season ? season.lightNights : null;
                 });
             }
 
@@ -1011,6 +1051,20 @@
                         rowHTML += `<td class="p-4 text-right text-gray-300">${val}</td>`;
                     });
 
+                    if (seasonLightAverage > 0) {
+                        const entry = lightNightsFor(player);
+                        if (entry) {
+                            let tone = 'text-gray-300';
+                            if (entry.lightNights > seasonLightAverage) tone = 'text-emerald-400 font-bold';
+                            else if (entry.lightNights < seasonLightAverage) tone = 'text-red-400';
+                            rowHTML += `<td class="p-4 text-right ${tone}" title="${entry.lightNights} of `
+                                + `${entry.games} games fall on a light night `
+                                + `(league average ${seasonLightAverage})">${entry.lightNights}</td>`;
+                        } else {
+                            rowHTML += `<td class="p-4 text-right text-gray-600">-</td>`;
+                        }
+                    }
+
                     if (playoffAverage > 0) {
                         const entry = playoffGamesFor(player);
                         if (entry) {
@@ -1069,7 +1123,8 @@
                 // to it, so a returning user waits no longer than before; with no
                 // categories picked there is nothing to rank by, so the cheaper call
                 // stands and a first-time visitor sees exactly what they saw before.
-                await refreshPlayoffSchedule();
+                // Independent of each other, so pay for one round trip, not two.
+                await Promise.all([refreshPlayoffSchedule(), loadSeasonSchedule()]);
 
                 if (selectedStats.length > 0) {
                     await applyRankingSettings();
@@ -1227,7 +1282,7 @@
                             }));
 
                             hasReplacementValues = playerData.some(p => p.value_over_replacement !== undefined);
-                            decoratePlayoffGames();
+                            decorateScheduleColumns();
 
                             // Automatically sort the UI by the 'overall_rank' column
                             currentSortColumn = 'overall_rank';

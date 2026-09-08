@@ -152,7 +152,7 @@
                         <span class="text-xs ${c.light ? 'text-amber-400' : 'text-gray-400'} w-6 text-right">${esc(c.games)}</span>
                     </div>`).join('')
                     + `<p class="text-xs text-gray-500 mt-3 pt-3 border-t border-gray-700">
-                         Amber marks a light night &mdash; fewer than ${esc(data.lightNightThreshold)} games,
+                         Amber marks a light night &mdash; ${esc(data.lightNightThreshold)} games or fewer,
                          so most of the league is idle.</p>`;
             } catch (err) {
                 showError(err.message);
