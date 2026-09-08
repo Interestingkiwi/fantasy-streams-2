@@ -6,11 +6,13 @@ the old repo (`Interestingkiwi/fantasy-streams`, `app.py:388 get_optimal_lineup`
 Written before the port, deliberately: several of the decisions below are much
 cheaper to make now than to retrofit.
 
-**Status.** Steps 1-3 and 5 are built and tested against the imported
-fixtures: `lineup_utils.py` (the matcher), `daily_value.py` (per-game category
-values), `goalie_starts.py` (start probabilities) and `matchup_weights.py`
-(category weighting). Nothing calls them yet - that needs the Phase 2 ETL for
-real rosters. Step 4 waits on in-season team stats and step 6 on the ETL.
+**Status.** Steps 1-3, 5, and step 6's Tier 3 are built and tested against
+the imported fixtures: `lineup_utils.py` (the matcher), `daily_value.py`
+(per-game category values), `goalie_starts.py` (start probabilities),
+`matchup_weights.py` (category weighting) and `manager_profiles.py` (opponent
+add/drop style). Nothing calls them yet - that needs the Phase 2 ETL for real
+rosters. Step 4 waits on in-season team stats; step 6's Tiers 1 and 2 wait on
+the ETL, since they need live free agents and rosters.
 
 Step 5 was taken ahead of step 4 because step 4 is the only one that needs data
 this repo does not have: the team-strength scraper has to be ported and would
@@ -287,9 +289,13 @@ days — blocked by a position glut or simply not playing — is a drop candidat
 Model swapping him for a free agent at a position with open slots who would
 start more. Bound by the league's remaining add limit and waiver rules.
 
-**Tier 3 — manager profile from history.** The best version, and the data is
-already there: `transactions` holds every manager's real add/drop history. Two
-numbers classify a manager well:
+**Tier 3 — manager profile from history — built** (`manager_profiles.py`).
+The best version, and the data was already there: `transactions` holds a full
+season of every manager's real add/drop history. Two numbers classify a
+manager, and both spread widely enough across the 254 imported managers to be
+worth splitting on — adds per week runs 0.26 to 3.26 between the 10th and 90th
+percentiles, median hold 4 days to 87. Measured thresholds give 107 streamers,
+97 targeted and 50 inactive:
 
 - **adds per week** — how active they are.
 - **median hold duration** — a manager whose adds are mostly dropped inside 3

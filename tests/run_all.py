@@ -30,6 +30,7 @@ TESTS = [
     "test_daily_value.py",
     "test_goalie_starts.py",
     "test_matchup_weights.py",
+    "test_manager_profiles.py",
 ]
 
 

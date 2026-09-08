@@ -43,6 +43,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `daily_value.py` | Per-game, per-category player values for the matcher to score against. See *Lineups* below |
 | `goalie_starts.py` | How likely each goalie is to start each night, balanced to one start per team game. See *Lineups* below |
 | `matchup_weights.py` | Weights each category by how much it is still in doubt, and iterates a week's lineups against them. See *Lineups* below |
+| `manager_profiles.py` | Classifies an opponent's add/drop style from their real transaction history. See *Lineups* below |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -252,6 +253,35 @@ was given.
 `seat_all=True` (default, and the old behaviour) starts everyone who fits.
 `seat_all=False` benches players valued at or below zero — needed once
 category weighting can make a start actively harmful.
+
+### What the opponent will do (`manager_profiles.py`)
+
+Freezing an opponent's roster under-projects every one of them, by an amount
+that depends on how that manager plays. `transactions` already holds a real
+season of add/drops, and two numbers split the styles cleanly:
+
+- **adds per week** — 0.26 at the 10th percentile, 1.60 median, 3.26 at the
+  90th, across 254 managers in the 24 imported leagues.
+- **median hold duration** — 4 days to 87, population median 11.
+
+Thresholds come from those percentiles, not from taste, and give 107
+streamers, 97 targeted and 50 inactive. `simulation_plan()` turns a style into
+a hint for the tiers above: a streamer's adds chase games played, so simulate
+them filling empty lineup slots; a targeted manager makes fewer, better moves,
+so simulate a few upgrades to their weakest starters instead. **Never simulate
+more moves than the manager has historically made** — an opponent model that
+invents activity is worse than one assuming none, because it is wrong in a
+direction the user cannot see.
+
+**Censoring matters and is handled.** 18% of holds never end — the player was
+still rostered when the data stops. They are recorded at their lower bound,
+which is safe for a *median* specifically, since an unfinished hold is a long
+one and sits above the median either way. That breaks down once more than half
+a manager's holds are unfinished (42 of the 254), and `medianIsLowerBound` says
+so.
+
+Holds are paired chronologically, not grouped: managers re-add the same player
+often enough to matter — 1,396 times in the imported data.
 
 ### Which categories are worth chasing (`matchup_weights.py`)
 
@@ -498,6 +528,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_daily_value.py` | the value engine, leaning on the decisions a reader might mistake for bugs — no centering, no capping, no replacement level, goalie rates per start |
 | `test_goalie_starts.py` | start probabilities: one start per team night exactly, season totals approximately, and the teams whose projections do not add up |
 | `test_matchup_weights.py` | category weighting: that a contested category outweighs a settled one, that inverse categories keep their sign, and that the same margin is less settled the more is still to come |
+| `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 
