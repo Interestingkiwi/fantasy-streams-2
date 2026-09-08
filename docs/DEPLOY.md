@@ -20,8 +20,10 @@ from your machine to fill the database.
    - **`fantasy-streams`** — Python web service, `starter`, Virginia, running
      `gunicorn app:app`.
    `DATABASE_URL` is wired from the database; `FLASK_SECRET_KEY` is generated;
-   `APP_ENV=production` and `SKIP_SCHEMA_INIT=1` are set (draft-prep doesn't use
-   the admin/league tables).
+   `APP_ENV=production` is set. `SKIP_SCHEMA_INIT` is deliberately **not** set:
+   it used to be `1` because draft-prep needs no admin tables, but Yahoo auth
+   stores tokens in `users`, so the startup DDL has to run. It is all
+   `CREATE TABLE IF NOT EXISTS`.
 4. **Apply**. First build takes a few minutes (installing pandas/numpy).
 
 If Render rejects the database `plan` value, check the current slug at
