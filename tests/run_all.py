@@ -32,6 +32,7 @@ TESTS = [
     "test_matchup_weights.py",
     "test_manager_profiles.py",
     "test_opponent_strength.py",
+    "test_game_results.py",
 ]
 
 

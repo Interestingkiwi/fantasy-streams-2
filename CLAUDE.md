@@ -46,6 +46,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `manager_profiles.py` | Classifies an opponent's add/drop style from their real transaction history. See *Lineups* below |
 | `opponent_strength.py` | Per-category nudge for which NHL team a player is facing. See *Lineups* below |
 | `scrape_team_stats.py` | Scrapes every team's strength and home/road splits into `team_stats`; feeds `opponent_strength.py` |
+| `scrape_game_results.py` | Nightly per-game player results into `player_game_stats`; also backfills any historical range |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
@@ -315,8 +316,29 @@ home/road straddle 1.0, so a balanced season is unbiased.
 Combined, best-vs-worst moves a real player's value **6.7%**, against a rank
 1→2 gap of 0.6% and a rank 1→10 gap of 20.8%.
 
-`nhl_schedule` holds fixtures only (no scores), so none of this is derived from
-game results — the NHL stats API serves the splits directly.
+The splits come from the NHL stats API directly rather than being derived from
+game results — `nhl_schedule` holds fixtures only, with no scores.
+
+### Per-game results (`scrape_game_results.py`)
+
+The port of the old repo's nightly job (`jobs/toi_script.py`) down to what
+everything else was derived from: one row per player per game in
+`player_game_stats`, carrying `opponentTeamAbbrev` and `homeRoad`. Runs for
+last night by default, or over any range to backfill.
+
+**The historical range is the point.** `api.nhle.com` serves completed dates as
+readily as last night's, so a finished season can be pulled on demand — which
+is what lets the optimizer's assumptions be checked against real outcomes
+before a new season has played a game. Hits and blocks need a third endpoint
+(`skater/realtime`); `skater/summary` does not carry them, and 21 of the 25
+imported leagues score at least one.
+
+**The API stops paging at an offset of 10,000 and says nothing about it.** A
+season-long request came back looking healthy — 9,600 rows spanning the right
+dates — but the result is sorted before it is truncated, so it was a
+top-heavy subset masquerading as a complete season. That is the worst possible
+input to a calibration. The range is now split into weekly chunks, and
+`PAGE_CEILING` raises if any single query ever reaches the limit.
 
 ### What the opponent will do (`manager_profiles.py`)
 
@@ -594,6 +616,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_matchup_weights.py` | category weighting: that a contested category outweighs a settled one, that inverse categories keep their sign, and that the same margin is less settled the more is still to come |
 | `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
+| `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 
