@@ -8,6 +8,7 @@ Updated - 9/6/2026
 import os
 
 import pandas as pd
+import aging
 from db_config import engine
 from goalie_workload import (FLATTEN_ANCHOR, FLATTEN_STRENGTH, flatten_starts,
                              season_scale)
@@ -90,6 +91,11 @@ seasons = sorted(df['seasonId'].unique(), reverse=True)
 y1, y2, y3 = seasons[0], seasons[1], seasons[2]
 print(f"Target Seasons: Y1={y1} (60%), Y2={y2} (30%), Y3={y3} (10%)")
 
+# Goalie rates are not aged - aging.py records why the measurement comes back
+# empty - but the age is still worth carrying so the draft board shows it and
+# skaters and goalies land in final_projections with the same columns.
+TARGET_SEASON = int(f"{int(str(y1)[4:])}{int(str(y1)[4:]) + 1}")
+
 df_3yr = df[df['seasonId'].isin([y1, y2, y3])].copy()
 df_3yr = df_3yr.drop_duplicates(subset=['playerId', 'seasonId'], keep='first')
 
@@ -149,6 +155,7 @@ for pid in df_3yr['playerId'].unique():
         'goalieFullName': latest['goalieFullName'],
         'positionCode': 'G',
         'teamAbbrevs': latest['teamAbbrevs'],
+        'age': aging.season_age(latest.get('birthDate'), TARGET_SEASON),
         'projectedGames': proj_gp,
         'productionTrend': trend
     }
@@ -198,6 +205,7 @@ for pid in df_3yr['playerId'].unique():
     projected_data.append(proj)
 
 final_df = pd.DataFrame(projected_data)
+final_df['age'] = final_df['age'].astype('Int64')
 final_df.to_sql("projected_goalies_baseline", con=engine, if_exists='replace', index=False)
 
 overridden = sum(1 for pid in final_df["playerId"] if int(pid) in GP_OVERRIDES)

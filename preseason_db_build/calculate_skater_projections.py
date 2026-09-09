@@ -6,6 +6,7 @@ Updated - 7/5/2026
 """
 
 import pandas as pd
+import aging
 from db_config import engine
 from season_config import HISTORICAL_SEASON_GAMES, season_game_count
 import numpy as np
@@ -78,6 +79,11 @@ seasons = sorted(df['seasonId'].unique(), reverse=True)
 y1, y2, y3 = seasons[0], seasons[1], seasons[2]
 print(f"Target Seasons: Y1={y1} (60%), Y2={y2} (30%), Y3={y3} (10%)")
 
+# The season being projected is the one after the newest one on file, derived
+# rather than written down so it moves with the data every summer.
+TARGET_SEASON = int(f"{int(str(y1)[4:])}{int(str(y1)[4:]) + 1}")
+print(f"Projecting {TARGET_SEASON}.")
+
 df_3yr = df[df['seasonId'].isin([y1, y2, y3])].copy()
 df_3yr = df_3yr.drop_duplicates(subset=['playerId', 'seasonId'], keep='first')
 
@@ -139,6 +145,27 @@ projected_games = (
     )
 ).round().clip(upper=FULL_SEASON)
 
+# --- AGE ---
+# Each of the three seasons was played at a different age, and the blend below
+# averages them as if they were not. Look up every birthdate now so each season
+# can be restated at the age being projected before it is weighted - see
+# aging.py for the curve and how it was measured.
+if 'birthDate' in df_3yr.columns:
+    BIRTHDATES = (df_3yr.dropna(subset=['birthDate'])
+                        .drop_duplicates(subset=['playerId'])
+                        .set_index('playerId')['birthDate']
+                        .to_dict())
+else:
+    BIRTHDATES = {}
+
+if BIRTHDATES:
+    print(f" -> Age-adjusting rates for {len(BIRTHDATES)} skaters "
+          f"({len(df_3yr['playerId'].unique()) - len(BIRTHDATES)} without a birthdate "
+          "are projected unadjusted).")
+else:
+    print(" -> [WARN] No birthDate column in historic_skaters_baseline; skipping the "
+          "age adjustment. Re-run historic_data_skaters.py to collect birthdates.")
+
 latest_metadata = df_3yr.sort_values('seasonId', ascending=False).drop_duplicates(subset=['playerId'])[['playerId', 'skaterFullName', 'positionCode', 'teamAbbrevs']]
 
 pivot_df = df_3yr.pivot(
@@ -159,11 +186,24 @@ for index, row in pivot_df.iterrows():
         games = FULL_SEASON
     games = int(games)
 
+    born = BIRTHDATES.get(row['playerId'])
+    target_age = aging.season_age(born, TARGET_SEASON)
+
+    # One factor per season per curve, worked out once rather than per stat.
+    # Scoring and peripherals age at very different speeds, so a 38-year-old's
+    # hits survive a season his goals do not.
+    age_factors = {
+        group: {season: aging.age_factor(aging.season_age(born, season), target_age, group)
+                for season in (y1, y2, y3)}
+        for group in (aging.SCORING, aging.PERIPHERAL)
+    }
+
     player_proj = {
         'playerId': row['playerId'],
         'skaterFullName': row['skaterFullName'],
         'positionCode': row['positionCode'],
         'teamAbbrevs': row['teamAbbrevs'],
+        'age': target_age,
         'projectedGames': games
     }
 
@@ -174,22 +214,21 @@ for index, row in pivot_df.iterrows():
     player_proj['peripheralTrend'] = calculate_peripheral_trend(row, y1, y2)
 
     for stat in stats_to_project:
-        val_y1 = row.get(f"{stat}_pg_{y1}", np.nan)
-        val_y2 = row.get(f"{stat}_pg_{y2}", np.nan)
-        val_y3 = row.get(f"{stat}_pg_{y3}", np.nan)
+        # plusMinus has no curve and gets none: it is signed, so scaling a
+        # negative one toward zero would read as the player improving.
+        factors = age_factors.get(aging.group_for(stat))
 
         total_weight = 0
         weighted_sum = 0
 
-        if not pd.isna(val_y1):
-            weighted_sum += (val_y1 * 6)
-            total_weight += 6
-        if not pd.isna(val_y2):
-            weighted_sum += (val_y2 * 3)
-            total_weight += 3
-        if not pd.isna(val_y3):
-            weighted_sum += (val_y3 * 1)
-            total_weight += 1
+        for season, weight in ((y1, 6), (y2, 3), (y3, 1)):
+            value = row.get(f"{stat}_pg_{season}", np.nan)
+            if pd.isna(value):
+                continue
+            if factors:
+                value *= factors[season]
+            weighted_sum += value * weight
+            total_weight += weight
 
         if total_weight > 0:
             proj_pg = weighted_sum / total_weight
@@ -201,10 +240,14 @@ for index, row in pivot_df.iterrows():
     projected_data.append(player_proj)
 
 final_projections_df = pd.DataFrame(projected_data)
+# Age stays null when it is unknown rather than becoming a zero-year-old
+age_column = final_projections_df.pop('age')
 final_projections_df.fillna(0, inplace=True)
+final_projections_df.insert(4, 'age', age_column.astype('Int64'))
 
 table_name = "projected_skaters_baseline"
 final_projections_df.to_sql(table_name, con=engine, if_exists='replace', index=False)
 
 print(f"\n{len(final_projections_df)} player projections written to '{table_name}'.")
-print(f"Math applied: 60/30/10 Dynamic Time-Decay + GP blend ({FULL_SEASON_WEIGHT:.0%} full season) + Trend Analyzed.")
+print(f"Math applied: 60/30/10 Dynamic Time-Decay + GP blend ({FULL_SEASON_WEIGHT:.0%} full season) "
+      f"+ age curve + Trend Analyzed.")

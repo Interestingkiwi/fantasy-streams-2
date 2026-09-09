@@ -24,11 +24,14 @@ from schedule_utils import team_game_counts  # noqa: E402
 
 def get_stat_mappings(conn):
     """Helper function to dynamically classify stats as Skater or Goalie from the DB."""
+    # Everything not named here becomes a selectable, weightable stat on the
+    # draft board, so any new descriptive column has to be excluded explicitly -
+    # 'age' is a fact about the player, not a category anyone scores.
     query = text("""
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name = 'final_projections'
-          AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'productionTrend', 'peripheralTrend', 'projectionSource', 'onNhlRoster', 'eligiblePositions');
+          AND column_name NOT IN ('id', 'playerId', 'teamAbbrevs', 'positionCode', 'projectedGames', 'fullName', 'age', 'productionTrend', 'peripheralTrend', 'projectionSource', 'onNhlRoster', 'eligiblePositions');
     """)
     result = conn.execute(query)
     stats = [row[0] for row in result]
