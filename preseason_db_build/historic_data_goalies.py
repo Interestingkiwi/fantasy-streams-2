@@ -29,6 +29,14 @@ def generate_rolling_seasons(num_years=5):
         seasons.append(f"{start_year}{end_year}")
     return seasons
 
+# Paging is only stable if the server has a total order to page through. With no
+# sort the API returns ties in whatever order it pleases *per request*, so pages
+# overlap and, for every row served twice, one is never served at all. Sorting on
+# playerId - unique, so no ties are left to break - makes a run reproducible.
+# Same failure the game-results scraper hit; see CLAUDE.md.
+PAGE_SORT = '[{"property":"playerId","direction":"ASC"}]'
+
+
 def fetch_nhl_goalie_report(report_type, seasons):
     """
     Fetches a specific stat report from the NHL API for multiple seasons.
@@ -41,6 +49,7 @@ def fetch_nhl_goalie_report(report_type, seasons):
         start = 0
         limit = 100
         all_players = []
+        reported_total = None
 
         while True:
             params = {
@@ -48,6 +57,7 @@ def fetch_nhl_goalie_report(report_type, seasons):
                 "isGame": "false",
                 "start": start,
                 "limit": limit,
+                "sort": PAGE_SORT,
                 "factCayenneExp": "gamesPlayed>=1",
                 "cayenneExp": f"gameTypeId=2 and seasonId<={season} and seasonId>={season}"
             }
@@ -59,6 +69,7 @@ def fetch_nhl_goalie_report(report_type, seasons):
 
             data = response.json()
             players = data.get('data', [])
+            reported_total = data.get('total', reported_total)
 
             if not players:
                 break
@@ -70,6 +81,14 @@ def fetch_nhl_goalie_report(report_type, seasons):
         if all_players:
             df = pd.DataFrame(all_players)
             df['seasonId'] = season
+
+            # The count the API says it holds, against what actually arrived
+            # distinctly. Silence here is the whole point of the sort above.
+            distinct = df['playerId'].nunique()
+            if reported_total is not None and distinct != reported_total:
+                print(f"    [WARN] goalie '{report_type}' {season}: {distinct} distinct "
+                      f"goalies but the API reports {reported_total}. Paging lost rows.")
+
             all_seasons_df = pd.concat([all_seasons_df, df], ignore_index=True)
 
     return all_seasons_df
@@ -83,8 +102,21 @@ print(f"Target Seasons: {seasons_to_pull}\n")
 print("--- FETCHING GOALIE SUMMARY STATS ---")
 master_df = fetch_nhl_goalie_report("summary", seasons_to_pull)
 
+# Goalie rates are not aged - see aging.py for why the measurement comes back
+# empty - but the birthdates are what that measurement is made against, and
+# they cost one extra paged report to collect alongside the summary.
+print("\n--- FETCHING GOALIE BIOS (Birthdates) ---")
+df_bios = fetch_nhl_goalie_report("bios", seasons_to_pull)
+# Keyed on the player, not on player-and-season: a birthdate does not change,
+# and the bios report drops the odd goalie from the odd season.
+if not df_bios.empty and 'birthDate' in df_bios.columns:
+    known = df_bios.dropna(subset=['birthDate']).drop_duplicates(subset=['playerId'])
+    master_df['birthDate'] = pd.to_datetime(
+        master_df['playerId'].map(dict(zip(known['playerId'], known['birthDate']))),
+        errors='coerce')
+
 columns_to_keep = [
-    'seasonId', 'playerId', 'lastName', 'goalieFullName',
+    'seasonId', 'playerId', 'lastName', 'goalieFullName', 'birthDate',
     'teamAbbrevs', 'gamesPlayed', 'gamesStarted', 'wins', 'losses',
     'otLosses', 'shotsAgainst', 'goalsAgainst', 'goalsAgainstAverage',
     'saves', 'savePct', 'shutouts', 'timeOnIce'
