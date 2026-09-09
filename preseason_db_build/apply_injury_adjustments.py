@@ -8,6 +8,7 @@ Updated - 9/6/2026
 
 import pandas as pd
 from db_config import engine
+from season_config import days_per_game, season_start_date
 from datetime import datetime
 from sqlalchemy import inspect
 import numpy as np
@@ -18,8 +19,14 @@ REQUIRED_TABLES = (
     "current_injuries",
 )
 
-#NHL Season start date (yyyy, m, d)
-SEASON_START_DATE = datetime(2026, 10, 8)
+# Opening night and the pace of play both come from the scraped schedule rather
+# than being written down here. Both constants that used to sit in this file had
+# gone stale against the 2026-27 season and they pulled in opposite directions:
+# the hardcoded 8 October was nine days after the real opener, so every absence
+# was measured from too late a start, while dividing the days missed by 2 assumed
+# a game every other day when 84 games over that calendar is one every 2.3.
+SEASON_START_DATE = pd.Timestamp(season_start_date())
+DAYS_PER_GAME = days_per_game()
 
 # Rate stats, not counting stats. Missing games does not change a goalie's save
 # percentage, and rounding one to a single decimal flattens the whole league
@@ -41,6 +48,8 @@ def get_return_date(details_str):
         return None
 
 print("--- APPLYING INJURY ADJUSTMENTS (VIA CROSSWALK) ---")
+print(f" -> Season opens {SEASON_START_DATE.date()}, one game every "
+      f"{DAYS_PER_GAME:.2f} days.")
 
 #0. Fail clearly if an earlier step didn't produce its table
 missing = [t for t in REQUIRED_TABLES if not inspect(engine).has_table(t)]
@@ -56,6 +65,26 @@ skaters = pd.read_sql("SELECT * FROM projected_skaters_baseline", con=engine)
 goalies = pd.read_sql("SELECT * FROM projected_goalies_baseline", con=engine)
 injuries = pd.read_sql("SELECT * FROM current_injuries", con=engine)
 
+#1b. Say how old the injury feed is.
+# A stale feed fails silently and convincingly: every player still gets a
+# projection, the ones with old injuries are still docked, and the only symptom
+# is that someone hurt last week looks healthy. That is very hard to spot on a
+# draft board and very easy to act on. Bedard was the real case - the feed was
+# two months old, his shoulder was reported the day before, and he ranked as a
+# fit 21-year-old.
+STALE_INJURY_DAYS = 7
+
+if 'injuryDate' in injuries.columns and not injuries.empty:
+    latest_report = pd.to_datetime(injuries['injuryDate'], errors='coerce', utc=True).max()
+    if pd.notna(latest_report):
+        age_days = (pd.Timestamp.now(tz='UTC') - latest_report).days
+        print(f" -> Injury feed's newest report is {age_days} day(s) old "
+              f"({latest_report.date()}), {len(injuries)} players listed.")
+        if age_days > STALE_INJURY_DAYS:
+            print(f"    [WARN] That is over {STALE_INJURY_DAYS} days stale. Anyone hurt "
+                  "since then is being projected healthy. Re-run scrape_injuries.py "
+                  "before trusting this board.")
+
 #2. Extract return dates
 injuries['cleanReturnDate'] = injuries['injuryDetails'].apply(get_return_date)
 injuries = injuries.dropna(subset=['cleanReturnDate'])
@@ -63,7 +92,7 @@ injuries['cleanReturnDate'] = pd.to_datetime(injuries['cleanReturnDate'])
 
 #3. Calculate Games Missed
 injuries['gamesMissed'] = (injuries['cleanReturnDate'] - SEASON_START_DATE).dt.days
-injuries['gamesMissed'] = (injuries['gamesMissed'] / 2).clip(lower=0).astype(int)
+injuries['gamesMissed'] = (injuries['gamesMissed'] / DAYS_PER_GAME).clip(lower=0).astype(int)
 
 valid_injuries = injuries.dropna(subset=['playerId'])
 
