@@ -49,6 +49,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `scrape_team_stats.py` | Scrapes every team's strength and home/road splits into `team_stats`; feeds `opponent_strength.py` |
 | `scrape_game_results.py` | Nightly per-game player results into `player_game_stats`; also backfills any historical range |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
+| `preseason_db_build/aging.py` | The age curve. Restates a past season as what it would be worth at the age being projected. See *Ageing* |
+| `preseason_db_build/derive_aging_curve.py` | Re-measures that curve from the historic tables. Not part of the pipeline — it produces constants, not rows |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
 | `templates/index.html` | Landing/login page |
@@ -431,6 +433,14 @@ own primary key, unique across any window.
 Both are the worst possible input to a calibration, because both look like
 success. Each has a regression test.
 
+*The preseason scrapers had the same paging bug.* `historic_data_skaters.py` and
+`historic_data_goalies.py` paged `stats/rest/en/{skater,goalie}/*` with no sort
+at all, so two identical runs returned 940 rows containing 931 and 928 distinct
+players — duplicates written to the table and, for each one, a player missing
+outright. They now sort on `playerId`, which is unique per season and so leaves
+no ties to break, and each season warns if the distinct count does not match the
+`total` the API reports. Runs are reproducible: 4,739 skater-seasons, twice.
+
 ### What the opponent will do (`manager_profiles.py`)
 
 Freezing an opponent's roster under-projects every one of them, by an amount
@@ -653,6 +663,14 @@ with light-night games (dates at or under `LIGHT_NIGHT_MAX_GAMES` — the
 comparison is inclusive, so an 8-game night counts) as a suffix. Week numbers
 are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
 
+**In the export that column becomes `10(3)`** — ten playoff games, three of them
+on light nights. The screen carries the light count in a smaller suffix and a
+tooltip; a spreadsheet cell has neither, and the light figure is half the reason
+to look at the column. It costs the cell its numeric sort, which is the trade.
+The column spec carries a `lightKey` that only `exportValue` reads (`kind:
+'playoff'`), and it falls back to the bare game count rather than writing
+`10(null)` if the light figure is ever missing.
+
 ## The projection pipeline (`preseason_db_build/`)
 
 `build_database.py` runs the steps in order via `subprocess`. Roughly:
@@ -661,7 +679,11 @@ are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
 1b. `scrape_nhl_schedule.py` — every team's regular season from `api-web.nhle.com`
    -> `nhl_schedule`. Runs early because the projection steps pace against its
    season length. Reads the season from the API rather than hardcoding dates.
-2. `historic_data_skaters.py` / `historic_data_goalies.py` — NHL API season stats
+2. `historic_data_skaters.py` / `historic_data_goalies.py` — NHL API season stats,
+   plus `birthDate` from the `bios` report so the projections can tell how old
+   each of those seasons was played at. Paged with an explicit `sort` — see
+   *Paging* below; without one the same run returned a different set of players
+   each time.
 3. `append_advanced_skaters.py` / `append_advanced_goalies.py` — MoneyPuck advanced stats
 4. `create_player_directory.py`
 5. `scrape_ep_rookies.py` (EliteProspects) / `enrich_ahl_stats.py` (HockeyTech feed)
@@ -669,10 +691,21 @@ are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
 7. `calculate_skater_projections.py` / `calculate_goalie_projections.py` —
    60/30/10 time-decay weighting of the last 3 seasons (per-game), paced to the
    season length from `season_config`, with production & peripheral trend labels;
-   40-game 3-yr minimum, 10-game per-season minimum. Goalie rates are regressed
+   40-game 3-yr minimum, 10-game per-season minimum. Each skater season is first
+   restated at next season's age — see *Ageing* below. Goalie rates are regressed
    toward the league mean by sample size (`REGRESSION_GAMES`), which stops a
    40-game backup out-projecting established starters on rate.
-8. `apply_injury_adjustments.py` — final downward adjustments -> `final_projections`
+8. `apply_injury_adjustments.py` — final downward adjustments -> `final_projections`.
+   Opening night and the pace of play come from `season_config` (`season_start_date()`,
+   `days_per_game()`), not from constants in the file — both hardcoded values had gone
+   stale against 2026-27 and pulled opposite ways: 8 October was nine days after the
+   real opener, while dividing days-missed by 2 assumed a game every other day when 84
+   games over that calendar is one every 2.30. **It also prints how old the injury feed
+   is and warns past a week** — a stale feed fails silently and convincingly, since
+   everyone still gets a projection and the only symptom is that a player hurt last week
+   looks healthy. Bedard was the real case: the feed was two months old, his shoulder was
+   reported the day before, and he ranked as a fit 21-year-old. Re-run
+   `scrape_injuries.py` (step 6) before trusting a board near a draft.
 9. `apply_rookie_projections.py` — imported rookies the engine can't model
 10. `sync_current_rosters.py` — overwrites `teamAbbrevs` in `final_projections` and
    `player_directory` with each player's current NHL team (offseason trades / signings);
@@ -690,6 +723,83 @@ are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
 
 External data sources: `api.nhle.com`, `api-web.nhle.com`, `moneypuck.com`,
 `eliteprospects.com`, `lscluster.hockeytech.com`, `site.api.espn.com`.
+
+### Ageing (`aging.py`)
+
+The 60/30/10 blend used to treat three seasons as interchangeable, which assumes
+a player is the same player at 38 as he was at 36. So it leant a fading veteran
+up and a rising kid down, hardest on the seasons furthest from the one being
+projected. Ovechkin was the tell: his age-39 record chase carried 30% weight at
+face value and put a 41-year-old at 72 points and rank 53, against an ADP near 100.
+
+Each historical season is now restated as what it would be worth **at next
+season's age** before it is weighted. It is a re-basing, not a haircut — the same
+curve moves a 20-year-old's older seasons *up*, and leaves a 26-year-old's alone.
+
+The curve is measured off `historic_skaters_baseline` by `derive_aging_curve.py`
+— the delta method, each player against himself across consecutive seasons,
+weighted by the harmonic mean of the two game counts. Over 2,388 pairs the
+year-over-year scoring ratio is a straight line in log-age from 24 to 38: ~5.5%
+lost a year at 30, 10% at 35, 14% at 40. **Peripherals decline about half as
+fast** (2% at 30, 7% at 40) and get their own curve — hits and blocks are usage,
+not burst, and usage survives. Growth before 24 does not fit that line and is
+read off the measurements instead (~11% a year at 20-21).
+
+**Only half the growth is credited (`GROWTH_CONFIDENCE = 0.5`); decline is
+applied in full.** This is the one number in `aging.py` that is a judgement call
+rather than a measurement, and it is set that way on purpose — at full strength
+the curve moved the median 19-year-old up 118 ranks, which is a bigger claim than
+the evidence behind it. Two things were checked first, and only one supports
+damping: growth *is* mildly right-skewed (median/pooled 0.951 at ages 19-23
+against 0.970 at 26-32, so the pooled ratio is pulled up by breakouts), but
+growth is **not** more variable than decline (sd of the year-over-year point
+ratio is 0.417 at 19-23, 0.411 at 26-32, 0.386 at 34-39 — flat), which is the
+argument that would have justified shrinking it harder and does not survive
+measurement. The rest is deliberate conservatism about the thinnest part of the
+model: the growth ratios rest on 5-191 pairs against ~200 a year through the
+decline, they compound hardest over the seasons furthest back, and 24 of the
+players they lift have only one NHL season to lift.
+
+Damping deliberately breaks the curve's symmetry — `age_factor(30,34) *
+age_factor(34,30)` is no longer 1 — because crediting a young player up is a
+weaker claim than marking an old one down. `test_aging.py` pins that, and pins
+the seam at 0.0 and 1.0 so the dial keeps working either way.
+
+Three things worth knowing before touching it:
+
+- **`plusMinus` is never scaled.** It is signed, so multiplying a negative one by
+  0.85 would read as the player improving. It is the one projected stat with no
+  curve, and `test_aging.py` fails if that list drifts.
+- **The tail is extrapolated on purpose.** Past 35 the measured decline flattens,
+  but so does the sample: year-over-year survival falls from ~85% to 56-68%, so
+  what is left is the players who held up. The fitted line is carried through the
+  tail rather than the n=5 buckets being believed.
+- **Games played carries no age penalty.** Among skaters who were regulars, mean
+  games the following season does not fall with age — it sits between 63 and 70
+  from 21 through 38, because the old players still in the league are the durable
+  ones. There is no effect in the data to apply, and `projectedGames` already
+  reads durability off each player's own history.
+
+**Goalies are not aged.** The same measurement on `historic_goalies_baseline`
+returns a save percentage falling ~4 points a year at *every* age from 24 to 36 —
+that is the league-wide save percentage decline over these seasons, not ageing,
+and 230 pairs cannot separate the two. Where age reaches a goalie is his
+workload, which already comes from `goalie_gp_overrides.csv`. Both projection
+tables still carry an `age` column, so `final_projections` is uniform and the
+adjustment is auditable; the ~39 imported rookies have no NHL bios row and so no
+age, and are projected unadjusted.
+
+The curve is **not re-derived at build time**. `derive_aging_curve.py` prints
+coefficients to copy into `aging.py` by hand — a curve that quietly moved every
+time a season landed would make two runs of the same projection incomparable, and
+the tail is thin enough to deserve a person looking at it.
+
+**League total.** Re-basing takes ~4% of counting stats out of the projected
+pool, because the pool is older than peak age on average. That is real — the
+production goes to players with no three-year history, who are not in this table
+— and it does not touch the ranking, which is relative. Skater totals move and
+goalie totals do not, which is the one place the two sides shift against each
+other.
 
 ### Season length
 
@@ -752,6 +862,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
+| `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
 
