@@ -1198,8 +1198,12 @@
                 }
 
                 if (cfg.playoffAvg > 0) {
+                    // `lightKey` is read only by the export, which folds the light
+                    // nights into the cell as "7(3)" - the screen has a suffix and a
+                    // tooltip to carry them, a spreadsheet cell has neither.
                     columns.push({ key: 'playoffGames', label: 'Playoff',
-                                   align: 'text-right text-sky-400', kind: 'number' });
+                                   align: 'text-right text-sky-400', kind: 'playoff',
+                                   lightKey: 'playoffLightNights' });
                 }
 
                 columns.push({ key: 'productionTrend', label: 'Prod Trend', align: 'text-right', kind: 'text' });
@@ -1630,6 +1634,20 @@
 
                 const raw = player[column.key];
                 if (column.kind === 'text') return raw === null || raw === undefined ? '' : String(raw);
+
+                // "7(3)" - seven playoff games, three of them on light nights. It
+                // costs the cell its numeric sort, which is the trade for carrying
+                // both numbers: the board says "7 3L" in a suffix the sheet has
+                // nowhere to put, and the light count is half the reason to look at
+                // the column. Falls back to the bare game count if the light figure
+                // is missing, rather than exporting "7(null)".
+                if (column.kind === 'playoff') {
+                    if (raw === null || raw === undefined) return null;
+                    const light = player[column.lightKey];
+                    return (light === null || light === undefined)
+                        ? Number(raw)
+                        : `${raw}(${light})`;
+                }
 
                 // Numbers stay numbers so the sheet sorts and charts as one.
                 // An absent projection is a zero in a category column, exactly
