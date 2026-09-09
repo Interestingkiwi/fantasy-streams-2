@@ -31,6 +31,8 @@
 
                   <select id="pos-filter" class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
                       <option value="">All Positions</option>
+                      <option value="SKATERS">Skaters Only (no G)</option>
+                      <option value="FWD">Forwards (C/LW/RW)</option>
                       <option value="C">Center (C)</option>
                       <option value="LW">Left Wing (LW)</option>
                       <option value="RW">Right Wing (RW)</option>
@@ -100,8 +102,29 @@
                   <button id="btn-sleeper" class="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Sleeper</button>
                   <button id="btn-dnd" class="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">DND</button>
                   <button id="btn-clear-tag" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Clear Tag</button>
+                  <button id="btn-create-list" class="bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                          title="Snapshot the list exactly as it is filtered and sorted right now, as its own tab">Create List</button>
                   <button id="btn-export" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export List</button>
               </div>
+            </section>
+
+            <!-- ===== List tabs ===== -->
+            <!-- The main board plus any saved snapshots. A snapshot is frozen
+                 rows, not a saved filter, so it keeps its columns and its heat
+                 scale even after the settings behind it change. -->
+            <section class="bg-gray-800 p-3 rounded-lg shadow-xl border border-gray-700 flex flex-col gap-3">
+                <div id="list-tabs" class="flex flex-wrap items-center gap-2"></div>
+
+                <div id="list-toolbar" class="flex flex-wrap items-center gap-3 border-t border-gray-700 pt-3" style="display: none;">
+                    <label for="list-name-input" class="text-sm font-medium text-gray-400">List name</label>
+                    <input type="text" id="list-name-input" maxlength="40"
+                           class="form-input p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm w-full md:w-64">
+                    <span id="list-meta" class="text-xs text-gray-500"></span>
+                    <div class="flex gap-2 ml-auto">
+                        <button id="btn-export-list" class="bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export This List</button>
+                        <button id="btn-delete-list" class="bg-red-800 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">Delete List</button>
+                    </div>
+                </div>
             </section>
 
           <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
@@ -338,6 +361,14 @@
             let heatmapOn = localStorage.getItem('fs_heatmap') === '1';
             let statRanges = {};
             let filteredData = [];
+
+            // --- Saved lists ---
+            // Capped because every list is a frozen copy of its rows in
+            // localStorage, and the quota is the only thing standing between a
+            // dozen 900-player snapshots and a page that cannot save anything.
+            const MAX_LISTS = 10;
+            let savedLists = readStoredLists();
+            let activeListId = null;   // null = the live board
 
             let currentPage = 1;
             const itemsPerPage = 50;
@@ -703,27 +734,70 @@
                 });
             }
 
-            // Green above the mean, red below, opacity scaled by how far. Kept
-            // translucent so the text stays readable on the dark theme.
-            function heatStyle(stat, value) {
-                if (!heatmapOn) return '';
-                const range = statRanges[stat];
-                if (!range || value === null || value === undefined) return '';
+            // --- Colours ---
+            // Every shaded cell is composited down to one opaque colour rather
+            // than layered as a translucent wash. See heatStyle for why.
+            const SURFACE_RGB = [31, 41, 55];        // gray-800, the table's own background
+            const EXPORT_RGB = [255, 255, 255];      // a spreadsheet reads better on white
+            const HEAT_GOOD = [16, 185, 129];
+            const HEAT_BAD = [239, 68, 68];
+            const HEAT_MAX_ALPHA = 0.45;
+
+            const TAG_RGB = { fav: [16, 185, 129], sleeper: [234, 179, 8], dnd: [239, 68, 68] };
+            const TAG_LABELS = { fav: 'Favourite', sleeper: 'Sleeper', dnd: 'DND' };
+            const TAG_EXPORT_ALPHA = 0.22;
+
+            function blend(colour, base, alpha) {
+                const a = Math.max(0, Math.min(1, alpha));
+                return colour.map((c, i) => Math.round(base[i] + (c - base[i]) * a));
+            }
+
+            function toHex(rgb) {
+                return rgb.map(c => c.toString(16).padStart(2, '0').toUpperCase()).join('');
+            }
+
+            // Which way is "good" for this stat. A saved list carries the
+            // polarity it was built under, so flipping PIM later cannot repaint
+            // a snapshot that was taken before the change.
+            function viewPolarity(stat) {
+                const stored = viewConfig().polarity;
+                if (stored && stored[stat] !== undefined) return stored[stat];
+                return statPolarity(stat);
+            }
+
+            // Green above the mean, red below, strength scaled by how far.
+            // Returns the tint and how strongly it applies; the caller decides
+            // what to composite it onto.
+            function heatTint(stat, value) {
+                const range = (viewConfig().ranges || {})[stat];
+                if (!range || value === null || value === undefined) return null;
 
                 const number = Number(value);
-                if (!Number.isFinite(number)) return '';
+                if (!Number.isFinite(number)) return null;
 
                 const above = number >= range.mean;
                 const span = above ? range.max - range.mean : range.mean - range.min;
-                if (span <= 0) return '';
+                if (span <= 0) return null;
 
                 const strength = Math.min(1, Math.abs(number - range.mean) / span);
                 // Flipped for categories where less is better, or goals against
                 // would glow green precisely when it should not.
-                const good = above === (statPolarity(stat) > 0);
-                const rgb = good ? '16, 185, 129' : '239, 68, 68';
-                const alpha = (strength * 0.45).toFixed(3);
-                return ' style="background-color: rgba(' + rgb + ', ' + alpha + ')"';
+                const good = above === (viewPolarity(stat) > 0);
+                return { rgb: good ? HEAT_GOOD : HEAT_BAD, alpha: strength * HEAT_MAX_ALPHA };
+            }
+
+            // Opaque, and opaque even where there is no tint at all. A
+            // translucent cell let the Favourite/Sleeper/DND row colour show
+            // through and shift the shade, so two identical values read as
+            // different numbers depending on whether the player was tagged -
+            // which defeats the point of a scale computed over the whole pool.
+            // The tag still marks its row through the name columns and the
+            // coloured left edge.
+            function heatStyle(stat, value) {
+                if (!heatmapOn) return '';
+                const tint = heatTint(stat, value);
+                const rgb = tint ? blend(tint.rgb, SURFACE_RGB, tint.alpha) : SURFACE_RGB;
+                return ' style="background-color: rgb(' + rgb.join(', ') + ')"';
             }
 
             function renderHeatmapToggle() {
@@ -774,31 +848,83 @@
                             peripheralTrend: p.peripheralTrend || 'N/A'
                         }));
                         decorateScheduleColumns();
+                        renderListTabs();
                         applyFiltersAndSort();
                     }
                 } catch (error) { console.error("Fetch players failed:", error); }
             }
 
+            // --- The active view ---
+            // The board and every saved list render through the same code. A
+            // list is a frozen set of rows plus the column set and heat scale it
+            // was taken under, so this is the one place that decides which of
+            // the two is currently on screen.
+            function activeList() {
+                if (!activeListId) return null;
+                return savedLists.find(list => list.id === activeListId) || null;
+            }
+
+            function viewConfig() {
+                const list = activeList();
+                if (list) {
+                    return {
+                        isList: true,
+                        name: list.name,
+                        rows: list.rows,
+                        stats: list.selectedStats || [],
+                        leagueMode: list.leagueMode,
+                        rankMode: list.rankMode,
+                        hasReplacement: !!list.hasReplacementValues,
+                        lightAvg: list.seasonLightAverage || 0,
+                        playoffAvg: list.playoffAverage || 0,
+                        ranges: list.ranges || {},
+                        polarity: list.polarity || null,
+                    };
+                }
+                return {
+                    isList: false,
+                    name: 'Main Board',
+                    rows: playerData,
+                    stats: selectedStats,
+                    leagueMode: leagueMode,
+                    rankMode: rankMode,
+                    hasReplacement: hasReplacementValues,
+                    lightAvg: seasonLightAverage,
+                    playoffAvg: playoffAverage,
+                    ranges: statRanges,
+                    polarity: null,
+                };
+            }
+
+            // --- Position filter ---
+            // Yahoo's vocabulary, with the NHL primary-position fallback widened
+            // the same way `apply_position_eligibility` widens it.
+            const FORWARD_POSITIONS = ['C', 'LW', 'RW', 'F'];
+
+            function eligibleList(player) {
+                return String(player.eligiblePositions || '')
+                    .split(',')
+                    .map(pos => pos.trim().toUpperCase())
+                    .map(pos => (pos === 'L' ? 'LW' : pos === 'R' ? 'RW' : pos))
+                    .filter(Boolean);
+            }
+
+            // 'SKATERS' and 'FWD' are group filters, not positions: they ask a
+            // question about the whole eligibility list rather than looking for
+            // one entry in it. A player eligible anywhere as a skater is a
+            // skater, so a hypothetical G/D would survive Skaters Only - which
+            // is right, since he can fill a skater slot.
+            function matchesPosition(player, filter) {
+                if (!filter) return true;
+                const positions = eligibleList(player);
+                if (filter === 'SKATERS') return positions.some(pos => pos !== 'G');
+                if (filter === 'FWD') return positions.some(pos => FORWARD_POSITIONS.includes(pos));
+                return positions.includes(filter);
+            }
+
             // --- Core Engine ---
-            function applyFiltersAndSort() {
-                // The scale is the whole pool, not the filtered view, so a green
-                // cell means the same thing whatever is filtered in front of it.
-                computeStatRanges();
-
-                const searchInput = document.getElementById('search-input').value.toLowerCase();
-                const posFilter = document.getElementById('pos-filter').value;
-                const teamFilter = document.getElementById('team-filter').value;
-
-                // 1. Filter
-                filteredData = playerData.filter(p => {
-                    const matchSearch = p.fullName.toLowerCase().includes(searchInput);
-                    const matchPos = posFilter === '' || p.eligiblePositions.split(',').includes(posFilter);
-                    const matchTeam = teamFilter === '' || p.teamAbbrevs.includes(teamFilter);
-                    return matchSearch && matchPos && matchTeam;
-                });
-
-                // 2. Sort
-                filteredData.sort((a, b) => {
+            function sortRows(rows) {
+                return rows.slice().sort((a, b) => {
                     let valA = a[currentSortColumn];
                     let valB = b[currentSortColumn];
 
@@ -812,6 +938,28 @@
                     if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
                     return 0;
                 });
+            }
+
+            function applyFiltersAndSort() {
+                // The scale is the whole pool, not the filtered view, so a green
+                // cell means the same thing whatever is filtered in front of it.
+                // A saved list brings its own scale and must not be rescaled.
+                computeStatRanges();
+
+                const searchInput = document.getElementById('search-input').value.toLowerCase();
+                const posFilter = document.getElementById('pos-filter').value;
+                const teamFilter = document.getElementById('team-filter').value;
+
+                // 1. Filter
+                filteredData = viewConfig().rows.filter(p => {
+                    const matchSearch = String(p.fullName || '').toLowerCase().includes(searchInput);
+                    const matchPos = matchesPosition(p, posFilter);
+                    const matchTeam = teamFilter === '' || String(p.teamAbbrevs || '').includes(teamFilter);
+                    return matchSearch && matchPos && matchTeam;
+                });
+
+                // 2. Sort
+                filteredData = sortRows(filteredData);
 
                 buildTableHeaders();
                 buildTableBody();
@@ -1013,37 +1161,50 @@
                     headerRow.appendChild(th);
                 }
 
-                // Add the Rank column dynamically!
-                createHeader('Rank', 'overall_rank', 'text-center');
-                createHeader('Player', 'fullName');
-                createHeader('Team', 'teamAbbrevs');
-                createHeader('Pos', 'eligiblePositions');
+                columnSpecs().forEach(col => createHeader(col.label, col.key, col.align));
+            }
 
-                // Inject Fantasy Points per Game column if in points mode
-                if (leagueMode === 'points') {
-                    createHeader('FP/G', 'fantasy_points_per_game', 'text-right text-purple-400');
+            // The single description of what columns the current view has, so
+            // the header row, the export and any saved list cannot drift apart.
+            function columnSpecs() {
+                const cfg = viewConfig();
+                const columns = [
+                    { key: 'overall_rank', label: 'Rank', align: 'text-center', kind: 'rank' },
+                    { key: 'fullName', label: 'Player', align: 'text-left', kind: 'text' },
+                    { key: 'teamAbbrevs', label: 'Team', align: 'text-left', kind: 'text' },
+                    { key: 'eligiblePositions', label: 'Pos', align: 'text-left', kind: 'text' },
+                ];
+
+                // Fantasy points per game, points leagues only
+                if (cfg.leagueMode === 'points') {
+                    columns.push({ key: 'fantasy_points_per_game', label: 'FP/G',
+                                   align: 'text-right text-purple-400', kind: 'number' });
                 }
 
                 // Value over replacement, once the roster shape has been applied
-                if (hasReplacementValues && RANK_MODE_LABELS[rankMode]) {
-                    createHeader(RANK_MODE_LABELS[rankMode], 'value_over_replacement',
-                                 'text-right text-emerald-400');
+                if (cfg.hasReplacement && RANK_MODE_LABELS[cfg.rankMode]) {
+                    columns.push({ key: 'value_over_replacement', label: RANK_MODE_LABELS[cfg.rankMode],
+                                   align: 'text-right text-emerald-400', kind: 'number' });
                 }
 
-                selectedStats.forEach(stat => {
-                    createHeader(formatStatName(stat), stat, "text-right");
+                cfg.stats.forEach(stat => {
+                    columns.push({ key: stat, label: formatStatName(stat),
+                                   align: 'text-right', kind: 'stat' });
                 });
 
-                if (seasonLightAverage > 0) {
-                    createHeader('Light', 'lightNights', 'text-right text-amber-400');
+                if (cfg.lightAvg > 0) {
+                    columns.push({ key: 'lightNights', label: 'Light',
+                                   align: 'text-right text-amber-400', kind: 'number' });
                 }
 
-                if (playoffAverage > 0) {
-                    createHeader('Playoff', 'playoffGames', 'text-right text-sky-400');
+                if (cfg.playoffAvg > 0) {
+                    columns.push({ key: 'playoffGames', label: 'Playoff',
+                                   align: 'text-right text-sky-400', kind: 'number' });
                 }
 
-                createHeader('Prod Trend', 'productionTrend', "text-right");
-                createHeader('Periph Trend', 'peripheralTrend', "text-right");
+                columns.push({ key: 'productionTrend', label: 'Prod Trend', align: 'text-right', kind: 'text' });
+                columns.push({ key: 'peripheralTrend', label: 'Periph Trend', align: 'text-right', kind: 'text' });
+                return columns;
             }
 
             // Both schedule columns are sortable, so their values have to live on
@@ -1056,10 +1217,12 @@
 
                     const season = lightNightsFor(player);
                     player.lightNights = season ? season.lightNights : null;
+                    player.lightGames = season ? season.games : null;
                 });
             }
 
             function buildTableBody() {
+                const cfg = viewConfig();
                 const tableBody = document.getElementById('table-body');
                 tableBody.innerHTML = '';
 
@@ -1129,47 +1292,50 @@
                     `;
 
                     // Inject Fantasy Points per Game data if in points mode
-                    if (leagueMode === 'points') {
-                        let fpg = player.fantasy_points_per_game !== undefined ? player.fantasy_points_per_game : '-';
+                    if (cfg.leagueMode === 'points') {
+                        const raw = player.fantasy_points_per_game;
+                        const fpg = (raw === undefined || raw === null) ? '-' : raw;
                         rowHTML += `<td class="p-4 text-right font-bold text-purple-400">${fpg}</td>`;
                     }
 
-                    if (hasReplacementValues && RANK_MODE_LABELS[rankMode]) {
-                        const vorp = player.value_over_replacement !== undefined ? player.value_over_replacement : '-';
+                    if (cfg.hasReplacement && RANK_MODE_LABELS[cfg.rankMode]) {
+                        const raw = player.value_over_replacement;
+                        const vorp = (raw === undefined || raw === null) ? '-' : raw;
                         rowHTML += `<td class="p-4 text-right font-bold text-emerald-400">${vorp}</td>`;
                     }
 
-                    selectedStats.forEach(stat => {
+                    cfg.stats.forEach(stat => {
                         const raw = player[stat];
                         let val = (raw === undefined || raw === null) ? 0 : raw;
                         if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(1);
                         rowHTML += `<td class="p-4 text-right text-gray-300"${heatStyle(stat, raw)}>${val}</td>`;
                     });
 
-                    if (seasonLightAverage > 0) {
-                        const entry = lightNightsFor(player);
-                        if (entry) {
+                    // Read off the row rather than the live schedule lookup, so a
+                    // saved list keeps the numbers it was taken with even after
+                    // the playoff weeks behind it change.
+                    if (cfg.lightAvg > 0) {
+                        if (player.lightNights !== null && player.lightNights !== undefined) {
                             let tone = 'text-gray-300';
-                            if (entry.lightNights > seasonLightAverage) tone = 'text-emerald-400 font-bold';
-                            else if (entry.lightNights < seasonLightAverage) tone = 'text-red-400';
-                            rowHTML += `<td class="p-4 text-right ${tone}" title="${entry.lightNights} of `
-                                + `${entry.games} games fall on a light night `
-                                + `(league average ${seasonLightAverage})">${entry.lightNights}</td>`;
+                            if (player.lightNights > cfg.lightAvg) tone = 'text-emerald-400 font-bold';
+                            else if (player.lightNights < cfg.lightAvg) tone = 'text-red-400';
+                            rowHTML += `<td class="p-4 text-right ${tone}" title="${player.lightNights} of `
+                                + `${player.lightGames} games fall on a light night `
+                                + `(league average ${cfg.lightAvg})">${player.lightNights}</td>`;
                         } else {
                             rowHTML += `<td class="p-4 text-right text-gray-600">-</td>`;
                         }
                     }
 
-                    if (playoffAverage > 0) {
-                        const entry = playoffGamesFor(player);
-                        if (entry) {
+                    if (cfg.playoffAvg > 0) {
+                        if (player.playoffGames !== null && player.playoffGames !== undefined) {
                             let tone = 'text-gray-300';
-                            if (entry.games > playoffAverage) tone = 'text-emerald-400 font-bold';
-                            else if (entry.games < playoffAverage) tone = 'text-red-400';
-                            rowHTML += `<td class="p-4 text-right ${tone}" title="${entry.games} games, `
-                                + `${entry.lightNights} on light nights (league average ${playoffAverage} games)">`
-                                + `${entry.games}<span class="text-xs text-gray-500 font-normal ml-1">`
-                                + `${entry.lightNights}L</span></td>`;
+                            if (player.playoffGames > cfg.playoffAvg) tone = 'text-emerald-400 font-bold';
+                            else if (player.playoffGames < cfg.playoffAvg) tone = 'text-red-400';
+                            rowHTML += `<td class="p-4 text-right ${tone}" title="${player.playoffGames} games, `
+                                + `${player.playoffLightNights} on light nights (league average ${cfg.playoffAvg} games)">`
+                                + `${player.playoffGames}<span class="text-xs text-gray-500 font-normal ml-1">`
+                                + `${player.playoffLightNights}L</span></td>`;
                         } else {
                             rowHTML += `<td class="p-4 text-right text-gray-600">-</td>`;
                         }
@@ -1183,6 +1349,400 @@
                     tr.innerHTML = rowHTML;
                     tableBody.appendChild(tr);
                 });
+            }
+
+            // --- Saved lists ---
+            // A list is a snapshot, not a saved filter: the rows are frozen at
+            // the moment Create List is pressed, along with the columns and the
+            // heat scale behind them. That is the point - a Sleepers list or a
+            // peripherals list has to keep saying the same thing in round 12 as
+            // it did in round 1, whatever the board has been re-ranked into
+            // since. The live filter bar still narrows whichever tab is open,
+            // so a list stays searchable without being editable.
+            const SNAPSHOT_FIELDS = [
+                'playerId', 'fullName', 'teamAbbrevs', 'eligiblePositions', 'overall_rank',
+                'productionTrend', 'peripheralTrend', 'lightNights', 'lightGames',
+                'playoffGames', 'playoffLightNights', 'fantasy_points_per_game',
+                'value_over_replacement',
+            ];
+
+            // Stored as a field list plus one array of values per player, not as
+            // 900 objects that each repeat the same 20 key names. The keys were
+            // over half the bytes, and ten full-board snapshots as objects come
+            // to around 4 MB against a 5 MB quota - close enough to it that the
+            // tenth list would sometimes fail to save. Rows are rehydrated into
+            // objects here so everything downstream can treat a saved row and a
+            // live player row as the same shape.
+            function hydrateList(stored) {
+                const fields = Array.isArray(stored.fields) ? stored.fields : null;
+                if (!fields) return stored;   // written before the compact format
+
+                return Object.assign({}, stored, {
+                    rows: stored.rows.map(values => {
+                        const row = {};
+                        fields.forEach((field, index) => { row[field] = values[index]; });
+                        return row;
+                    }),
+                });
+            }
+
+            function serializeList(list) {
+                const fields = list.fields;
+                return Object.assign({}, list, {
+                    rows: list.rows.map(row => fields.map(field => {
+                        const value = row[field];
+                        return value === undefined ? null : value;
+                    })),
+                });
+            }
+
+            function readStoredLists() {
+                try {
+                    const raw = JSON.parse(localStorage.getItem('fs_lists'));
+                    if (!Array.isArray(raw)) return [];
+                    return raw.filter(list => list && list.id && Array.isArray(list.rows))
+                              .slice(0, MAX_LISTS)
+                              .map(hydrateList);
+                } catch (error) {
+                    return [];
+                }
+            }
+
+            // Snapshots are the one thing here big enough to fill the quota, so
+            // a failed write is reported rather than swallowed - silently losing
+            // a list the user believes is saved is the worst outcome.
+            function saveLists() {
+                try {
+                    localStorage.setItem('fs_lists', JSON.stringify(savedLists.map(serializeList)));
+                    return true;
+                } catch (error) {
+                    console.error('Saving lists failed:', error);
+                    window.alert('There is no room left in browser storage for another list. '
+                        + 'Delete one and try again.');
+                    return false;
+                }
+            }
+
+            // Only the columns the list actually shows. A full projection row
+            // carries far more than the board renders, and ten copies of it is
+            // the difference between comfortably inside the quota and over it.
+            function snapshotRow(player, fields) {
+                const row = {};
+                fields.forEach(field => {
+                    row[field] = player[field] === undefined ? null : player[field];
+                });
+                return row;
+            }
+
+            function describeFilters() {
+                const search = document.getElementById('search-input').value.trim();
+                const pos = document.getElementById('pos-filter');
+                const team = document.getElementById('team-filter');
+
+                const parts = [];
+                if (pos.value) parts.push(pos.options[pos.selectedIndex].text);
+                if (team.value) parts.push(team.value);
+                if (search) parts.push(`"${search}"`);
+                return parts.join(' · ');
+            }
+
+            function defaultListName() {
+                const described = describeFilters();
+                if (described) return described.slice(0, 40);
+                return `List ${savedLists.length + 1}`;
+            }
+
+            function createList() {
+                if (savedLists.length >= MAX_LISTS) {
+                    window.alert(`You already have ${MAX_LISTS} lists. Delete one to make another.`);
+                    return;
+                }
+
+                const cfg = viewConfig();
+                const stats = cfg.stats.slice();
+
+                const ranges = {};
+                const polarity = {};
+                stats.forEach(stat => {
+                    if (cfg.ranges[stat]) ranges[stat] = cfg.ranges[stat];
+                    polarity[stat] = viewPolarity(stat);
+                });
+
+                const fields = SNAPSHOT_FIELDS.concat(stats);
+                const list = {
+                    id: 'list-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+                    name: defaultListName(),
+                    createdAt: new Date().toISOString(),
+                    leagueMode: cfg.leagueMode,
+                    rankMode: cfg.rankMode,
+                    hasReplacementValues: cfg.hasReplacement,
+                    seasonLightAverage: cfg.lightAvg,
+                    playoffAverage: cfg.playoffAvg,
+                    selectedStats: stats,
+                    ranges: ranges,
+                    polarity: polarity,
+                    sort: { column: currentSortColumn, direction: currentSortDirection },
+                    filters: describeFilters(),
+                    fields: fields,
+                    rows: filteredData.map(player => snapshotRow(player, fields)),
+                };
+
+                savedLists.push(list);
+                if (!saveLists()) {
+                    savedLists.pop();
+                    return;
+                }
+
+                selectList(list.id);
+                const nameInput = document.getElementById('list-name-input');
+                if (nameInput) { nameInput.focus(); nameInput.select(); }
+            }
+
+            function selectList(id) {
+                activeListId = id;
+                currentPage = 1;
+
+                const list = activeList();
+                if (list && list.sort) {
+                    currentSortColumn = list.sort.column;
+                    currentSortDirection = list.sort.direction;
+                }
+
+                renderListTabs();
+                applyFiltersAndSort();
+            }
+
+            function renderListTabs() {
+                const bar = document.getElementById('list-tabs');
+                if (!bar) return;
+                bar.innerHTML = '';
+
+                function makeTab(id, label, count) {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    const active = activeListId === id;
+                    button.className = 'px-3 py-2 rounded-md text-sm font-medium transition-colors border '
+                        + (active ? 'bg-blue-600 text-white border-blue-500'
+                                  : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600');
+                    button.textContent = count ? `${label} (${count})` : label;
+                    button.setAttribute('aria-current', active ? 'page' : 'false');
+                    button.addEventListener('click', () => selectList(id));
+                    bar.appendChild(button);
+                }
+
+                makeTab(null, 'Main Board', playerData.length);
+                savedLists.forEach(list => makeTab(list.id, list.name || 'Untitled list', list.rows.length));
+
+                const createButton = document.getElementById('btn-create-list');
+                if (createButton) {
+                    const full = savedLists.length >= MAX_LISTS;
+                    createButton.disabled = full;
+                    createButton.title = full
+                        ? `You already have ${MAX_LISTS} lists - delete one to make another.`
+                        : 'Snapshot the list exactly as it is filtered and sorted right now, as its own tab';
+                    createButton.className = 'px-4 py-2 rounded-md text-sm font-medium transition-colors text-white '
+                        + (full ? 'bg-gray-700 opacity-60 cursor-not-allowed' : 'bg-sky-700 hover:bg-sky-600');
+                }
+
+                const toolbar = document.getElementById('list-toolbar');
+                const list = activeList();
+                if (toolbar) toolbar.style.display = list ? 'flex' : 'none';
+
+                if (list) {
+                    // Rewriting the box while it has focus would fight the caret
+                    const nameInput = document.getElementById('list-name-input');
+                    if (nameInput && document.activeElement !== nameInput) nameInput.value = list.name;
+
+                    const meta = document.getElementById('list-meta');
+                    if (meta) {
+                        const saved = new Date(list.createdAt);
+                        meta.textContent = `${list.rows.length} players`
+                            + (list.filters ? ` · ${list.filters}` : '')
+                            + (Number.isNaN(saved.getTime()) ? '' : ` · saved ${saved.toLocaleDateString()}`);
+                    }
+                }
+
+                const exportButton = document.getElementById('btn-export');
+                if (exportButton && !exportButton.disabled) {
+                    exportButton.textContent = list ? `Export "${list.name || 'Untitled list'}"` : 'Export List';
+                }
+            }
+
+            function initSavedLists() {
+                document.getElementById('btn-create-list').addEventListener('click', createList);
+
+                const nameInput = document.getElementById('list-name-input');
+                nameInput.addEventListener('input', (e) => {
+                    const list = activeList();
+                    if (!list) return;
+                    list.name = e.target.value.slice(0, 40);
+                    saveLists();
+                    renderListTabs();
+                });
+
+                nameInput.addEventListener('blur', () => {
+                    const list = activeList();
+                    if (!list) return;
+                    if (!list.name.trim()) {
+                        list.name = 'Untitled list';
+                        nameInput.value = list.name;
+                        saveLists();
+                    }
+                    renderListTabs();
+                });
+
+                document.getElementById('btn-delete-list').addEventListener('click', () => {
+                    const list = activeList();
+                    if (!list) return;
+                    if (!window.confirm(`Delete the list "${list.name}"? This cannot be undone.`)) return;
+                    savedLists = savedLists.filter(entry => entry.id !== list.id);
+                    saveLists();
+                    selectList(null);
+                });
+
+                document.getElementById('btn-export-list').addEventListener('click', exportActiveView);
+                document.getElementById('btn-export').addEventListener('click', exportActiveView);
+
+                renderListTabs();
+            }
+
+            // --- Export ---
+            // The whole active list, every row of it: the export deliberately
+            // ignores the search box, the position and team filters and the page
+            // you happen to be on, because a draft board printed to page 1 of 18
+            // is no use. Filters are how you build a *list*; the list is what
+            // gets exported.
+            //
+            // The workbook is built server-side by openpyxl - the cell fills are
+            // the point of the export and no browser-side writer worth adding
+            // does them - so the page sends the values and the colours it is
+            // already showing rather than a second derivation of them.
+            const EXPORT_TAG_COLUMN = { key: '__tag', label: 'Tag', align: 'text-left', kind: 'tag' };
+
+            function exportColumns() {
+                const columns = columnSpecs();
+                columns.splice(4, 0, EXPORT_TAG_COLUMN);   // straight after Pos
+                return columns;
+            }
+
+            function exportValue(player, column, tag) {
+                if (column.kind === 'tag') return TAG_LABELS[tag] || '';
+
+                const raw = player[column.key];
+                if (column.kind === 'text') return raw === null || raw === undefined ? '' : String(raw);
+
+                // Numbers stay numbers so the sheet sorts and charts as one.
+                // An absent projection is a zero in a category column, exactly
+                // as the board renders it - a goalie has no hits, and a blank
+                // there would read as missing data rather than none.
+                if (column.kind === 'stat' && (raw === null || raw === undefined)) return 0;
+                if (raw === null || raw === undefined) return null;
+
+                const number = Number(raw);
+                if (!Number.isFinite(number)) return String(raw);
+                // Category cells are shown to one decimal; ranks and VORP keep
+                // the precision the board shows them at.
+                if (column.kind === 'stat' && !Number.isInteger(number)) {
+                    return Math.round(number * 10) / 10;
+                }
+                return number;
+            }
+
+            // Excel has no translucency, so each fill is composited here the same
+            // way the screen composites it - over white, since a spreadsheet is
+            // read and printed on a light ground.
+            function exportFill(player, column, tagRgb) {
+                if (column.kind === 'stat' && heatmapOn) {
+                    const tint = heatTint(column.key, player[column.key]);
+                    return tint ? toHex(blend(tint.rgb, EXPORT_RGB, tint.alpha)) : null;
+                }
+                return tagRgb ? toHex(blend(tagRgb, EXPORT_RGB, TAG_EXPORT_ALPHA)) : null;
+            }
+
+            function buildExportPayload() {
+                const cfg = viewConfig();
+                const columns = exportColumns();
+                const rows = sortRows(cfg.rows);
+
+                return {
+                    name: cfg.name,
+                    columns: columns.map(column => ({ label: column.label, kind: column.kind })),
+                    rows: rows.map(player => {
+                        const tag = playerTags[player.playerId];
+                        const tagRgb = TAG_RGB[tag] || null;
+                        return {
+                            values: columns.map(column => exportValue(player, column, tag)),
+                            fills: columns.map(column => exportFill(player, column, tagRgb)),
+                        };
+                    }),
+                };
+            }
+
+            function exportFileName(name) {
+                // Local date, not UTC - an evening export should not be stamped
+                // with tomorrow's date.
+                const now = new Date();
+                const stamp = [now.getFullYear(),
+                               String(now.getMonth() + 1).padStart(2, '0'),
+                               String(now.getDate()).padStart(2, '0')].join('-');
+                const safe = String(name || 'draft-list')
+                    .replace(/[^A-Za-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '')
+                    .toLowerCase() || 'draft-list';
+                return `${safe}-${stamp}.xlsx`;
+            }
+
+            async function exportActiveView() {
+                const buttons = [document.getElementById('btn-export'),
+                                 document.getElementById('btn-export-list')].filter(Boolean);
+                const labels = buttons.map(button => button.textContent);
+                buttons.forEach((button, index) => {
+                    button.disabled = true;
+                    button.textContent = 'Exporting…';
+                    button.dataset.label = labels[index];
+                });
+
+                try {
+                    const payload = buildExportPayload();
+                    if (payload.rows.length === 0) {
+                        window.alert('There is nothing to export yet - the list is empty.');
+                        return;
+                    }
+
+                    const response = await fetch('/draft-prep/api/export', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        let message = `Export failed (${response.status}).`;
+                        try {
+                            const body = await response.json();
+                            if (body && body.message) message += ` ${body.message}`;
+                        } catch (error) { /* the body was the spreadsheet, or nothing */ }
+                        throw new Error(message);
+                    }
+
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = exportFileName(payload.name);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    console.error('Export failed:', error);
+                    window.alert(error.message || 'Export failed.');
+                } finally {
+                    buttons.forEach(button => {
+                        button.disabled = false;
+                        button.textContent = button.dataset.label;
+                    });
+                    renderListTabs();
+                }
             }
 
             // --- Event Listeners ---
@@ -1376,6 +1936,11 @@
                             currentSortDirection = 'asc';
                             currentPage = 1;
 
+                            // A re-rank is about the board, and saved lists are
+                            // frozen against it, so show what actually changed.
+                            activeListId = null;
+                            renderListTabs();
+
                             applyFiltersAndSort();
                         }
                     } catch (error) {
@@ -1491,6 +2056,7 @@
 
                 initRankMode();
                 initHeatmap();
+                initSavedLists();
                 initNumTeams();
                 initRosterSettings();
                 initPlayoffWeeks();

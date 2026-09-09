@@ -14,7 +14,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 - **DB:** PostgreSQL — local via `DATABASE_URL` in `.env`; production on Render.
   `render_backup.db` is an 850 MB SQLite snapshot (git-ignored); `export_postgres.py`
   bridges Postgres -> SQLite.
-- **Data/math:** pandas, numpy
+- **Data/math:** pandas, numpy; openpyxl for the draft-prep `.xlsx` export
 - **Scraping:** requests, BeautifulSoup4, lxml, cloudscraper
 - **Frontend:** Jinja templates + Tailwind (vendored `static/tailwind.js`), vanilla ES6,
   dark VS Code-style theme. No build step.
@@ -34,7 +34,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `schema.py` | Idempotent DDL for the admin + per-league tables; runs at startup (`SKIP_SCHEMA_INIT=1` to bypass) |
 | `jobs.py` / `worker.py` | `enqueue()` — RQ when `REDIS_URL` is set, background thread when it isn't |
 | `nightly_update.py` | The nightly NHL scrape: last night's results, then every team-strength window. Gated on the season having started; deployed as a Render cron |
-| `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST) |
+| `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST), `/api/export` (POST, returns an `.xlsx`) |
 | `routes/league_routes.py` | `/league/` League Database viewer + read-only APIs, all scoped to the session's league |
 | `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation — shared by draft-prep and Schedules |
@@ -52,7 +52,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
 | `templates/index.html` | Landing/login page |
-| `templates/pages/draft-prep.html` | ~1,375-line draft prep UI: League Settings modal, projection table, ranking controls |
+| `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
@@ -576,8 +576,8 @@ Balanced) sits on the page itself, in the filter bar, and re-ranks on click.
 
 State is `localStorage`, all keys prefixed `fs_`: `fs_selectedStats`, `fs_statWeights`,
 `fs_leagueMode`, `fs_pimPolarity`, `fs_numTeams`, `fs_rosterMode`, `fs_rosterSlots`,
-`fs_playoffWeeks`, `fs_rankMode`, `fs_heatmap` (plus `fantasy_streams_tags` for
-player tags).
+`fs_playoffWeeks`, `fs_rankMode`, `fs_heatmap`, `fs_lists` (plus `fantasy_streams_tags`
+for player tags).
 
 On load the page ranks against those saved settings by *replacing* the
 `/api/projections` call with `/api/rank-players`, never adding to it — the ranking maths
@@ -596,6 +596,49 @@ respected via `statPolarity()`, or goals against would glow green exactly when
 it should not. The scale is computed over the whole pool rather than the
 filtered view, so a green cell means the same thing whatever is filtered in
 front of it.
+
+**Heat cells are opaque, deliberately.** The Favourite/Sleeper/DND row tints are
+translucent Tailwind backgrounds, so while the heat cells were translucent too
+the tag colour showed through and shifted the shade — two players with the same
+number read as different values depending on whether one was tagged, which is
+exactly what a pool-wide scale exists to prevent. `heatStyle()` composites the
+tint down onto the table surface, and paints an untinted cell the surface colour
+rather than leaving it transparent. The tag still marks its row through the name
+columns and the coloured left edge.
+
+**Position filter** carries two group filters alongside the five positions:
+`SKATERS` (eligible somewhere other than G) and `FWD` (C/LW/RW).
+`matchesPosition()` asks a question about the whole eligibility list rather than
+looking for one entry in it, which is what separates them from `C` or `D`.
+
+### Saved lists and export
+
+**Create List** snapshots the current view — rows as filtered and sorted, plus
+the columns, the heat scale and the polarity behind them — as its own tab. A
+snapshot is frozen, not a saved filter: a sleepers or peripherals list has to
+keep saying the same thing in round 12 as it did in round 1, whatever the board
+has been re-ranked into since. Re-ranking therefore returns the view to the Main
+Board rather than leaving a stale-looking list on screen. The filter bar still
+narrows whichever tab is open, so a list stays searchable without being editable.
+
+Snapshot rows are the same shape as live player rows, so filtering, sorting,
+tagging and rendering are one code path for both; `viewConfig()` is the single
+place that decides which of the two is on screen. They are **stored as a field
+list plus one array per player**, not as objects repeating 20 key names each —
+the keys were over half the bytes, and ten full-board snapshots as objects came
+to ~4 MB against a 5 MB quota. Compact they are ~1.1 MB, which is what makes
+`MAX_LISTS = 10` safe. A failed write is reported, never swallowed.
+
+**Export List** (`/api/export`, openpyxl) always exports the whole active list —
+every row, filters and pagination ignored. Filters are how you build a list; the
+list is what gets exported. The page sends the values and the cell colours it is
+already showing rather than a description of the settings behind them: the heat
+scale, the tags and the polarity all live in `localStorage`, and re-deriving them
+server-side would be a second implementation of the same maths that could only
+drift from the first. So the route knows nothing about hockey — it turns a grid
+of values and `RRGGBB` fills into a workbook. Excel has no translucency, so the
+page composites each fill over **white** for the export where it composites over
+the dark surface for the screen.
 
 **Two schedule columns**, both display-only and neither touching the rankings.
 `Light` is always on: how many of the season's games the player's team plays on a

@@ -2,10 +2,17 @@
 Routes used by Draft Prep
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 9/7/2026
+Updated - 9/8/2026
 """
 
-from flask import Blueprint, render_template, jsonify, request
+import io
+import re
+
+from flask import Blueprint, render_template, jsonify, request, send_file
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+
 from db import engine, text
 from ranking_utils import calculate_player_ranks
 
@@ -125,6 +132,111 @@ def playoff_schedule():
             'max': max(counts) if counts else 0,
             'min': min(counts) if counts else 0,
         })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# --- Export ---------------------------------------------------------------
+# The page sends the values and the cell colours it is already showing rather
+# than a description of the settings behind them. The heatmap scale, the
+# Favourite/Sleeper/DND tags and the polarity of a category all live in the
+# browser (localStorage), and re-deriving them here would be a second
+# implementation of the same maths that could only ever drift from the first.
+# So this route's whole job is turning a grid of values and fills into a
+# workbook, and it is the only place that knows anything about xlsx.
+
+MAX_EXPORT_ROWS = 20000
+MAX_EXPORT_COLUMNS = 200
+
+# Excel rejects these in a sheet name, and caps the name at 31 characters
+INVALID_SHEET_CHARS = re.compile(r'[\[\]:*?/\\]')
+
+HEADER_FILL = PatternFill('solid', fgColor='1F2937')
+HEADER_FONT = Font(bold=True, color='FFFFFF')
+THIN_EDGE = Side(style='thin', color='D1D5DB')
+CELL_BORDER = Border(left=THIN_EDGE, right=THIN_EDGE, top=THIN_EDGE, bottom=THIN_EDGE)
+
+
+def _sheet_title(name):
+    cleaned = INVALID_SHEET_CHARS.sub(' ', str(name or '')).strip()
+    return cleaned[:31] or 'Draft List'
+
+
+def _hex_fill(value):
+    """A six-digit RRGGBB from the page, or None. Anything else is dropped."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lstrip('#').upper()
+    if len(candidate) != 6 or not all(c in '0123456789ABCDEF' for c in candidate):
+        return None
+    return PatternFill('solid', fgColor=candidate)
+
+
+@draft_bp.route('/api/export', methods=['POST'])
+def export_list():
+    """Builds an .xlsx of a draft list, colours and all, and returns it."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        columns = payload.get('columns') or []
+        rows = payload.get('rows') or []
+        name = payload.get('name') or 'Draft List'
+
+        if not columns:
+            return jsonify({'status': 'error', 'message': 'No columns to export.'}), 400
+        if not rows:
+            return jsonify({'status': 'error', 'message': 'No rows to export.'}), 400
+        if len(columns) > MAX_EXPORT_COLUMNS or len(rows) > MAX_EXPORT_ROWS:
+            return jsonify({'status': 'error', 'message': 'That list is too large to export.'}), 413
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = _sheet_title(name)
+
+        headers = [str(column.get('label', '')) for column in columns]
+        # Widths are grown as the rows are written, starting from the header
+        widths = [len(header) for header in headers]
+
+        sheet.append(headers)
+        for index in range(len(headers)):
+            cell = sheet.cell(row=1, column=index + 1)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = CELL_BORDER
+
+        for row_index, row in enumerate(rows, start=2):
+            values = (row or {}).get('values') or []
+            fills = (row or {}).get('fills') or []
+
+            for column_index in range(len(headers)):
+                value = values[column_index] if column_index < len(values) else None
+                cell = sheet.cell(row=row_index, column=column_index + 1, value=value)
+                cell.border = CELL_BORDER
+
+                fill = _hex_fill(fills[column_index] if column_index < len(fills) else None)
+                if fill is not None:
+                    cell.fill = fill
+
+                if value is not None:
+                    widths[column_index] = max(widths[column_index], len(str(value)))
+
+        for index, width in enumerate(widths, start=1):
+            sheet.column_dimensions[get_column_letter(index)].width = min(max(width + 2, 8), 40)
+
+        # The header stays put while scrolling, and filters/sorts on its own
+        sheet.freeze_panes = 'A2'
+        sheet.auto_filter.ref = f'A1:{get_column_letter(len(headers))}{len(rows) + 1}'
+
+        stream = io.BytesIO()
+        workbook.save(stream)
+        stream.seek(0)
+
+        return send_file(
+            stream,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'{_sheet_title(name)}.xlsx',
+        )
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
