@@ -51,6 +51,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/aging.py` | The age curve. Restates a past season as what it would be worth at the age being projected. See *Ageing* |
 | `preseason_db_build/derive_aging_curve.py` | Re-measures that curve from the historic tables. Not part of the pipeline — it produces constants, not rows |
+| `preseason_db_build/scrape_yahoo_adp.py` | Current-season ADP from Yahoo's public API into `player_adp`. Standalone, not a pipeline step — see *ADP* |
 | `preseason_db_build/db_config.py` | Pipeline-only SQLAlchemy `engine` from `DATABASE_URL` |
 | `preseason_db_build/season_config.py` | `season_game_count()` — season length read from `nhl_schedule` (84 from 2026-27) |
 | `templates/index.html` | Landing/login page |
@@ -586,7 +587,7 @@ Balanced) sits on the page itself, in the filter bar, and re-ranks on click.
 
 State is `localStorage`, all keys prefixed `fs_`: `fs_selectedStats`, `fs_statWeights`,
 `fs_leagueMode`, `fs_pimPolarity`, `fs_numTeams`, `fs_rosterMode`, `fs_rosterSlots`,
-`fs_playoffWeeks`, `fs_rankMode`, `fs_heatmap`, `fs_lists` (plus `fantasy_streams_tags`
+`fs_playoffWeeks`, `fs_rankMode`, `fs_heatmap`, `fs_hiddenColumns`, `fs_condenseGoalies`, `fs_lists` (plus `fantasy_streams_tags`
 for player tags).
 
 On load the page ranks against those saved settings by *replacing* the
@@ -649,6 +650,40 @@ drift from the first. So the route knows nothing about hockey — it turns a gri
 of values and `RRGGBB` fills into a workbook. Excel has no translucency, so the
 page composites each fill over **white** for the export where it composites over
 the dark surface for the screen.
+
+**Age, Proj GP and ADP** sit between Pos and the value columns. Age and
+projected games already existed on `final_projections`; ADP is joined on. All
+three are display-only.
+
+**Column toggles** (`fs_hiddenColumns`, `fs_condenseGoalies`) drop groups of
+columns: Trends, Age, GP, Schedule (Light + Playoff) and ADP. Pressed means
+hidden, which is why the pressed state is the muted one and every label starts
+with "Hide". They re-render rather than re-rank — hiding a column changes
+nothing about the maths, and a hidden column stops being the sort column so the
+board cannot be ordered by something invisible.
+
+**Condense Goalies** stacks the goalie categories onto the skater ones: the
+first goalie category shares a column with the first skater category, the second
+with the second. A league scoring G/A/P and W/GAA comes out three columns wide —
+Goals/Wins, Assists/GAA and Points, the last simply blank for a goalie. In the
+export that blank is an empty cell rather than a `0`, which would read as "zero
+hits" instead of "not applicable". Sorting a shared column has to mean one
+thing, so it sorts on the skater category and goalies fall to the bottom. It is
+a toggle because a heading naming two different stats is confusing to some
+readers and much narrower to print for others.
+
+**The header row is sticky.** It needs a real scroll container to stick to, and
+`overflow-x: auto` alone makes one of unbounded height — so the table scrolls
+inside a viewport-height box in both axes (`.table-scroll`), which also keeps
+the filter bar and pager on screen. The `th` cells carry their own background,
+because a sticky cell shows the rows through it otherwise.
+
+**One list describes the columns.** `columnSpecs()` returns each column's label,
+sort key, export kind *and* its `cell()` renderer, and the header, every table
+cell, the export and saved lists all read it. The body used to re-list the
+columns by hand in `buildTableBody()`, which meant adding a column meant editing
+two sequences that had to agree; a column can no longer exist in the header and
+be missing from the body.
 
 **Two schedule columns**, both display-only and neither touching the rankings.
 `Light` is always on: how many of the season's games the player's team plays on a
@@ -801,6 +836,49 @@ production goes to players with no three-year history, who are not in this table
 goalie totals do not, which is the one place the two sides shift against each
 other.
 
+### ADP (`scrape_yahoo_adp.py`)
+
+Where the market has a player, against where this board does. Written to
+`player_adp` and **left out of `final_projections` on purpose**: ADP is the one
+number here that keeps moving, since every mock and every real draft between now
+and yours changes it. As its own table it is refreshed by one script in about
+ten seconds, at any hour, without rebuilding a projection or re-running steps
+8-12. `draft_routes` LEFT JOINs it on at read time, and only when the table
+exists, so a database that has never run the scraper still serves a full board.
+
+**It is not a page scrape, despite appearances.** `/hockey/draftanalysis`
+renders client-side and paginates without touching the URL, so scraping the page
+would mean driving a browser and watching rows change. It does not have to: that
+page feeds off `pub-api-ro.fantasysports.yahoo.com`, Yahoo's *public read-only*
+fantasy API, which takes `start`, `count` and `sort` as ordinary parameters and
+answers plain `requests` with no auth, no crumb and no login. Confirmed by the
+resource timeline — the HTML carries no player data at all, for a browser or
+anything else.
+
+This is emphatically **not** the gated `pub-api-rw` API that Phase 2 is waiting
+on. It is read-only, anonymous, and is what the public page serves visitors
+with.
+
+- **Sorted by `average_pick`**, so it arrives best-pick-first and the players
+  nobody drafts collect at the end carrying `"-"` rather than a number. That
+  dash is the stopping signal: the first one means everything after it is
+  undrafted too. ~265 players have a real preseason ADP.
+- **The season is read from `/game/nhl`.** Yahoo keys each season with a game id
+  (477 is 2026-27); hardcoding it would quietly scrape last season a year from now.
+- **Yahoo uses its own player ids**, so every row is crosswalked onto the NHL
+  `playerId` by name, then team, then position. The position pass is not a
+  nicety: Vancouver carries two Elias Petterssons, a centre and a defenceman, and
+  name plus team cannot separate them. Matching is against `final_projections`
+  rather than `player_directory` — the directory is built at step 4, before the
+  rookies are added at step 9, so matching on it silently lost every prospect who
+  has an ADP and no NHL history.
+- **Unmatched rows are stored with a null `playerId` and listed at the end**, so
+  a miss is visible rather than absent. `player_utils.add_player_alias()` fixes a
+  genuine one.
+
+Copy it up on its own near a draft:
+`python transfer_to_render.py --tables player_adp --apply`.
+
 ### Season length
 
 The NHL moved to **84 games** from 2026-27. Nothing hardcodes that: `season_config.
@@ -862,6 +940,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
+| `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
 
 Adding a suite means adding its filename to `TESTS` in `run_all.py`.
