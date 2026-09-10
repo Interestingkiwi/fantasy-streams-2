@@ -6,10 +6,46 @@ Updated - 7/2/2026
 """
 
 import difflib
-import pandas as pd
+import re
+import unicodedata
+from collections import defaultdict
 from datetime import datetime
+
+import pandas as pd
 from sqlalchemy import text
+
 from db_config import engine
+
+
+def normalise(name):
+    """Lowercase, strip accents and punctuation so two sources line up."""
+    name = unicodedata.normalize("NFKD", str(name))
+    name = "".join(ch for ch in name if not unicodedata.combining(ch))
+    name = name.lower().replace(".", "").replace("'", "").replace("-", " ")
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def build_indexes(players):
+    """Name -> rows, and (surname, team) -> rows, for the two matching passes.
+
+    `players` is a frame with `fullName` and `teamAbbrevs`. Shared by every step
+    that has to line an outside source's names up against `player_directory` -
+    the eligibility CSV and the Yahoo ADP feed both do, and two copies of this
+    could only drift apart.
+    """
+    by_name = defaultdict(list)
+    by_surname_team = defaultdict(list)
+
+    for row in players.itertuples():
+        norm = normalise(row.fullName)
+        by_name[norm].append(row)
+
+        surname = norm.split(" ")[-1] if norm else ""
+        # teamAbbrevs can hold several teams for a player who moved mid-season
+        for team in str(row.teamAbbrevs).split(","):
+            by_surname_team[(surname, team.strip())].append(row)
+
+    return by_name, by_surname_team
 
 def log_match(source_name, target_name, player_id, match_type):
     """Logs only Fuzzy Matches and Failures."""

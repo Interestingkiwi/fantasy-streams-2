@@ -33,7 +33,13 @@ load_dotenv()
 
 # Everything /draft-prep/ reads. The rest of the projection tables are working
 # state for the pipeline and are not queried by the web app.
-DEFAULT_TABLES = ["final_projections", "nhl_schedule"]
+#
+# player_adp is the one that moves on its own schedule: it is rebuilt by
+# scrape_yahoo_adp.py rather than by the pipeline, so near a draft it is worth
+# copying up on its own -
+#     python transfer_to_render.py --tables player_adp --apply
+# which leaves the projections on the target untouched.
+DEFAULT_TABLES = ["final_projections", "nhl_schedule", "player_adp"]
 
 # Recreated after the copy, since replacing a table drops its indexes
 INDEXES = {

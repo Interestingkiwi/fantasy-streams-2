@@ -35,6 +35,7 @@ TESTS = [
     "test_game_results.py",
     "test_nightly.py",
     "test_aging.py",
+    "test_adp.py",
 ]
 
 

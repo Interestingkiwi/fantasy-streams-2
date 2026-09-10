@@ -22,13 +22,12 @@ Updated - 9/6/2026
 
 import os
 import re
-import unicodedata
-from collections import defaultdict
 
 import pandas as pd
 from sqlalchemy import text
 
 from db_config import engine
+from player_utils import build_indexes, normalise
 
 ELIGIBILITY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "position_eligibility.csv")
@@ -41,14 +40,6 @@ TEAM_FIX = {"L.A": "LAK", "N.J": "NJD", "S.J": "SJS", "T.B": "TBL"}
 PRIMARY_TO_YAHOO = {"C": "C", "L": "LW", "R": "RW", "D": "D", "G": "G"}
 
 VALID_POSITIONS = ["C", "LW", "RW", "D", "G"]
-
-
-def normalise(name):
-    """Lowercase, strip accents and punctuation so the two sources line up."""
-    name = unicodedata.normalize("NFKD", str(name))
-    name = "".join(ch for ch in name if not unicodedata.combining(ch))
-    name = name.lower().replace(".", "").replace("'", "").replace("-", " ")
-    return re.sub(r"\s+", " ", name).strip()
 
 
 def split_disambiguator(name):
@@ -85,23 +76,6 @@ def ensure_column(conn):
     if not exists:
         print(' -> Adding "eligiblePositions" column.')
         conn.execute(text(f'ALTER TABLE {TABLE} ADD COLUMN "eligiblePositions" TEXT'))
-
-
-def build_indexes(players):
-    """Name -> rows, and (surname, team) -> rows, for the two matching passes."""
-    by_name = defaultdict(list)
-    by_surname_team = defaultdict(list)
-
-    for row in players.itertuples():
-        norm = normalise(row.fullName)
-        by_name[norm].append(row)
-
-        surname = norm.split(" ")[-1] if norm else ""
-        # teamAbbrevs can hold several teams for a player who moved mid-season
-        for team in str(row.teamAbbrevs).split(","):
-            by_surname_team[(surname, team.strip())].append(row)
-
-    return by_name, by_surname_team
 
 
 def resolve(name, team, positions, by_name, by_surname_team):
