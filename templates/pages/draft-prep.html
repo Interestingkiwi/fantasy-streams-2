@@ -97,6 +97,27 @@
                   </div>
               </div>
 
+              <!-- Column toggles. The board is at its widest in a deep category
+                   league, and on draft day most of these columns are reference
+                   material rather than something you act on - so each group can
+                   be dropped. Pressed means hidden. -->
+              <div class="flex flex-wrap items-center gap-2 w-full pt-1"
+                   role="group" aria-label="Hide columns">
+                  <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Columns:</span>
+                  <button type="button" class="column-toggle" data-hide="trends" aria-pressed="false"
+                          title="Hide the Prod Trend and Periph Trend columns">Hide Trends</button>
+                  <button type="button" class="column-toggle" data-hide="age" aria-pressed="false"
+                          title="Hide the Age column">Hide Age</button>
+                  <button type="button" class="column-toggle" data-hide="gp" aria-pressed="false"
+                          title="Hide the projected games column">Hide GP</button>
+                  <button type="button" class="column-toggle" data-hide="schedule" aria-pressed="false"
+                          title="Hide the Light and Playoff schedule columns">Hide Schedule</button>
+                  <button type="button" class="column-toggle" data-hide="adp" aria-pressed="false"
+                          title="Hide Yahoo's average draft position">Hide ADP</button>
+                  <button type="button" class="column-toggle" data-condense="1" aria-pressed="false"
+                          title="Stack the goalie categories onto the skater ones so they share columns - the first goalie category sits with the first skater category, and so on">Condense Goalies</button>
+              </div>
+
               <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
                   <button id="btn-fav" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Favourite</button>
                   <button id="btn-sleeper" class="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Sleeper</button>
@@ -136,9 +157,9 @@
             </div>
 
         <section class="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden flex-grow">
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-left border-collapse">
-                    <thead class="bg-gray-900 border-b border-gray-700">
+                    <thead class="table-sticky-head bg-gray-900 border-b border-gray-700">
                       <tr id="table-head-row">
                           <th class="p-4 w-12 text-center">
                               <input type="checkbox" id="select-all" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
@@ -351,6 +372,19 @@
             let rankMode = RANK_MODES.includes(localStorage.getItem('fs_rankMode'))
                 ? localStorage.getItem('fs_rankMode')
                 : 'roster';
+
+            // Which groups of columns are hidden, and whether the goalie
+            // categories are stacked onto the skater ones. Both are per-browser
+            // preferences about *display* only - they never touch the ranking,
+            // which is why they re-render rather than re-rank.
+            const COLUMN_GROUPS = ['trends', 'age', 'gp', 'schedule', 'adp'];
+            let hiddenColumns = new Set(readStoredHiddenColumns());
+            let condenseGoalies = localStorage.getItem('fs_condenseGoalies') === '1';
+
+            // Which categories only goalies have, straight from the API that
+            // already works it out by counting non-null values per position.
+            let goalieStatKeys = [];
+
             let playerData = [];
             let hasReplacementValues = false;
             let playoffSchedule = {};
@@ -821,12 +855,62 @@
                 renderHeatmapToggle();
             }
 
+            // --- Column toggles ---
+            // Display only: hiding a column changes nothing about the ranking,
+            // so these re-render rather than re-rank. Condensing is in the same
+            // group because it is the same kind of choice - how wide the board
+            // is, not what it says.
+            function readStoredHiddenColumns() {
+                try {
+                    const raw = JSON.parse(localStorage.getItem('fs_hiddenColumns'));
+                    return Array.isArray(raw) ? raw.filter(g => COLUMN_GROUPS.includes(g)) : [];
+                } catch (error) {
+                    return [];
+                }
+            }
+
+            function renderColumnToggles() {
+                document.querySelectorAll('.column-toggle').forEach(btn => {
+                    const pressed = btn.dataset.condense
+                        ? condenseGoalies
+                        : hiddenColumns.has(btn.dataset.hide);
+                    btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+                });
+            }
+
+            function initColumnToggles() {
+                document.querySelectorAll('.column-toggle').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (btn.dataset.condense) {
+                            condenseGoalies = !condenseGoalies;
+                            localStorage.setItem('fs_condenseGoalies', condenseGoalies ? '1' : '0');
+                        } else {
+                            const group = btn.dataset.hide;
+                            if (hiddenColumns.has(group)) hiddenColumns.delete(group);
+                            else hiddenColumns.add(group);
+                            localStorage.setItem('fs_hiddenColumns',
+                                                 JSON.stringify([...hiddenColumns]));
+                        }
+
+                        renderColumnToggles();
+                        // A hidden column must not keep sorting the board
+                        if (!columnSpecs().some(c => c.key === currentSortColumn)) {
+                            currentSortColumn = null;
+                        }
+                        buildTableHeaders();
+                        applyFiltersAndSort();
+                    });
+                });
+                renderColumnToggles();
+            }
+
             // --- API Calls ---
             async function fetchAvailableStats() {
                 try {
                     const response = await fetch('/draft-prep/api/available-stats');
                     const data = await response.json();
                     if (data.status === 'success') {
+                        goalieStatKeys = data.goalie_stats || [];
                         buildToggles(data.skater_stats, data.goalie_stats);
                         buildTableHeaders();
                     }
@@ -1164,50 +1248,185 @@
                 columnSpecs().forEach(col => createHeader(col.label, col.key, col.align));
             }
 
-            // The single description of what columns the current view has, so
-            // the header row, the export and any saved list cannot drift apart.
+            // --- Columns ---
+            // The single description of what columns the current view has. The
+            // header row, every table cell, the export and any saved list all
+            // read this one list, and each column carries its own `cell()`, so
+            // a column cannot exist in the header and be missing from the body.
+            // Adding one here is the whole change.
+
+            function isGoalieStat(stat) {
+                return goalieStatKeys.includes(stat);
+            }
+
+            function statCell(stat, player, resolvedKey) {
+                const key = resolvedKey || stat;
+                const raw = player[key];
+                let val = (raw === undefined || raw === null) ? 0 : raw;
+                if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(1);
+                return `<td class="p-4 text-right text-gray-300"${heatStyle(key, raw)}>${val}</td>`;
+            }
+
+            // Goalie categories stacked onto the skater ones: the first goalie
+            // category shares a column with the first skater category, the
+            // second with the second, and so on. A league scoring G/A/P and
+            // W/GAA comes out three columns wide - Goals/Wins, Assists/GAA and
+            // Points, the last of which is simply blank for a goalie. It is
+            // narrower to read and much narrower to print, at the cost of a
+            // column heading naming two different things; hence the toggle.
+            function condensedStatColumns(stats) {
+                const skater = stats.filter(s => !isGoalieStat(s));
+                const goalie = stats.filter(isGoalieStat);
+                const columns = [];
+
+                for (let i = 0; i < Math.max(skater.length, goalie.length); i++) {
+                    const s = skater[i];
+                    const g = goalie[i];
+                    const label = [s, g].filter(Boolean).map(formatStatName).join(' / ');
+
+                    columns.push({
+                        // Sorting a shared column has to mean one thing, so it
+                        // sorts on the skater category and the goalies fall to
+                        // the bottom. Where a pair is goalie-only, that is what
+                        // it sorts on instead.
+                        key: s || g,
+                        label,
+                        align: 'text-right',
+                        kind: 'stat',
+                        skaterKey: s || null,
+                        goalieKey: g || null,
+                        resolve: player => (player.positionCode === 'G' ? g : s) || null,
+                        cell(player) {
+                            const key = this.resolve(player);
+                            if (!key) return `<td class="p-4 text-right text-gray-600"></td>`;
+                            return statCell(key, player, key);
+                        },
+                    });
+                }
+                return columns;
+            }
+
             function columnSpecs() {
                 const cfg = viewConfig();
+                const hide = group => hiddenColumns.has(group);
+
                 const columns = [
-                    { key: 'overall_rank', label: 'Rank', align: 'text-center', kind: 'rank' },
-                    { key: 'fullName', label: 'Player', align: 'text-left', kind: 'text' },
-                    { key: 'teamAbbrevs', label: 'Team', align: 'text-left', kind: 'text' },
-                    { key: 'eligiblePositions', label: 'Pos', align: 'text-left', kind: 'text' },
+                    { key: 'overall_rank', label: 'Rank', align: 'text-center', kind: 'rank',
+                      cell: p => `<td class="p-4 text-center font-bold text-blue-400">${p.overall_rank || '-'}</td>` },
+                    { key: 'fullName', label: 'Player', align: 'text-left', kind: 'text',
+                      cell: p => `<td class="p-4 font-medium text-white">${p.fullName}</td>` },
+                    { key: 'teamAbbrevs', label: 'Team', align: 'text-left', kind: 'text',
+                      cell: p => `<td class="p-4 text-gray-400">${p.teamAbbrevs}</td>` },
+                    { key: 'eligiblePositions', label: 'Pos', align: 'text-left', kind: 'text',
+                      cell: p => `<td class="p-4 text-gray-400">${p.eligiblePositions}</td>` },
                 ];
+
+                // Facts about the player rather than projections of him. Age is
+                // null for the imported rookies, who have no NHL history to read
+                // a birthdate off.
+                if (!hide('age')) {
+                    columns.push({ key: 'age', label: 'Age', align: 'text-right text-gray-400',
+                                   kind: 'number',
+                                   cell: p => `<td class="p-4 text-right text-gray-400">`
+                                       + `${p.age === null || p.age === undefined ? '-' : Math.round(p.age)}</td>` });
+                }
+
+                if (!hide('gp')) {
+                    columns.push({ key: 'projectedGames', label: 'Proj GP',
+                                   align: 'text-right text-gray-400', kind: 'number',
+                                   cell: p => `<td class="p-4 text-right text-gray-400">`
+                                       + `${p.projectedGames === null || p.projectedGames === undefined ? '-' : p.projectedGames}</td>` });
+                }
+
+                // Where the market has this player, against where this board
+                // does. Only the ~265 players who actually get drafted carry one.
+                if (!hide('adp')) {
+                    columns.push({ key: 'adp', label: 'ADP',
+                                   align: 'text-right text-orange-400', kind: 'number',
+                                   cell: p => (p.adp === null || p.adp === undefined)
+                                       ? `<td class="p-4 text-right text-gray-600">-</td>`
+                                       : `<td class="p-4 text-right text-orange-400" title="Yahoo average draft position across all drafts">${p.adp.toFixed(1)}</td>` });
+                }
 
                 // Fantasy points per game, points leagues only
                 if (cfg.leagueMode === 'points') {
                     columns.push({ key: 'fantasy_points_per_game', label: 'FP/G',
-                                   align: 'text-right text-purple-400', kind: 'number' });
+                                   align: 'text-right text-purple-400', kind: 'number',
+                                   cell: p => {
+                                       const raw = p.fantasy_points_per_game;
+                                       return `<td class="p-4 text-right font-bold text-purple-400">`
+                                           + `${(raw === undefined || raw === null) ? '-' : raw}</td>`;
+                                   } });
                 }
 
                 // Value over replacement, once the roster shape has been applied
                 if (cfg.hasReplacement && RANK_MODE_LABELS[cfg.rankMode]) {
                     columns.push({ key: 'value_over_replacement', label: RANK_MODE_LABELS[cfg.rankMode],
-                                   align: 'text-right text-emerald-400', kind: 'number' });
+                                   align: 'text-right text-emerald-400', kind: 'number',
+                                   cell: p => {
+                                       const raw = p.value_over_replacement;
+                                       return `<td class="p-4 text-right font-bold text-emerald-400">`
+                                           + `${(raw === undefined || raw === null) ? '-' : raw}</td>`;
+                                   } });
                 }
 
-                cfg.stats.forEach(stat => {
-                    columns.push({ key: stat, label: formatStatName(stat),
-                                   align: 'text-right', kind: 'stat' });
-                });
+                if (condenseGoalies) {
+                    condensedStatColumns(cfg.stats).forEach(col => columns.push(col));
+                } else {
+                    cfg.stats.forEach(stat => {
+                        columns.push({ key: stat, label: formatStatName(stat),
+                                       align: 'text-right', kind: 'stat',
+                                       cell: p => statCell(stat, p) });
+                    });
+                }
 
-                if (cfg.lightAvg > 0) {
+                // Read off the row rather than the live schedule lookup, so a
+                // saved list keeps the numbers it was taken with even after the
+                // playoff weeks behind it change.
+                if (!hide('schedule') && cfg.lightAvg > 0) {
                     columns.push({ key: 'lightNights', label: 'Light',
-                                   align: 'text-right text-amber-400', kind: 'number' });
+                                   align: 'text-right text-amber-400', kind: 'number',
+                                   cell: p => {
+                                       if (p.lightNights === null || p.lightNights === undefined) {
+                                           return `<td class="p-4 text-right text-gray-600">-</td>`;
+                                       }
+                                       let tone = 'text-gray-300';
+                                       if (p.lightNights > cfg.lightAvg) tone = 'text-emerald-400 font-bold';
+                                       else if (p.lightNights < cfg.lightAvg) tone = 'text-red-400';
+                                       return `<td class="p-4 text-right ${tone}" title="${p.lightNights} of `
+                                           + `${p.lightGames} games fall on a light night `
+                                           + `(league average ${cfg.lightAvg})">${p.lightNights}</td>`;
+                                   } });
                 }
 
-                if (cfg.playoffAvg > 0) {
+                if (!hide('schedule') && cfg.playoffAvg > 0) {
                     // `lightKey` is read only by the export, which folds the light
                     // nights into the cell as "7(3)" - the screen has a suffix and a
                     // tooltip to carry them, a spreadsheet cell has neither.
                     columns.push({ key: 'playoffGames', label: 'Playoff',
                                    align: 'text-right text-sky-400', kind: 'playoff',
-                                   lightKey: 'playoffLightNights' });
+                                   lightKey: 'playoffLightNights',
+                                   cell: p => {
+                                       if (p.playoffGames === null || p.playoffGames === undefined) {
+                                           return `<td class="p-4 text-right text-gray-600">-</td>`;
+                                       }
+                                       let tone = 'text-gray-300';
+                                       if (p.playoffGames > cfg.playoffAvg) tone = 'text-emerald-400 font-bold';
+                                       else if (p.playoffGames < cfg.playoffAvg) tone = 'text-red-400';
+                                       return `<td class="p-4 text-right ${tone}" title="${p.playoffGames} games, `
+                                           + `${p.playoffLightNights} on light nights (league average ${cfg.playoffAvg} games)">`
+                                           + `${p.playoffGames}<span class="text-xs text-gray-500 font-normal ml-1">`
+                                           + `${p.playoffLightNights}L</span></td>`;
+                                   } });
                 }
 
-                columns.push({ key: 'productionTrend', label: 'Prod Trend', align: 'text-right', kind: 'text' });
-                columns.push({ key: 'peripheralTrend', label: 'Periph Trend', align: 'text-right', kind: 'text' });
+                if (!hide('trends')) {
+                    columns.push({ key: 'productionTrend', label: 'Prod Trend', align: 'text-right', kind: 'text',
+                                   cell: p => `<td class="p-4 text-right text-gray-400">${p.productionTrend}</td>` });
+                    columns.push({ key: 'peripheralTrend', label: 'Periph Trend', align: 'text-right', kind: 'text',
+                                   cell: p => `<td class="p-4 text-right text-gray-400">${p.peripheralTrend}</td>` });
+                }
+
                 return columns;
             }
 
@@ -1227,6 +1446,7 @@
 
             function buildTableBody() {
                 const cfg = viewConfig();
+                const columns = columnSpecs();
                 const tableBody = document.getElementById('table-body');
                 tableBody.innerHTML = '';
 
@@ -1284,71 +1504,16 @@
 
                     tr.className = rowClasses;
 
-                    // Rank logic
+                    // The select box is not a column - it belongs to the row
+                    // rather than to the data - so it is written here and every
+                    // real column comes from the one spec list.
                     let rowHTML = `
                         <td class="p-4 w-12 text-center">
                             <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600" value="${player.playerId || ''}">
                         </td>
-                        <td class="p-4 text-center font-bold text-blue-400">${player.overall_rank || '-'}</td>
-                        <td class="p-4 font-medium text-white">${player.fullName}</td>
-                        <td class="p-4 text-gray-400">${player.teamAbbrevs}</td>
-                        <td class="p-4 text-gray-400">${player.eligiblePositions}</td>
                     `;
 
-                    // Inject Fantasy Points per Game data if in points mode
-                    if (cfg.leagueMode === 'points') {
-                        const raw = player.fantasy_points_per_game;
-                        const fpg = (raw === undefined || raw === null) ? '-' : raw;
-                        rowHTML += `<td class="p-4 text-right font-bold text-purple-400">${fpg}</td>`;
-                    }
-
-                    if (cfg.hasReplacement && RANK_MODE_LABELS[cfg.rankMode]) {
-                        const raw = player.value_over_replacement;
-                        const vorp = (raw === undefined || raw === null) ? '-' : raw;
-                        rowHTML += `<td class="p-4 text-right font-bold text-emerald-400">${vorp}</td>`;
-                    }
-
-                    cfg.stats.forEach(stat => {
-                        const raw = player[stat];
-                        let val = (raw === undefined || raw === null) ? 0 : raw;
-                        if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(1);
-                        rowHTML += `<td class="p-4 text-right text-gray-300"${heatStyle(stat, raw)}>${val}</td>`;
-                    });
-
-                    // Read off the row rather than the live schedule lookup, so a
-                    // saved list keeps the numbers it was taken with even after
-                    // the playoff weeks behind it change.
-                    if (cfg.lightAvg > 0) {
-                        if (player.lightNights !== null && player.lightNights !== undefined) {
-                            let tone = 'text-gray-300';
-                            if (player.lightNights > cfg.lightAvg) tone = 'text-emerald-400 font-bold';
-                            else if (player.lightNights < cfg.lightAvg) tone = 'text-red-400';
-                            rowHTML += `<td class="p-4 text-right ${tone}" title="${player.lightNights} of `
-                                + `${player.lightGames} games fall on a light night `
-                                + `(league average ${cfg.lightAvg})">${player.lightNights}</td>`;
-                        } else {
-                            rowHTML += `<td class="p-4 text-right text-gray-600">-</td>`;
-                        }
-                    }
-
-                    if (cfg.playoffAvg > 0) {
-                        if (player.playoffGames !== null && player.playoffGames !== undefined) {
-                            let tone = 'text-gray-300';
-                            if (player.playoffGames > cfg.playoffAvg) tone = 'text-emerald-400 font-bold';
-                            else if (player.playoffGames < cfg.playoffAvg) tone = 'text-red-400';
-                            rowHTML += `<td class="p-4 text-right ${tone}" title="${player.playoffGames} games, `
-                                + `${player.playoffLightNights} on light nights (league average ${cfg.playoffAvg} games)">`
-                                + `${player.playoffGames}<span class="text-xs text-gray-500 font-normal ml-1">`
-                                + `${player.playoffLightNights}L</span></td>`;
-                        } else {
-                            rowHTML += `<td class="p-4 text-right text-gray-600">-</td>`;
-                        }
-                    }
-
-                    rowHTML += `
-                        <td class="p-4 text-right text-gray-400">${player.productionTrend}</td>
-                        <td class="p-4 text-right text-gray-400">${player.peripheralTrend}</td>
-                    `;
+                    columns.forEach(column => { rowHTML += column.cell(player); });
 
                     tr.innerHTML = rowHTML;
                     tableBody.appendChild(tr);
@@ -1629,10 +1794,22 @@
                 return columns;
             }
 
+            // Which underlying category a column holds for this player. Only
+            // condensed goalie columns answer anything but their own key.
+            function columnKeyFor(player, column) {
+                return (column.resolve && column.resolve(player)) || column.key;
+            }
+
             function exportValue(player, column, tag) {
                 if (column.kind === 'tag') return TAG_LABELS[tag] || '';
+                // A condensed pair with nothing on this side of it stays empty
+                // rather than exporting a zero that means "none of this stat".
+                if (column.resolve && !column.resolve(player)) return '';
 
-                const raw = player[column.key];
+                // A condensed column holds a different category depending on
+                // whether the row is a goalie, so it resolves per player rather
+                // than reading a fixed key.
+                const raw = player[columnKeyFor(player, column)];
                 if (column.kind === 'text') return raw === null || raw === undefined ? '' : String(raw);
 
                 // "7(3)" - seven playoff games, three of them on light nights. It
@@ -1671,7 +1848,9 @@
             // read and printed on a light ground.
             function exportFill(player, column, tagRgb) {
                 if (column.kind === 'stat' && heatmapOn) {
-                    const tint = heatTint(column.key, player[column.key]);
+                    const key = columnKeyFor(player, column);
+                    const tint = (column.resolve && !column.resolve(player))
+                        ? null : heatTint(key, player[key]);
                     return tint ? toHex(blend(tint.rgb, EXPORT_RGB, tint.alpha)) : null;
                 }
                 return tagRgb ? toHex(blend(tagRgb, EXPORT_RGB, TAG_EXPORT_ALPHA)) : null;
@@ -2075,6 +2254,7 @@
                 initRankMode();
                 initHeatmap();
                 initSavedLists();
+                initColumnToggles();
                 initNumTeams();
                 initRosterSettings();
                 initPlayoffWeeks();

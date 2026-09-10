@@ -163,3 +163,56 @@ input.terminal {
     font-weight: bold;
     margin-left: 10px;
 }
+
+/* --- Column toggles -------------------------------------------------------- */
+/* Draft-prep's "hide this group of columns" chips. Pressed means hidden, which
+   is the opposite of most toggles - so the pressed state is the muted one, and
+   the label already says "Hide". */
+
+.column-toggle {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--fs-text-muted);
+    background-color: transparent;
+    border: 1px solid var(--fs-border);
+    border-radius: var(--fs-radius);
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.column-toggle:hover {
+    color: var(--fs-text-strong);
+    border-color: var(--fs-border-strong);
+}
+
+.column-toggle[aria-pressed="true"] {
+    color: var(--fs-text-strong);
+    background-color: var(--fs-accent);
+    border-color: var(--fs-accent-hover);
+}
+
+/* --- Sticky table header --------------------------------------------------- */
+/* A draft board is read by scrolling, and a category column means nothing
+   without its heading. The header cells carry the background themselves rather
+   than the row doing it, because a sticky <tr> leaves its own background
+   behind and the rows show through. */
+
+.table-sticky-head th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    /* gray-900, matching the thead the page already paints - a sticky cell
+       shows the rows through it unless it carries its own background. */
+    background-color: var(--fs-bg);
+}
+
+/* Sticky only works against a scroll container, and `overflow-x: auto` alone
+   makes one whose height is unbounded - so the header would never actually
+   stick. The table therefore scrolls inside a viewport-height box in both
+   axes, which is also what keeps the filter bar and the pager on screen. */
+
+.table-scroll {
+    overflow: auto;
+    max-height: calc(100vh - 8rem);
+}

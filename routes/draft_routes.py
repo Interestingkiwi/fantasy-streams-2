@@ -13,11 +13,39 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from sqlalchemy import inspect
+
 from db import engine, text
 from ranking_utils import calculate_player_ranks
 
 # Create the Blueprint with a URL prefix
 draft_bp = Blueprint('draft', __name__, url_prefix='/draft-prep')
+
+# ADP lives in its own table rather than as a column on final_projections, and
+# is joined on here instead. It is the one number on the board that keeps moving
+# - every draft between now and yours changes it - so it has to be refreshable
+# without rebuilding a projection. `scrape_yahoo_adp.py` replaces this table on
+# its own; nothing upstream of step 8 has to run again.
+ADP_TABLE = "player_adp"
+
+PROJECTIONS_WITH_ADP = text(f'''
+    SELECT f.*, a.adp
+    FROM final_projections f
+    LEFT JOIN {ADP_TABLE} a ON a."playerId" = f."playerId"
+''')
+
+PROJECTIONS_ONLY = text("SELECT * FROM final_projections")
+
+
+def projections_query():
+    """The board's rows, carrying ADP when it has ever been scraped.
+
+    A LEFT JOIN, and only when the table exists: a database that has run the
+    projection pipeline but never the ADP scraper still serves a full board,
+    with the column simply absent. Otherwise every deployment would 500 between
+    the code landing and the first scrape.
+    """
+    return PROJECTIONS_WITH_ADP if inspect(engine).has_table(ADP_TABLE) else PROJECTIONS_ONLY
 
 # Shared with the Schedules page so the two cannot drift apart.
 from schedule_utils import team_game_counts  # noqa: E402
@@ -81,8 +109,7 @@ def get_projections():
     """Fetches the actual player data and projections."""
     try:
         with engine.connect() as conn:
-            query = text("SELECT * FROM final_projections")
-            result = conn.execute(query)
+            result = conn.execute(projections_query())
             players = [dict(row._mapping) for row in result]
 
         return jsonify({"status": "success", "data": players})
@@ -263,8 +290,7 @@ def rank_players():
         with engine.connect() as conn:
             skater_stats, goalie_stats = get_stat_mappings(conn)
 
-            query = text("SELECT * FROM final_projections")
-            result = conn.execute(query)
+            result = conn.execute(projections_query())
             players_data = [dict(row._mapping) for row in result]
 
             ranked_players = calculate_player_ranks(
