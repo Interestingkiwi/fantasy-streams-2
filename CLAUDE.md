@@ -656,9 +656,11 @@ projected games already existed on `final_projections`; ADP is joined on. All
 three are display-only.
 
 **Column toggles** (`fs_hiddenColumns`, `fs_condenseGoalies`) drop groups of
-columns: Trends, Age, GP, Schedule (Light + Playoff) and ADP. Pressed means
-hidden, which is why the pressed state is the muted one and every label starts
-with "Hide". They re-render rather than re-rank — hiding a column changes
+columns: Trends, Age, GP, Schedule (Light + Playoff) and ADP. They sit with the
+list tabs rather than in the filter bar, because they describe the shape of the
+table directly below them, not which players are in it — filters narrow the
+rows, these drop columns. Pressed means hidden, which is why the pressed state is
+the muted one and every label starts with "Hide". They re-render rather than re-rank — hiding a column changes
 nothing about the maths, and a hidden column stops being the sort column so the
 board cannot be ordered by something invisible.
 

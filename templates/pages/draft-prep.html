@@ -97,27 +97,6 @@
                   </div>
               </div>
 
-              <!-- Column toggles. The board is at its widest in a deep category
-                   league, and on draft day most of these columns are reference
-                   material rather than something you act on - so each group can
-                   be dropped. Pressed means hidden. -->
-              <div class="flex flex-wrap items-center gap-2 w-full pt-1"
-                   role="group" aria-label="Hide columns">
-                  <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Columns:</span>
-                  <button type="button" class="column-toggle" data-hide="trends" aria-pressed="false"
-                          title="Hide the Prod Trend and Periph Trend columns">Hide Trends</button>
-                  <button type="button" class="column-toggle" data-hide="age" aria-pressed="false"
-                          title="Hide the Age column">Hide Age</button>
-                  <button type="button" class="column-toggle" data-hide="gp" aria-pressed="false"
-                          title="Hide the projected games column">Hide GP</button>
-                  <button type="button" class="column-toggle" data-hide="schedule" aria-pressed="false"
-                          title="Hide the Light and Playoff schedule columns">Hide Schedule</button>
-                  <button type="button" class="column-toggle" data-hide="adp" aria-pressed="false"
-                          title="Hide Yahoo's average draft position">Hide ADP</button>
-                  <button type="button" class="column-toggle" data-condense="1" aria-pressed="false"
-                          title="Stack the goalie categories onto the skater ones so they share columns - the first goalie category sits with the first skater category, and so on">Condense Goalies</button>
-              </div>
-
               <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
                   <button id="btn-fav" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Favourite</button>
                   <button id="btn-sleeper" class="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Sleeper</button>
@@ -135,6 +114,30 @@
                  scale even after the settings behind it change. -->
             <section class="bg-gray-800 p-3 rounded-lg shadow-xl border border-gray-700 flex flex-col gap-3">
                 <div id="list-tabs" class="flex flex-wrap items-center gap-2"></div>
+
+                <!-- Column toggles. They live with the list tabs rather than in
+                     the filter bar because they describe the shape of the table
+                     directly below, not which players are in it: filters narrow
+                     the rows, these drop columns. The board is at its widest in
+                     a deep category league, and on draft day most of these are
+                     reference material rather than something you act on.
+                     Pressed means hidden. -->
+                <div class="flex flex-wrap items-center gap-2 border-t border-gray-700 pt-3"
+                     role="group" aria-label="Hide columns">
+                    <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Columns:</span>
+                    <button type="button" class="column-toggle" data-hide="trends" aria-pressed="false"
+                            title="Hide the Prod Trend and Periph Trend columns">Hide Trends</button>
+                    <button type="button" class="column-toggle" data-hide="age" aria-pressed="false"
+                            title="Hide the Age column">Hide Age</button>
+                    <button type="button" class="column-toggle" data-hide="gp" aria-pressed="false"
+                            title="Hide the projected games column">Hide GP</button>
+                    <button type="button" class="column-toggle" data-hide="schedule" aria-pressed="false"
+                            title="Hide the Light and Playoff schedule columns">Hide Schedule</button>
+                    <button type="button" class="column-toggle" data-hide="adp" aria-pressed="false"
+                            title="Hide Yahoo's average draft position">Hide ADP</button>
+                    <button type="button" class="column-toggle" data-condense="1" aria-pressed="false"
+                            title="Stack the goalie categories onto the skater ones so they share columns - the first goalie category sits with the first skater category, and so on">Condense Goalies</button>
+                </div>
 
                 <div id="list-toolbar" class="flex flex-wrap items-center gap-3 border-t border-gray-700 pt-3" style="display: none;">
                     <label for="list-name-input" class="text-sm font-medium text-gray-400">List name</label>
