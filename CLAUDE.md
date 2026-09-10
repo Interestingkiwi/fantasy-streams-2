@@ -753,6 +753,13 @@ The column spec carries a `lightKey` that only `exportValue` reads (`kind:
    `position_eligibility.csv` (a Yahoo export: `playerName,team,eligiblePositions`).
    Matches on normalised name, then surname + team; anyone the CSV misses falls back
    to their NHL primary widened to Yahoo's vocabulary (`L`->`LW`, `R`->`RW`).
+13. `scrape_yahoo_adp.py` — current ADP from Yahoo into `player_adp` (see *ADP*).
+   **Last, and it has to be:** the crosswalk matches against `final_projections`,
+   so it needs the rookies added at step 9, the roster pruned at step 11, and
+   above all the current teams written at step 10 — Yahoo reports where a player
+   is *now*, and team is one of the matching passes. Also runnable on its own,
+   which is the usual way: ADP moves daily and a refresh costs three requests
+   rather than a rebuild.
 
 **Re-running part of the pipeline:** `apply_injury_adjustments.py` rebuilds
 `final_projections` with `to_sql(if_exists='replace')`, which drops
@@ -877,6 +884,10 @@ with.
 - **Unmatched rows are stored with a null `playerId` and listed at the end**, so
   a miss is visible rather than absent. `player_utils.add_player_alias()` fixes a
   genuine one.
+
+It runs as step 13 of `build_database.py` too, so a full rebuild refreshes ADP
+along with everything else — the standalone script is the *fast* path, not the
+only one.
 
 Copy it up on its own near a draft:
 `python transfer_to_render.py --tables player_adp --apply`.

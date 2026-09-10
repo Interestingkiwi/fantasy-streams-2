@@ -71,6 +71,19 @@ def build_database():
     # 12. Yahoo multi-position eligibility (needs final teams + the pruned roster)
     run_script("apply_position_eligibility.py")
 
+    # 13. Current ADP from Yahoo.
+    #
+    # Last on purpose, and it has to be: the crosswalk matches Yahoo's names
+    # against final_projections, so it needs the imported rookies from step 9
+    # (several have a real ADP and no NHL history), the pruned roster from step
+    # 11, and above all the current teams from step 10 - Yahoo reports where a
+    # player is *now*, and team is one of the matching passes.
+    #
+    # It is also runnable on its own, and usually should be: ADP moves daily as
+    # drafts happen, and refreshing it that way costs one request round trip
+    # rather than a full rebuild. See *ADP* in CLAUDE.md.
+    run_script("scrape_yahoo_adp.py")
+
     end_time = time.time()
     elapsed = round((end_time - start_time) / 60, 2)
 
