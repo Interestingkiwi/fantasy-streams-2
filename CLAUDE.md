@@ -632,6 +632,12 @@ has been re-ranked into since. Re-ranking therefore returns the view to the Main
 Board rather than leaving a stale-looking list on screen. The filter bar still
 narrows whichever tab is open, so a list stays searchable without being editable.
 
+A snapshot keeps `positionCode`, `age`, `projectedGames` and `adp` as well as
+the visible columns: the three are toggleable, so a list that dropped them would
+show blanks the moment one was un-hidden on it, and `positionCode` is how
+Condense Goalies tells a goalie from a skater. Lists from before those fields
+were kept fall back to `eligiblePositions` for that, and show `-` for the rest.
+
 Snapshot rows are the same shape as live player rows, so filtering, sorting,
 tagging and rendering are one code path for both; `viewConfig()` is the single
 place that decides which of the two is on screen. They are **stored as a field
@@ -655,8 +661,15 @@ the dark surface for the screen.
 projected games already existed on `final_projections`; ADP is joined on. All
 three are display-only.
 
-**Column toggles** (`fs_hiddenColumns`, `fs_condenseGoalies`) drop groups of
-columns: Trends, Age, GP, Schedule (Light + Playoff) and ADP. They sit with the
+**Column toggles** drop groups of columns: Trends, Age, GP, Schedule
+(Light + Playoff) and ADP. **They are per view.** The Main Board keeps its
+settings in `fs_hiddenColumns` / `fs_condenseGoalies`; every saved list carries
+its own `hiddenColumns` and `condenseGoalies` inside its entry in `fs_lists`, so
+stacking or hiding in one list leaves the board and every other list alone. A new
+list starts with the settings of the view it was taken from. Everything reads
+through `viewColumnSettings()`, which is what keeps a list and the board from
+ever reading each other's. Lists saved before this took the board's settings
+once, on first load, and were written back so they stopped following it. They sit with the
 list tabs rather than in the filter bar, because they describe the shape of the
 table directly below them, not which players are in it — filters narrow the
 rows, these drop columns. Pressed means hidden, which is why the pressed state is

@@ -376,10 +376,12 @@
                 ? localStorage.getItem('fs_rankMode')
                 : 'roster';
 
-            // Which groups of columns are hidden, and whether the goalie
-            // categories are stacked onto the skater ones. Both are per-browser
-            // preferences about *display* only - they never touch the ranking,
-            // which is why they re-render rather than re-rank.
+            // The Main Board's column settings: which groups are hidden, and
+            // whether the goalie categories are stacked onto the skater ones.
+            // Every saved list carries its own copy of the same two settings,
+            // so hiding a column in one view leaves every other view alone -
+            // see viewColumnSettings(). Display only: they never touch the
+            // ranking, which is why they re-render rather than re-rank.
             const COLUMN_GROUPS = ['trends', 'age', 'gp', 'schedule', 'adp'];
             let hiddenColumns = new Set(readStoredHiddenColumns());
             let condenseGoalies = localStorage.getItem('fs_condenseGoalies') === '1';
@@ -405,6 +407,14 @@
             // dozen 900-player snapshots and a page that cannot save anything.
             const MAX_LISTS = 10;
             let savedLists = readStoredLists();
+
+            // Lists saved before column settings were per-list take the board's
+            // settings once - so they look exactly as they did - and are written
+            // back straight away, so they stop following the board from here on.
+            if (savedLists.some(list => list.columnsBackfilled)) {
+                savedLists.forEach(list => { delete list.columnsBackfilled; });
+                saveLists();
+            }
             let activeListId = null;   // null = the live board
 
             let currentPage = 1;
@@ -872,11 +882,26 @@
                 }
             }
 
+            // The settings of whichever view is on screen: the open saved list's
+            // own, or the board's. Every reader goes through here, so a list and
+            // the board can never be reading each other's.
+            function viewColumnSettings() {
+                const list = activeList();
+                if (list) {
+                    return {
+                        hidden: new Set(list.hiddenColumns || []),
+                        condense: !!list.condenseGoalies,
+                    };
+                }
+                return { hidden: hiddenColumns, condense: condenseGoalies };
+            }
+
             function renderColumnToggles() {
+                const settings = viewColumnSettings();
                 document.querySelectorAll('.column-toggle').forEach(btn => {
                     const pressed = btn.dataset.condense
-                        ? condenseGoalies
-                        : hiddenColumns.has(btn.dataset.hide);
+                        ? settings.condense
+                        : settings.hidden.has(btn.dataset.hide);
                     btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
                 });
             }
@@ -884,11 +909,25 @@
             function initColumnToggles() {
                 document.querySelectorAll('.column-toggle').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        if (btn.dataset.condense) {
+                        const list = activeList();
+                        const group = btn.dataset.hide;
+
+                        if (list) {
+                            // Only the open list changes, and it is saved with
+                            // the rest of the list rather than to a global key.
+                            if (btn.dataset.condense) {
+                                list.condenseGoalies = !list.condenseGoalies;
+                            } else {
+                                const hidden = new Set(list.hiddenColumns || []);
+                                if (hidden.has(group)) hidden.delete(group);
+                                else hidden.add(group);
+                                list.hiddenColumns = [...hidden];
+                            }
+                            saveLists();
+                        } else if (btn.dataset.condense) {
                             condenseGoalies = !condenseGoalies;
                             localStorage.setItem('fs_condenseGoalies', condenseGoalies ? '1' : '0');
                         } else {
-                            const group = btn.dataset.hide;
                             if (hiddenColumns.has(group)) hiddenColumns.delete(group);
                             else hiddenColumns.add(group);
                             localStorage.setItem('fs_hiddenColumns',
@@ -1262,6 +1301,14 @@
                 return goalieStatKeys.includes(stat);
             }
 
+            // positionCode where the row has it. Lists saved before snapshots
+            // kept that field only have eligibility, which for a goalie is "G".
+            function isGoalieRow(player) {
+                if (player.positionCode) return player.positionCode === 'G';
+                return String(player.eligiblePositions || '').split(',')
+                    .map(pos => pos.trim()).includes('G');
+            }
+
             function statCell(stat, player, resolvedKey) {
                 const key = resolvedKey || stat;
                 const raw = player[key];
@@ -1298,7 +1345,7 @@
                         kind: 'stat',
                         skaterKey: s || null,
                         goalieKey: g || null,
-                        resolve: player => (player.positionCode === 'G' ? g : s) || null,
+                        resolve: player => (isGoalieRow(player) ? g : s) || null,
                         cell(player) {
                             const key = this.resolve(player);
                             if (!key) return `<td class="p-4 text-right text-gray-600"></td>`;
@@ -1311,7 +1358,8 @@
 
             function columnSpecs() {
                 const cfg = viewConfig();
-                const hide = group => hiddenColumns.has(group);
+                const settings = viewColumnSettings();
+                const hide = group => settings.hidden.has(group);
 
                 const columns = [
                     { key: 'overall_rank', label: 'Rank', align: 'text-center', kind: 'rank',
@@ -1373,7 +1421,7 @@
                                    } });
                 }
 
-                if (condenseGoalies) {
+                if (settings.condense) {
                     condensedStatColumns(cfg.stats).forEach(col => columns.push(col));
                 } else {
                     cfg.stats.forEach(stat => {
@@ -1531,8 +1579,13 @@
             // it did in round 1, whatever the board has been re-ranked into
             // since. The live filter bar still narrows whichever tab is open,
             // so a list stays searchable without being editable.
+            // positionCode is what Condense Goalies tells a goalie from a skater
+            // by, and age / projectedGames / adp back three toggleable columns -
+            // a list that dropped them would show blanks the moment one of those
+            // columns was un-hidden on it.
             const SNAPSHOT_FIELDS = [
-                'playerId', 'fullName', 'teamAbbrevs', 'eligiblePositions', 'overall_rank',
+                'playerId', 'fullName', 'teamAbbrevs', 'positionCode', 'eligiblePositions',
+                'age', 'projectedGames', 'adp', 'overall_rank',
                 'productionTrend', 'peripheralTrend', 'lightNights', 'lightGames',
                 'playoffGames', 'playoffLightNights', 'fantasy_points_per_game',
                 'value_over_replacement',
@@ -1546,6 +1599,16 @@
             // objects here so everything downstream can treat a saved row and a
             // live player row as the same shape.
             function hydrateList(stored) {
+                // Column settings are per list. One saved before that inherits the
+                // board's, and is flagged so the load writes it back once.
+                if (!Array.isArray(stored.hiddenColumns)) {
+                    stored = Object.assign({}, stored, {
+                        hiddenColumns: [...hiddenColumns],
+                        condenseGoalies: condenseGoalies,
+                        columnsBackfilled: true,
+                    });
+                }
+
                 const fields = Array.isArray(stored.fields) ? stored.fields : null;
                 if (!fields) return stored;   // written before the compact format
 
@@ -1653,6 +1716,10 @@
                     selectedStats: stats,
                     ranges: ranges,
                     polarity: polarity,
+                    // A new list starts out looking exactly like the view it
+                    // was taken from, and goes its own way after that.
+                    hiddenColumns: [...viewColumnSettings().hidden],
+                    condenseGoalies: viewColumnSettings().condense,
                     sort: { column: currentSortColumn, direction: currentSortDirection },
                     filters: describeFilters(),
                     fields: fields,
@@ -1678,6 +1745,14 @@
                 if (list && list.sort) {
                     currentSortColumn = list.sort.column;
                     currentSortDirection = list.sort.direction;
+                }
+
+                // Each view has its own columns, so the buttons have to show the
+                // new view's settings, and a sort column this view hides cannot
+                // keep ordering it.
+                renderColumnToggles();
+                if (!columnSpecs().some(c => c.key === currentSortColumn)) {
+                    currentSortColumn = null;
                 }
 
                 renderListTabs();
