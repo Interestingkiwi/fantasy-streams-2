@@ -10,8 +10,13 @@
 
   This is the light-weight stand-in for MIGRATION's deferred home.html
   shell; replace it when that lands.
+
+  On a phone the links stay on one line and the strip scrolls sideways.
+  Left to wrap, each label broke over two lines and the nav still pushed
+  the page ~80px wider than the screen. The including header has to be
+  flex-wrap so the nav can drop onto its own row.
 #}
-<nav class="flex items-center gap-1 text-sm" aria-label="Pages">
+<nav class="flex items-center gap-1 text-sm overflow-x-auto whitespace-nowrap max-w-full" aria-label="Pages">
     {% for key, label, href in [
         ('home', 'Home', '/'),
         ('draft', 'Draft Prep', '/draft-prep/'),
@@ -19,7 +24,7 @@
         ('league', 'League Database', '/league/'),
     ] %}
     <a href="{{ href }}"
-       class="px-3 py-1.5 rounded-md transition-colors
+       class="shrink-0 px-2.5 sm:px-3 py-1.5 rounded-md transition-colors
               {% if active == key %}bg-gray-700 text-white font-medium
               {% else %}text-gray-400 hover:text-white hover:bg-gray-700/50{% endif %}"
        {% if active == key %}aria-current="page"{% endif %}>{{ label }}</a>

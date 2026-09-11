@@ -10,26 +10,29 @@
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
 
-    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex justify-between items-center">
-        <h1 class="text-2xl font-bold text-white tracking-wide">Draft Prep Dashboard</h1>
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
+        <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wide">Draft Prep Dashboard</h1>
         {% set active = 'draft' %}{% include 'partials/page-nav.html' %}
     </header>
 
-    <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
+    <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-4 sm:gap-6">
 
-        <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <section class="bg-gray-800 p-3 sm:p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4">
             <div>
-                <h2 class="text-xl font-semibold text-white">League Settings</h2>
+                <h2 class="text-lg sm:text-xl font-semibold text-white">League Settings</h2>
                 <p id="settings-summary" class="text-gray-400 text-sm mt-1">Loading settings&hellip;</p>
             </div>
-            <button id="openLeagueSettingsBtn" class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap">League Settings</button>
+            <button id="openLeagueSettingsBtn" class="btn-primary w-full md:w-auto px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap">League Settings</button>
         </section>
 
-        <section class="bg-gray-800 p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-4">
-              <div class="flex flex-wrap gap-4 w-full lg:w-auto">
-                  <input type="text" id="search-input" placeholder="Search player name..." class="form-input p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm w-full md:w-48">
+        <section class="bg-gray-800 p-3 sm:p-4 rounded-lg shadow-xl border border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-3 sm:gap-4">
+              <!-- A two-column grid on a phone - search, Rank Via and Heatmap a
+                   full row each, the two filters sharing one - and the usual
+                   wrapping row from sm up. -->
+              <div class="grid grid-cols-2 gap-3 w-full sm:flex sm:flex-wrap sm:gap-4 lg:w-auto">
+                  <input type="text" id="search-input" placeholder="Search player name..." class="form-input col-span-2 p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm w-full md:w-48">
 
-                  <select id="pos-filter" class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
+                  <select id="pos-filter" class="form-select min-w-0 w-full sm:w-auto p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
                       <option value="">All Positions</option>
                       <option value="SKATERS">Skaters Only (no G)</option>
                       <option value="FWD">Forwards (C/LW/RW)</option>
@@ -40,7 +43,7 @@
                       <option value="G">Goalie (G)</option>
                   </select>
 
-                  <select id="team-filter" class="form-select p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
+                  <select id="team-filter" class="form-select min-w-0 w-full sm:w-auto p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm">
                       <option value="">All Teams</option>
                       <option value="ANA">Anaheim Ducks (ANA)</option>
                       <option value="BOS">Boston Bruins (BOS)</option>
@@ -76,20 +79,21 @@
                       <option value="WPG">Winnipeg Jets (WPG)</option>
                   </select>
 
-                  <div class="flex items-center gap-2">
+                  <!-- Short labels on a phone, so the three fit one row. -->
+                  <div class="col-span-2 flex items-center gap-2">
                       <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Rank Via:</span>
-                      <div class="inline-flex rounded-md overflow-hidden border border-gray-600"
+                      <div class="flex flex-1 sm:flex-none rounded-md overflow-hidden border border-gray-600"
                            role="radiogroup" aria-label="Ranking method">
-                          <button type="button" class="rank-mode-btn px-3 py-2 text-sm font-medium transition-colors"
-                                  data-rank-mode="roster">Roster Setting</button>
-                          <button type="button" class="rank-mode-btn px-3 py-2 text-sm font-medium transition-colors border-l border-gray-600"
-                                  data-rank-mode="projection">Projection Only</button>
-                          <button type="button" class="rank-mode-btn px-3 py-2 text-sm font-medium transition-colors border-l border-gray-600"
+                          <button type="button" class="rank-mode-btn flex-1 sm:flex-none px-2 sm:px-3 py-2 text-sm font-medium transition-colors"
+                                  data-rank-mode="roster"><span class="sm:hidden">Roster</span><span class="max-sm:hidden">Roster Setting</span></button>
+                          <button type="button" class="rank-mode-btn flex-1 sm:flex-none px-2 sm:px-3 py-2 text-sm font-medium transition-colors border-l border-gray-600"
+                                  data-rank-mode="projection"><span class="sm:hidden">Projection</span><span class="max-sm:hidden">Projection Only</span></button>
+                          <button type="button" class="rank-mode-btn flex-1 sm:flex-none px-2 sm:px-3 py-2 text-sm font-medium transition-colors border-l border-gray-600"
                                   data-rank-mode="balanced">Balanced</button>
                       </div>
                   </div>
 
-                  <div class="flex items-center gap-2">
+                  <div class="col-span-2 flex items-center gap-2">
                       <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Heatmap:</span>
                       <button type="button" id="heatmap-toggle" aria-pressed="false"
                               class="px-3 py-2 text-sm font-medium rounded-md border border-gray-600 transition-colors"
@@ -97,11 +101,14 @@
                   </div>
               </div>
 
-              <div class="flex flex-wrap gap-2 w-full lg:w-auto justify-end">
-                  <button id="btn-fav" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Favourite</button>
-                  <button id="btn-sleeper" class="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Sleeper</button>
-                  <button id="btn-dnd" class="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">DND</button>
-                  <button id="btn-clear-tag" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Clear Tag</button>
+              <!-- On a phone the tag buttons move to the selection bar pinned to
+                   the bottom of the screen, which is where the rows being ticked
+                   are; only the list actions stay up here. -->
+              <div class="grid grid-cols-2 gap-2 w-full sm:flex sm:flex-wrap sm:justify-end lg:w-auto">
+                  <button id="btn-fav" class="max-sm:hidden bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Favourite</button>
+                  <button id="btn-sleeper" class="max-sm:hidden bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Sleeper</button>
+                  <button id="btn-dnd" class="max-sm:hidden bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">DND</button>
+                  <button id="btn-clear-tag" class="max-sm:hidden bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Clear Tag</button>
                   <button id="btn-create-list" class="bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
                           title="Snapshot the list exactly as it is filtered and sorted right now, as its own tab">Create List</button>
                   <button id="btn-export" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export List</button>
@@ -113,7 +120,9 @@
                  rows, not a saved filter, so it keeps its columns and its heat
                  scale even after the settings behind it change. -->
             <section class="bg-gray-800 p-3 rounded-lg shadow-xl border border-gray-700 flex flex-col gap-3">
-                <div id="list-tabs" class="flex flex-wrap items-center gap-2"></div>
+                <!-- One sideways-scrolling row on a phone; ten saved lists
+                     wrapped would push the board a screen further down. -->
+                <div id="list-tabs" class="flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:pb-0"></div>
 
                 <!-- Column toggles. They live with the list tabs rather than in
                      the filter bar because they describe the shape of the table
@@ -122,21 +131,29 @@
                      a deep category league, and on draft day most of these are
                      reference material rather than something you act on.
                      Pressed means hidden. -->
-                <div class="flex flex-wrap items-center gap-2 border-t border-gray-700 pt-3"
-                     role="group" aria-label="Hide columns">
-                    <span class="text-sm font-medium text-gray-400 whitespace-nowrap">Columns:</span>
-                    <button type="button" class="column-toggle" data-hide="trends" aria-pressed="false"
-                            title="Hide the Prod Trend and Periph Trend columns">Hide Trends</button>
-                    <button type="button" class="column-toggle" data-hide="age" aria-pressed="false"
-                            title="Hide the Age column">Hide Age</button>
-                    <button type="button" class="column-toggle" data-hide="gp" aria-pressed="false"
-                            title="Hide the projected games column">Hide GP</button>
-                    <button type="button" class="column-toggle" data-hide="schedule" aria-pressed="false"
-                            title="Hide the Light and Playoff schedule columns">Hide Schedule</button>
-                    <button type="button" class="column-toggle" data-hide="adp" aria-pressed="false"
-                            title="Hide Yahoo's average draft position">Hide ADP</button>
-                    <button type="button" class="column-toggle" data-condense="1" aria-pressed="false"
-                            title="Stack the goalie categories onto the skater ones so they share columns - the first goalie category sits with the first skater category, and so on">Condense Goalies</button>
+                <div class="flex flex-wrap items-center gap-2 border-t border-gray-700 pt-3">
+                    <span class="max-sm:hidden text-sm font-medium text-gray-400 whitespace-nowrap">Columns:</span>
+                    <!-- On a phone the six chips wrap to three rows above the
+                         board, so they fold away behind this one button. Not a
+                         .column-toggle: initColumnToggles() wires every one of
+                         those as a column group. -->
+                    <button type="button" id="columns-disclosure" aria-expanded="false" aria-controls="column-toggle-group"
+                            class="sm:hidden px-3 py-1.5 rounded-md border border-gray-700 text-sm font-medium text-gray-300">Columns &#9662;</button>
+                    <div id="column-toggle-group" class="max-sm:hidden flex flex-wrap items-center gap-2"
+                         role="group" aria-label="Hide columns">
+                        <button type="button" class="column-toggle" data-hide="trends" aria-pressed="false"
+                                title="Hide the Prod Trend and Periph Trend columns">Hide Trends</button>
+                        <button type="button" class="column-toggle" data-hide="age" aria-pressed="false"
+                                title="Hide the Age column">Hide Age</button>
+                        <button type="button" class="column-toggle" data-hide="gp" aria-pressed="false"
+                                title="Hide the projected games column">Hide GP</button>
+                        <button type="button" class="column-toggle" data-hide="schedule" aria-pressed="false"
+                                title="Hide the Light and Playoff schedule columns">Hide Schedule</button>
+                        <button type="button" class="column-toggle" data-hide="adp" aria-pressed="false"
+                                title="Hide Yahoo's average draft position">Hide ADP</button>
+                        <button type="button" class="column-toggle" data-condense="1" aria-pressed="false"
+                                title="Stack the goalie categories onto the skater ones so they share columns - the first goalie category sits with the first skater category, and so on">Condense Goalies</button>
+                    </div>
                 </div>
 
                 <div id="list-toolbar" class="flex flex-wrap items-center gap-3 border-t border-gray-700 pt-3" style="display: none;">
@@ -144,24 +161,24 @@
                     <input type="text" id="list-name-input" maxlength="40"
                            class="form-input p-2 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm w-full md:w-64">
                     <span id="list-meta" class="text-xs text-gray-500"></span>
-                    <div class="flex gap-2 ml-auto">
-                        <button id="btn-export-list" class="bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export This List</button>
-                        <button id="btn-delete-list" class="bg-red-800 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">Delete List</button>
+                    <div class="flex gap-2 w-full sm:w-auto sm:ml-auto">
+                        <button id="btn-export-list" class="flex-1 sm:flex-none bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors border border-gray-500">Export This List</button>
+                        <button id="btn-delete-list" class="flex-1 sm:flex-none bg-red-800 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">Delete List</button>
                     </div>
                 </div>
             </section>
 
-          <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
+          <div class="bg-gray-800 p-3 sm:p-4 border-t border-gray-700 flex justify-between items-center gap-3 text-sm text-gray-400">
                 <span class="pagination-info">Showing ...</span>
-                <div class="space-x-2">
-                    <button class="btn-prev px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
-                    <button class="btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
+                <div class="flex shrink-0 gap-2">
+                    <button class="btn-prev px-4 py-2 sm:px-3 sm:py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
+                    <button class="btn-next px-4 py-2 sm:px-3 sm:py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
                 </div>
             </div>
 
         <section class="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden flex-grow">
             <div class="table-scroll">
-                <table class="w-full text-left border-collapse">
+                <table class="draft-table w-full text-left border-collapse">
                     <thead class="table-sticky-head bg-gray-900 border-b border-gray-700">
                       <tr id="table-head-row">
                           <th class="p-4 w-12 text-center">
@@ -183,24 +200,27 @@
             </div>
           </section>
 
-          <div class="bg-gray-800 p-4 border-t border-gray-700 flex justify-between items-center text-sm text-gray-400">
+          <div class="bg-gray-800 p-3 sm:p-4 border-t border-gray-700 flex justify-between items-center gap-3 text-sm text-gray-400">
                 <span class="pagination-info">Showing ...</span>
-                <div class="space-x-2">
-                    <button class="btn-prev px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
-                    <button class="btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
+                <div class="flex shrink-0 gap-2">
+                    <button class="btn-prev px-4 py-2 sm:px-3 sm:py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Previous</button>
+                    <button class="btn-next px-4 py-2 sm:px-3 sm:py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white">Next</button>
                 </div>
             </div>
 
     </main>
 
     <!-- ===== League Settings Modal ===== -->
-    <div id="leagueSettingsModal" class="fixed inset-0 z-50 items-center justify-center p-4" style="display: none;">
+    <!-- Full screen on a phone. Inset from the edges it left a form ~300px wide
+         with Apply below the fold; filling the screen keeps the footer pinned
+         and gives the category grid its two columns. -->
+    <div id="leagueSettingsModal" class="fixed inset-0 z-50 items-center justify-center p-0 sm:p-4" style="display: none;">
         <div class="absolute inset-0 bg-black bg-opacity-70" data-close-modal></div>
 
-        <div class="relative bg-gray-800 border border-gray-700 rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+        <div class="relative bg-gray-800 sm:border border-gray-700 sm:rounded-lg shadow-2xl w-full max-w-5xl h-full sm:h-auto sm:max-h-[90vh] flex flex-col"
              role="dialog" aria-modal="true" aria-labelledby="leagueSettingsTitle">
 
-            <div class="flex justify-between items-start gap-4 p-6 border-b border-gray-700">
+            <div class="flex justify-between items-start gap-4 p-4 sm:p-6 border-b border-gray-700">
                 <div>
                     <h2 id="leagueSettingsTitle" class="text-xl font-semibold text-white">League Settings</h2>
                     <p class="text-gray-400 text-sm mt-1">Set your league structure, roster spots, and scoring categories to adjust projections.</p>
@@ -209,7 +229,7 @@
                         class="text-gray-400 hover:text-white text-2xl leading-none px-2 -mt-1">&times;</button>
             </div>
 
-            <div class="overflow-y-auto p-6 flex flex-col gap-8">
+            <div class="overflow-y-auto flex-1 min-h-0 p-4 sm:p-6 flex flex-col gap-6 sm:gap-8">
 
                 <!-- League Structure -->
                 <div>
@@ -344,12 +364,30 @@
 
             </div>
 
-            <div class="flex justify-end gap-3 p-6 border-t border-gray-700">
+            <div class="flex justify-end gap-3 p-4 sm:p-6 border-t border-gray-700">
                 <button type="button" data-close-modal
-                        class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Close</button>
+                        class="flex-1 sm:flex-none bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">Close</button>
                 <button id="applySettingsBtn"
-                        class="btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
+                        class="flex-1 sm:flex-none btn-primary px-4 py-2 rounded-md text-sm font-medium transition-colors">Apply Settings</button>
             </div>
+        </div>
+    </div>
+
+    <!-- ===== Selection bar (phones) ===== -->
+    <!-- The tag buttons, repeated where the thumb is while rows are being
+         ticked. updateSelectionBar() shows it only while something is
+         selected, and sm:hidden keeps it off larger screens, where the filter
+         bar's own buttons are in reach. -->
+    <div id="selection-bar" class="hidden sm:hidden fixed inset-x-0 bottom-0 z-40 bg-gray-800 border-t border-gray-700 p-3 shadow-2xl">
+        <div class="flex items-center justify-between mb-2 text-sm">
+            <span id="selection-count" class="text-gray-300"></span>
+            <button type="button" id="selection-deselect" class="text-gray-400 hover:text-white px-2 py-1">Deselect</button>
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+            <button type="button" data-tag-action="fav" class="bg-emerald-700 hover:bg-emerald-600 text-white px-1 py-2.5 rounded-md text-sm font-medium transition-colors">Favourite</button>
+            <button type="button" data-tag-action="sleeper" class="bg-yellow-600 hover:bg-yellow-500 text-white px-1 py-2.5 rounded-md text-sm font-medium transition-colors">Sleeper</button>
+            <button type="button" data-tag-action="dnd" class="bg-red-800 hover:bg-red-700 text-white px-1 py-2.5 rounded-md text-sm font-medium transition-colors">DND</button>
+            <button type="button" data-tag-action="clear" class="bg-gray-700 hover:bg-gray-600 text-white px-1 py-2.5 rounded-md text-sm font-medium transition-colors">Clear</button>
         </div>
     </div>
 
@@ -525,7 +563,7 @@
             function renderRankMode() {
                 document.querySelectorAll('.rank-mode-btn').forEach(btn => {
                     const active = btn.dataset.rankMode === rankMode;
-                    btn.className = 'rank-mode-btn px-3 py-2 text-sm font-medium transition-colors'
+                    btn.className = 'rank-mode-btn flex-1 sm:flex-none px-2 sm:px-3 py-2 text-sm font-medium transition-colors'
                         + (btn.previousElementSibling ? ' border-l border-gray-600' : '')
                         + (active ? ' bg-blue-600 text-white' : ' bg-gray-700 text-gray-300 hover:bg-gray-600');
                     btn.setAttribute('aria-checked', active ? 'true' : 'false');
@@ -944,6 +982,17 @@
                     });
                 });
                 renderColumnToggles();
+
+                // The phone-only button the chips fold behind
+                const disclosure = document.getElementById('columns-disclosure');
+                const chips = document.getElementById('column-toggle-group');
+                if (disclosure && chips) {
+                    disclosure.addEventListener('click', () => {
+                        const open = !chips.classList.toggle('max-sm:hidden');
+                        disclosure.setAttribute('aria-expanded', open ? 'true' : 'false');
+                        disclosure.textContent = open ? 'Columns ▴' : 'Columns ▾';
+                    });
+                }
             }
 
             // --- API Calls ---
@@ -1115,7 +1164,10 @@
                         wrapper.className = "flex flex-col gap-1";
 
                         const label = document.createElement('label');
-                        label.className = "flex items-center space-x-2 cursor-pointer h-6"; // Fixed height keeps UI stable
+                        // A floor rather than a fixed height: in the two-column
+                        // phone grid a long name wraps, and h-6 let it spill
+                        // over the row below
+                        label.className = "flex items-center space-x-2 cursor-pointer min-h-6";
 
                         // --- 1. Categories Checkbox ---
                         const checkbox = document.createElement('input');
@@ -1256,15 +1308,15 @@
             function buildTableHeaders() {
                 const headerRow = document.getElementById('table-head-row');
                 headerRow.innerHTML = `
-                    <th class="p-4 w-12 text-center">
+                    <th class="select-cell p-4 w-12 text-center">
                         <input type="checkbox" id="select-all" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
                     </th>
                 `;
 
                 // Helper function to build clickable, sortable headers
-                function createHeader(text, sortKey, alignClass = "text-left") {
+                function createHeader(text, sortKey, alignClass = "text-left", extraClass = "") {
                     const th = document.createElement('th');
-                    th.className = `p-4 text-sm font-semibold cursor-pointer hover:text-white select-none ${alignClass}`;
+                    th.className = `p-4 text-sm font-semibold cursor-pointer hover:text-white select-none ${alignClass} ${extraClass}`;
 
                     let sortIcon = '';
                     if (currentSortColumn === sortKey) {
@@ -1287,7 +1339,8 @@
                     headerRow.appendChild(th);
                 }
 
-                columnSpecs().forEach(col => createHeader(col.label, col.key, col.align));
+                columnSpecs().forEach(col => createHeader(col.label, col.key, col.align,
+                                                          col.sticky ? 'col-sticky' : ''));
             }
 
             // --- Columns ---
@@ -1364,8 +1417,10 @@
                 const columns = [
                     { key: 'overall_rank', label: 'Rank', align: 'text-center', kind: 'rank',
                       cell: p => `<td class="p-4 text-center font-bold text-blue-400">${p.overall_rank || '-'}</td>` },
-                    { key: 'fullName', label: 'Player', align: 'text-left', kind: 'text',
-                      cell: p => `<td class="p-4 font-medium text-white">${p.fullName}</td>` },
+                    // Pinned to the left edge as the board scrolls sideways - see
+                    // .col-sticky in styles.css
+                    { key: 'fullName', label: 'Player', align: 'text-left', kind: 'text', sticky: true,
+                      cell: p => `<td class="col-sticky p-4 font-medium text-white">${p.fullName}</td>` },
                     { key: 'teamAbbrevs', label: 'Team', align: 'text-left', kind: 'text',
                       cell: p => `<td class="p-4 text-gray-400">${p.teamAbbrevs}</td>` },
                     { key: 'eligiblePositions', label: 'Pos', align: 'text-left', kind: 'text',
@@ -1526,7 +1581,7 @@
 
                 // Toggle Button States for all Previous buttons
                 const prevDisabled = currentPage === 1;
-                const prevClass = prevDisabled ? "btn-prev px-3 py-1 bg-gray-800 text-gray-600 rounded cursor-not-allowed" : "btn-prev px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white";
+                const prevClass = prevDisabled ? "btn-prev px-4 py-2 sm:px-3 sm:py-1 bg-gray-800 text-gray-600 rounded cursor-not-allowed" : "btn-prev px-4 py-2 sm:px-3 sm:py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white";
                 btnPrevs.forEach(btn => {
                     btn.disabled = prevDisabled;
                     btn.className = prevClass;
@@ -1534,7 +1589,7 @@
 
                 // Toggle Button States for all Next buttons
                 const nextDisabled = currentPage >= maxPage || maxPage === 0;
-                const nextClass = nextDisabled ? "btn-next px-3 py-1 bg-gray-800 text-gray-600 rounded cursor-not-allowed" : "btn-next px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white";
+                const nextClass = nextDisabled ? "btn-next px-4 py-2 sm:px-3 sm:py-1 bg-gray-800 text-gray-600 rounded cursor-not-allowed" : "btn-next px-4 py-2 sm:px-3 sm:py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-white";
                 btnNexts.forEach(btn => {
                     btn.disabled = nextDisabled;
                     btn.className = nextClass;
@@ -1554,12 +1609,15 @@
                     else rowClasses += " border-l-4 border-transparent"; // Keeps text aligned when not tagged
 
                     tr.className = rowClasses;
+                    // The pinned Player cell is opaque, so it paints the tag
+                    // colour itself off this rather than showing the row's
+                    if (tag) tr.dataset.tag = tag;
 
                     // The select box is not a column - it belongs to the row
                     // rather than to the data - so it is written here and every
                     // real column comes from the one spec list.
                     let rowHTML = `
-                        <td class="p-4 w-12 text-center">
+                        <td class="select-cell p-4 w-12 text-center">
                             <input type="checkbox" class="player-checkbox w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600" value="${player.playerId || ''}">
                         </td>
                     `;
@@ -1569,6 +1627,9 @@
                     tr.innerHTML = rowHTML;
                     tableBody.appendChild(tr);
                 });
+
+                // A rebuild unticks every row
+                updateSelectionBar();
             }
 
             // --- Saved lists ---
@@ -1768,7 +1829,7 @@
                     const button = document.createElement('button');
                     button.type = 'button';
                     const active = activeListId === id;
-                    button.className = 'px-3 py-2 rounded-md text-sm font-medium transition-colors border '
+                    button.className = 'shrink-0 whitespace-nowrap px-3 py-2 rounded-md text-sm font-medium transition-colors border '
                         + (active ? 'bg-blue-600 text-white border-blue-500'
                                   : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600');
                     button.textContent = count ? `${label} (${count})` : label;
@@ -2281,7 +2342,53 @@
                         document.querySelectorAll('.player-checkbox').forEach(cb => {
                             cb.checked = isChecked;
                         });
+                        updateSelectionBar();
                     }
+                });
+
+                // --- Selection on a phone ---
+                // The checkbox is a small target for a thumb, so a tap anywhere
+                // in its cell toggles it. Dispatched as a change so select-all
+                // and the selection bar hear about it exactly as for a real tick.
+                function toggleFromCell(e) {
+                    const cell = e.target.closest('.select-cell');
+                    if (!cell || e.target.matches('input')) return;
+                    const box = cell.querySelector('input[type="checkbox"]');
+                    if (!box) return;
+                    box.checked = !box.checked;
+                    box.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                document.getElementById('table-head-row').addEventListener('click', toggleFromCell);
+                document.getElementById('table-body').addEventListener('click', toggleFromCell);
+
+                document.getElementById('table-body').addEventListener('change', (e) => {
+                    if (e.target.classList.contains('player-checkbox')) updateSelectionBar();
+                });
+
+                // On a phone the tag buttons sit a screen above the rows, so
+                // while anything is ticked they are repeated in a bar pinned to
+                // the bottom. The bar is sm:hidden, so on a larger screen this
+                // only ever toggles something invisible.
+                function updateSelectionBar() {
+                    const bar = document.getElementById('selection-bar');
+                    if (!bar) return;
+                    const count = document.querySelectorAll('.player-checkbox:checked').length;
+                    bar.classList.toggle('hidden', count === 0);
+                    // Room for the bar at the foot of the page - see
+                    // body.has-selection in styles.css
+                    document.body.classList.toggle('has-selection', count > 0);
+                    document.getElementById('selection-count').textContent =
+                        `${count} player${count === 1 ? '' : 's'} selected`;
+                }
+
+                document.querySelectorAll('#selection-bar [data-tag-action]').forEach(btn => {
+                    btn.addEventListener('click', () => tagSelectedPlayers(btn.dataset.tagAction));
+                });
+
+                document.getElementById('selection-deselect').addEventListener('click', () => {
+                    document.querySelectorAll('.player-checkbox, #select-all').forEach(cb => { cb.checked = false; });
+                    updateSelectionBar();
                 });
 
                 // --- Wire up Pagination Buttons ---

@@ -12,7 +12,7 @@
  *
  * Author - Jason Druckenmiller
  * Created - 7/3/2026
- * Updated - 9/7/2026
+ * Updated - 9/11/2026
  */
 
 :root {
@@ -215,4 +215,79 @@ input.terminal {
 .table-scroll {
     overflow: auto;
     max-height: calc(100vh - 8rem);
+    /* On a phone 100vh counts the browser toolbar that slides away, so the box
+       ran under it and hid its last rows. dvh tracks what is actually visible;
+       the line above stands for browsers without it. */
+    max-height: calc(100dvh - 8rem);
+}
+
+/* --- Frozen player column --------------------------------------------------- */
+/* On a phone the board is a narrow window onto twenty-odd columns, and a row of
+   numbers means nothing once the name has scrolled off. The Player column pins
+   to the left edge once the select box and Rank have scrolled past.
+
+   Like the sticky header it has to be opaque, or the columns scrolling under it
+   show through. So it paints the row's tag colour itself, pre-composited over
+   the surface exactly as the row's translucent Tailwind tint lands on it
+   (emerald/yellow/red-900 at 40% over gray-800) - otherwise a tagged player
+   would lose his tint on the one cell that names him. */
+
+.col-sticky {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background-color: var(--fs-surface);
+    box-shadow: inset -1px 0 0 var(--fs-border);
+}
+
+.table-sticky-head th.col-sticky {
+    z-index: 20;
+    background-color: var(--fs-bg);
+}
+
+tr[data-tag="fav"] > .col-sticky { background-color: rgb(21, 56, 57); }
+tr[data-tag="sleeper"] > .col-sticky { background-color: rgb(64, 50, 40); }
+tr[data-tag="dnd"] > .col-sticky { background-color: rgb(69, 36, 45); }
+.table-row-hover:hover > .col-sticky { background-color: var(--fs-surface-hover); }
+
+/* --- Narrow screens --------------------------------------------------------- */
+/* Tailwind's sm breakpoint, so these switch over at the same width the
+   templates' sm: utilities do. */
+
+@media (max-width: 639.98px) {
+    /* iOS Safari zooms into any focused field under 16px and does not zoom back
+       out, so one search would leave the whole board magnified. The element
+       selectors outrank Tailwind's .text-sm whichever stylesheet lands last. */
+    input.form-input,
+    select.form-select,
+    input.stat-weight {
+        font-size: 16px;
+    }
+
+    /* The desktop p-4 spends a third of a phone's width on cell padding */
+    .draft-table th,
+    .draft-table td {
+        padding: 0.5rem 0.625rem;
+    }
+
+    /* Wide enough for most names on one line; longer ones wrap */
+    .draft-table .col-sticky {
+        min-width: 7rem;
+    }
+
+    /* A 16px box is a hard target for a thumb. The whole select cell toggles
+       it too - see toggleFromCell() in draft-prep.html. */
+    .draft-table input[type="checkbox"] {
+        width: 1.25rem;
+        height: 1.25rem;
+    }
+
+    /* Room at the foot of the page while draft-prep's selection bar is up, so
+       it never covers the pager. A class of ours rather than a Tailwind
+       utility set from script: the vendored CDN build only generates a utility
+       once it has noticed it in the page, and a pb-28 first added on the tick
+       measured 0px. */
+    body.has-selection {
+        padding-bottom: 7rem;
+    }
 }

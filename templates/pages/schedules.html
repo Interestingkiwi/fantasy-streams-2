@@ -10,9 +10,9 @@
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
 
-    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex justify-between items-center">
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
         <div>
-            <h1 class="text-2xl font-bold text-white tracking-wide">NHL Schedule</h1>
+            <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wide">NHL Schedule</h1>
             <p id="subtitle" class="text-gray-400 text-sm mt-1">Loading&hellip;</p>
         </div>
         {% set active = 'schedules' %}{% include 'partials/page-nav.html' %}

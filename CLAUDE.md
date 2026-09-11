@@ -721,6 +721,39 @@ The column spec carries a `lightKey` that only `exportValue` reads (`kind:
 'playoff'`), and it falls back to the bare game count rather than writing
 `10(null)` if the light figure is ever missing.
 
+### On a phone
+
+Below Tailwind's `sm` breakpoint (640px) the page rearranges rather than just
+shrinking. Drafts happen on phones, and before this the board was a 454px-wide
+page on a 375px screen, pushed out by the nav.
+
+- **The Player column is frozen** (`.col-sticky`, at every width): a row of
+  numbers means nothing once the name has scrolled off. Being opaque, it cannot
+  let the row's translucent tag tint through, so it paints the tint itself off
+  `tr[data-tag]`, pre-composited over the surface — the same reasoning as the
+  opaque heat cells. Change a tag colour and those three rules in `styles.css`
+  have to follow it.
+- **The tag buttons move to a bottom selection bar** (`#selection-bar`), shown
+  only while a row is ticked, because up top they sit a screen away from the
+  rows. A tap anywhere in the select cell toggles its checkbox
+  (`toggleFromCell`), dispatched as a `change` so select-all and the bar hear it
+  as a real tick.
+- **Column toggles fold behind one Columns button**, list tabs become one
+  sideways-scrolling row, Rank Via drops to short labels, and League Settings
+  goes full screen with Apply pinned at the bottom.
+- **Inputs are 16px.** iOS Safari zooms into any smaller focused field and stays
+  zoomed. Tighter cell padding and bigger checkboxes sit in the same media block
+  in `styles.css`.
+- **The shared nav scrolls sideways rather than wrapping**, so any header that
+  includes it must be `flex-wrap` to let it drop onto its own row.
+
+Two traps met building it. Toggle visibility with `sm:hidden` / `max-sm:hidden`
+rather than `hidden sm:block` — `styles.css` restates `.hidden`, and which wins
+then depends on stylesheet order. And don't add a Tailwind utility from script
+that appears nowhere in the markup: the vendored CDN build generates it only once
+it notices it, so it is missing when first needed. `body.has-selection` is a
+plain CSS rule for that reason.
+
 ## The projection pipeline (`preseason_db_build/`)
 
 `build_database.py` runs the steps in order via `subprocess`. Roughly:
