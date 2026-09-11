@@ -741,18 +741,9 @@ page on a 375px screen, pushed out by the nav.
 - **Column toggles fold behind one Columns button**, list tabs become one
   sideways-scrolling row, Rank Via drops to short labels, and League Settings
   goes full screen with Apply pinned at the bottom.
-- **Inputs are 16px.** iOS Safari zooms into any smaller focused field and stays
-  zoomed. Tighter cell padding and bigger checkboxes sit in the same media block
-  in `styles.css`.
-- **The shared nav scrolls sideways rather than wrapping**, so any header that
-  includes it must be `flex-wrap` to let it drop onto its own row.
-
-Two traps met building it. Toggle visibility with `sm:hidden` / `max-sm:hidden`
-rather than `hidden sm:block` — `styles.css` restates `.hidden`, and which wins
-then depends on stylesheet order. And don't add a Tailwind utility from script
-that appears nowhere in the markup: the vendored CDN build generates it only once
-it notices it, so it is missing when first needed. `body.has-selection` is a
-plain CSS rule for that reason.
+The general rules this page set — header, spacing, `.data-table`, 16px inputs,
+the two Tailwind traps — apply to every page and live in *Phone layout (every
+page)*.
 
 ## The projection pipeline (`preseason_db_build/`)
 
@@ -1012,6 +1003,60 @@ Adding a suite means adding its filename to `TESTS` in `run_all.py`.
   a 500 with `{"status": "error", "message": str(e)}`.
 - Postgres columns are camelCase and quoted in raw SQL (`"positionCode"`, `"final_projections"`).
 - Blueprints only; add new areas as a blueprint in `routes/` and register it in `app.py`.
+- **Every page works on a phone.** Build and check it at 375px as well as desktop,
+  following *Phone layout* below. A page that only works on a desktop is not finished.
+
+## Phone layout (every page)
+
+Every page has to work at 375px wide as well as on a desktop — drafts and lineups
+get set from phones. The home page, draft prep, Schedules, League Database and
+the terms page all follow this, and a new page follows it from its first commit
+rather than getting a phone pass later. The breakpoint is Tailwind's `sm`
+(640px): below it is "a phone".
+
+**Check it.** Load the page in the browser pane at the mobile preset (375×812)
+and at desktop width. `document.documentElement.scrollWidth` must equal
+`innerWidth` — the page itself never scrolls sideways; only a table or a strip of
+tabs inside it may.
+
+**The pattern, and the shared pieces that implement it:**
+
+- **Header:** `flex flex-wrap justify-between items-center gap-x-4 gap-y-2`, title
+  `text-xl sm:text-2xl`, then `partials/page-nav.html`. The nav scrolls sideways
+  on one line, so the header has to wrap to give it a row of its own.
+- **Spacing:** `main` at `p-3 sm:p-4 md:p-6` with `gap-4 sm:gap-6`; cards at
+  `p-3 sm:p-4`. Desktop padding spends a phone's width on nothing.
+- **Tables** sit in an `overflow-x-auto` wrapper (or `.table-scroll` when the
+  header should stick) and carry `.data-table`, which tightens cell padding and
+  enlarges checkboxes on phones. A table still wider than the screen freezes its
+  identifying column with `.col-sticky`. That cell is opaque, so a tinted row has
+  to paint its tint on it too — see the `tr[data-tag]` rules.
+- **Rows that would wrap to several lines** — tabs, chips, filters — become one
+  sideways-scrolling row (`overflow-x-auto whitespace-nowrap`, items `shrink-0`),
+  or fold behind a button on phones, as draft prep's Columns does.
+- **Scroll boxes inside the page** are capped in viewport units on phones
+  (`max-h-[70dvh] sm:max-h-[42rem]`), so the page can still be scrolled past
+  them. `dvh`, not `vh`: `vh` counts the toolbar a phone browser slides away.
+- **Modals holding a form go full screen below `sm`:** wrapper `p-0 sm:p-4`,
+  dialog `h-full sm:h-auto sm:max-h-[90vh]`, and the footer outside the scrolling
+  body so its buttons stay on screen. A short message modal only needs
+  `max-h-[90vh] overflow-y-auto`.
+- **Touch:** nothing needed only on hover or in a `title`; tap targets at least
+  `py-2` on phones; say "select" or "tap", not "click". Put an action near what
+  it acts on — draft prep repeats its tag buttons in a bottom bar because up top
+  they are a screen away from the rows.
+- **A stacked master/detail** (a list above what it opens) scrolls the detail
+  into view on a pick, or the tap looks like it did nothing — see League
+  Database's teams and rosters.
+- **Inputs** use `.form-input` / `.form-select`. `styles.css` sets them to 16px on
+  phones, because iOS Safari zooms into any smaller focused field and stays zoomed.
+
+**Two Tailwind traps.** Toggle visibility with `sm:hidden` / `max-sm:hidden`,
+not `hidden sm:block` — `styles.css` restates `.hidden`, and which wins then
+depends on stylesheet order. And never add a utility from script that appears
+nowhere in the markup: the vendored CDN build generates it only once it notices
+it, so it is missing when first needed (a `pb-28` set on the first tick measured
+0px). Put that rule in `styles.css` instead, as `body.has-selection` is.
 
 ## Porting the old app
 

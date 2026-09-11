@@ -18,25 +18,25 @@
         {% set active = 'schedules' %}{% include 'partials/page-nav.html' %}
     </header>
 
-    <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
+    <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-4 sm:gap-6">
 
         <div id="page-error" class="hidden error-message"></div>
 
-        <section class="bg-gray-800 p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-4">
-            <div>
+        <section class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-3 sm:gap-4">
+            <div class="w-full sm:w-auto">
                 <label for="window-select" class="block mb-1 text-xs font-medium text-gray-400">Window</label>
-                <select id="window-select" class="form-select p-2 text-sm min-w-[18rem]"></select>
+                <select id="window-select" class="form-select p-2 text-sm w-full sm:w-auto sm:min-w-[18rem]"></select>
             </div>
             <p id="week-source" class="text-xs text-gray-500 flex-1 min-w-[14rem]"></p>
         </section>
 
         <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
 
-        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
             <section class="xl:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-                <div class="flex items-center justify-between p-4 border-b border-gray-700 gap-4 flex-wrap">
+                <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-1 flex-wrap">
                     <h2 class="text-lg font-semibold text-white">Games by Team</h2>
-                    <p class="text-xs text-gray-500">Click a team for its games</p>
+                    <p class="text-xs text-gray-500">Select a team to see its games</p>
                 </div>
                 <div id="teams-body" class="overflow-x-auto">
                     <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
@@ -44,8 +44,11 @@
             </section>
 
             <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-                <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Games per Night</h2>
-                <div id="calendar-body" class="p-4 max-h-[42rem] overflow-y-auto"></div>
+                <h2 class="text-lg font-semibold text-white p-3 sm:p-4 border-b border-gray-700">Games per Night</h2>
+                <!-- Capped in viewport units on a phone, where it stacks under the
+                     team table: at 42rem it filled the screen and the page could
+                     barely be scrolled past it. -->
+                <div id="calendar-body" class="p-3 sm:p-4 max-h-[70dvh] sm:max-h-[42rem] overflow-y-auto"></div>
             </section>
         </div>
 
@@ -112,7 +115,7 @@
                     .sort((a, b) => b.games - a.games || a.team.localeCompare(b.team));
 
                 $('teams-body').innerHTML = `
-                    <table class="w-full text-left text-sm">
+                    <table class="data-table w-full text-left text-sm">
                         <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
                             <tr>
                                 <th class="px-4 py-2 font-medium">Team</th>

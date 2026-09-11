@@ -18,36 +18,40 @@
         {% set active = 'league' %}{% include 'partials/page-nav.html' %}
     </header>
 
-    <main class="flex-grow container mx-auto p-4 md:p-6 flex flex-col gap-6">
+    <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-4 sm:gap-6">
 
         <div id="page-error" class="hidden error-message"></div>
 
         <!-- Row counts, so it is obvious at a glance what has been ingested. -->
-        <section id="counts" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3"></section>
+        <section id="counts" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-3"></section>
 
-        <nav class="flex flex-wrap gap-1 border-b border-gray-700" role="tablist" aria-label="League data sections">
-            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="settings" role="tab">Settings</button>
-            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="teams" role="tab">Teams &amp; Rosters</button>
-            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="schedule" role="tab">Schedule</button>
-            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="transactions" role="tab">Transactions</button>
-            <button class="tab-btn px-4 py-2 text-sm font-medium transition-colors" data-tab="pool" role="tab">Player Pool</button>
+        <!-- One sideways-scrolling strip on a phone. Wrapped, the underline that
+             marks the open tab landed mid-page on a second row. -->
+        <nav class="flex gap-1 border-b border-gray-700 overflow-x-auto whitespace-nowrap" role="tablist" aria-label="League data sections">
+            <button class="tab-btn shrink-0 px-3 sm:px-4 py-2 text-sm font-medium transition-colors" data-tab="settings" role="tab">Settings</button>
+            <button class="tab-btn shrink-0 px-3 sm:px-4 py-2 text-sm font-medium transition-colors" data-tab="teams" role="tab">Teams &amp; Rosters</button>
+            <button class="tab-btn shrink-0 px-3 sm:px-4 py-2 text-sm font-medium transition-colors" data-tab="schedule" role="tab">Schedule</button>
+            <button class="tab-btn shrink-0 px-3 sm:px-4 py-2 text-sm font-medium transition-colors" data-tab="transactions" role="tab">Transactions</button>
+            <button class="tab-btn shrink-0 px-3 sm:px-4 py-2 text-sm font-medium transition-colors" data-tab="pool" role="tab">Player Pool</button>
         </nav>
 
-        <section id="tab-settings" class="tab-panel grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+        <section id="tab-settings" class="tab-panel grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 sm:p-5">
                 <h2 class="text-lg font-semibold text-white mb-3">Scoring Categories</h2>
                 <div id="scoring-list" class="flex flex-wrap gap-2"></div>
             </div>
-            <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 sm:p-5">
                 <h2 class="text-lg font-semibold text-white mb-3">Roster Slots</h2>
                 <div id="roster-slots" class="flex flex-wrap gap-2"></div>
             </div>
         </section>
 
-        <section id="tab-teams" class="tab-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <section id="tab-teams" class="tab-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
             <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
                 <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Teams</h2>
-                <ul id="team-list" class="divide-y divide-gray-700 max-h-[32rem] overflow-y-auto"></ul>
+                <!-- Shorter while the roster stacks underneath, so the roster is
+                     not a full screen further down. -->
+                <ul id="team-list" class="divide-y divide-gray-700 max-h-[40dvh] lg:max-h-[32rem] overflow-y-auto"></ul>
             </div>
             <div class="lg:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
                 <h2 id="roster-title" class="text-lg font-semibold text-white p-4 border-b border-gray-700">Roster</h2>
@@ -59,7 +63,7 @@
 
         <section id="tab-schedule" class="tab-panel hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <h2 class="text-lg font-semibold text-white p-4 border-b border-gray-700">Weeks &amp; Matchups</h2>
-            <div id="schedule-body" class="divide-y divide-gray-700 max-h-[40rem] overflow-y-auto"></div>
+            <div id="schedule-body" class="divide-y divide-gray-700 max-h-[70dvh] sm:max-h-[40rem] overflow-y-auto"></div>
         </section>
 
         <section id="tab-transactions" class="tab-panel hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -123,8 +127,8 @@
         }
 
         const card = (label, value) => `
-            <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 text-center">
-                <div class="text-2xl font-bold text-white">${esc(value)}</div>
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-2 sm:p-3 text-center">
+                <div class="text-xl sm:text-2xl font-bold text-white">${esc(value)}</div>
                 <div class="text-xs text-gray-400 uppercase tracking-wide mt-1">${esc(label)}</div>
             </div>`;
 
@@ -132,7 +136,7 @@
             `<span class="${tone} px-2.5 py-1 rounded text-xs font-medium">${esc(text)}</span>`;
 
         const table = (headers, rows) => `
-            <table class="w-full text-left text-sm">
+            <table class="data-table w-full text-left text-sm">
                 <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
                     <tr>${headers.map(h => `<th class="px-4 py-2 font-medium">${esc(h)}</th>`).join('')}</tr>
                 </thead>
@@ -179,8 +183,16 @@
                         </button>
                     </li>`).join('');
 
+                // Below lg the roster stacks under the team list, so a pick brings
+                // it into view - otherwise the tap looks like it did nothing.
+                const stacked = window.matchMedia('(max-width: 1023.98px)');
                 document.querySelectorAll('.team-btn').forEach(btn =>
-                    btn.addEventListener('click', () => loadRoster(btn.dataset.teamId, btn.dataset.teamName)));
+                    btn.addEventListener('click', () => {
+                        loadRoster(btn.dataset.teamId, btn.dataset.teamName);
+                        if (stacked.matches) {
+                            $('roster-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    }));
 
                 if (teams.length) loadRoster(teams[0].team_id, teams[0].name);
             },
