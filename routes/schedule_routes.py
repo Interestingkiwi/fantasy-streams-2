@@ -14,7 +14,7 @@ against its own weeks.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 9/16/2026
 """
 
 import logging
@@ -70,6 +70,11 @@ def _league_weeks(first_date, last_date):
     return weeks if overlaps else None
 
 
+def _game_dates():
+    """Every date with at least one game, for finding league-wide breaks."""
+    return [r["gameDate"] for r in fetch_all('SELECT DISTINCT "gameDate" FROM nhl_schedule')]
+
+
 def _rows_between(start, end):
     return [
         (r["gameDate"], r["homeTeam"], r["awayTeam"])
@@ -103,7 +108,7 @@ def weeks():
             "status": "success",
             "source": "league" if league else "derived",
             "season": {"start": first_date, "end": last_date},
-            "weeks": league or derive_weeks(first_date, last_date),
+            "weeks": league or derive_weeks(first_date, last_date, _game_dates()),
         })
     except Exception as exc:                      # noqa: BLE001 - repo convention
         log.exception("Weeks failed.")

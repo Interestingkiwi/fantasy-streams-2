@@ -11,7 +11,7 @@ The league-week override seeds its own weeks rows and deletes them again.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 9/16/2026
 """
 
 import os
@@ -85,6 +85,47 @@ check("single day season yields one week",
       derive_weeks("2026-09-29", "2026-09-29") ==
       [{"week": 1, "start": "2026-09-29", "end": "2026-09-29"}])
 
+
+def played_except(first, last, idle):
+    """Every date from first to last except the idle ones."""
+    from datetime import date, timedelta
+    day, end, out = date.fromisoformat(first), date.fromisoformat(last), []
+    while day <= end:
+        if day.isoformat() not in idle:
+            out.append(day.isoformat())
+        day += timedelta(days=1)
+    return out
+
+
+# Mon 2027-01-25 to Sun 2027-02-21: four full weeks.
+SPAN = ("2027-01-25", "2027-02-21")
+all_star = derive_weeks(*SPAN, played_except(*SPAN, {"2027-02-04", "2027-02-05",
+                                                      "2027-02-06", "2027-02-07"}))
+check("a break through Sunday folds its week into the next (the All-Star shape)",
+      all_star[1] == {"week": 2, "start": "2027-02-01", "end": "2027-02-14", "combined": True},
+      all_star)
+check("...and every week after it is renumbered",
+      [w["week"] for w in all_star] == [1, 2, 3]
+      and all_star[2]["start"] == "2027-02-15", all_star)
+
+from_monday = derive_weeks(*SPAN, played_except(*SPAN, {"2027-02-08", "2027-02-09",
+                                                         "2027-02-10", "2027-02-11"}))
+check("a break from Monday folds its week into the one before",
+      from_monday[1] == {"week": 2, "start": "2027-02-01", "end": "2027-02-14", "combined": True},
+      from_monday)
+
+straddle = derive_weeks(*SPAN, played_except(*SPAN, {"2027-02-06", "2027-02-07",
+                                                      "2027-02-08", "2027-02-09"}))
+check("a break across a boundary joins the two weeks it touches",
+      straddle[1]["start"] == "2027-02-01" and straddle[1]["end"] == "2027-02-14", straddle)
+
+christmas = derive_weeks(*SPAN, played_except(*SPAN, {"2027-02-02", "2027-02-03",
+                                                       "2027-02-04"}))
+check("three idle days (Christmas) is not a break",
+      len(christmas) == 4 and not any(w.get("combined") for w in christmas), christmas)
+check("no game dates means plain Mon-Sun weeks",
+      derive_weeks(*SPAN) == derive_weeks(*SPAN, None) and len(derive_weeks(*SPAN)) == 4)
+
 print("\n=== 3. endpoints ===")
 client = flask_app.test_client()
 have_schedule = (fetch_one('SELECT count(*) AS n FROM nhl_schedule') or {}).get("n", 0) > 0
@@ -100,6 +141,15 @@ else:
     check("weeks cover the season",
           data["weeks"][0]["start"] == data["season"]["start"]
           and data["weeks"][-1]["end"] == data["season"]["end"])
+    if data["season"]["start"] == "2026-09-29":
+        by_number = {w["week"]: w for w in data["weeks"]}
+        check("2026-27: Week 19 is Yahoo's combined All-Star week, Feb 1-14",
+              (by_number[19]["start"], by_number[19]["end"]) == ("2027-02-01", "2027-02-14"),
+              by_number.get(19))
+        check("2026-27: 27 weeks, the last Apr 5-10, as draft prep's playoff weeks assume",
+              len(data["weeks"]) == 27
+              and (by_number[23]["start"], by_number[27]["end"]) == ("2027-03-08", "2027-04-10"),
+              data["weeks"][-5:])
 
     full = client.get("/schedules/api/team-games").get_json()
     check("every team appears", len(full["teams"]) == 32, len(full["teams"]))

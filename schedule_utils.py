@@ -8,7 +8,7 @@ idle - so the answers live here rather than in either route module.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 9/16/2026
 """
 
 from collections import Counter
@@ -25,6 +25,13 @@ LIGHT_NIGHT_MAX_GAMES = 8
 
 # Yahoo fantasy weeks run Monday to Sunday.
 WEEK_END_WEEKDAY = 6   # Sunday, in Python's Monday=0 numbering
+
+# A league-wide stoppage this long is a break, not a quiet patch. Yahoo folds a
+# week a break guts into its neighbour, so no matchup is decided on the three
+# nights left over. In 2026-27 the All-Star break leaves Feb 4-7 idle - the
+# back end of the Feb 1-7 week - and Yahoo's Week 19 runs Feb 1-14. Christmas
+# is three idle days, so it stays short of this and its week is left alone.
+BREAK_MIN_IDLE_DAYS = 4
 
 
 def light_nights(rows, threshold=LIGHT_NIGHT_MAX_GAMES):
@@ -72,7 +79,7 @@ def summarise(teams):
     }
 
 
-def derive_weeks(first_date, last_date):
+def derive_weeks(first_date, last_date, game_dates=None):
     """
     Fantasy weeks spanning the season, as [{week, start, end}].
 
@@ -81,6 +88,12 @@ def derive_weeks(first_date, last_date):
     league is available to supply real Yahoo weeks; `weeks` from a synced
     league should win over this, since a league's own weeks are what its
     matchups are scored against.
+
+    Pass `game_dates` (every date with a game) and a week holding a break of
+    `BREAK_MIN_IDLE_DAYS` is merged with a neighbour, marked `combined: True`,
+    and everything after is renumbered - which is how Yahoo numbers them. Read
+    from the schedule rather than pinned to a date, so next season's break is
+    found the same way.
     """
     start = date.fromisoformat(first_date)
     last = date.fromisoformat(last_date)
@@ -90,11 +103,59 @@ def derive_weeks(first_date, last_date):
     while week_start <= last:
         days_to_sunday = (WEEK_END_WEEKDAY - week_start.weekday()) % 7
         week_end = min(week_start + timedelta(days=days_to_sunday), last)
-        weeks.append({
-            "week": len(weeks) + 1,
-            "start": week_start.isoformat(),
-            "end": week_end.isoformat(),
-        })
+        weeks.append({"start": week_start, "end": week_end})
         week_start = week_end + timedelta(days=1)
 
-    return weeks
+    for first_idle, last_idle in breaks(game_dates or []):
+        _merge_across(weeks, first_idle, last_idle)
+
+    return [
+        {"week": number, "start": w["start"].isoformat(), "end": w["end"].isoformat(),
+         **({"combined": True} if w.get("combined") else {})}
+        for number, w in enumerate(weeks, start=1)
+    ]
+
+
+def breaks(game_dates, min_idle=BREAK_MIN_IDLE_DAYS):
+    """
+    [(first idle date, last idle date)] for every stretch of at least
+    `min_idle` days with no game anywhere in the league.
+    """
+    played = sorted({date.fromisoformat(str(d)) for d in game_dates})
+    found = []
+    for before, after in zip(played, played[1:]):
+        idle = (after - before).days - 1
+        if idle >= min_idle:
+            found.append((before + timedelta(days=1), after - timedelta(days=1)))
+    return found
+
+
+def _merge_across(weeks, first_idle, last_idle):
+    """
+    Fold a break's week into the neighbour it leaves stranded nights beside.
+
+    A break across a week boundary joins the two weeks it touches. One inside
+    a week joins that week to the neighbour on the break's side: idle through
+    Sunday means the week's few games came first, so they belong with the week
+    that follows - the All-Star case - and idle from Monday means the reverse.
+    """
+    def holding(day):
+        return next((i for i, w in enumerate(weeks) if w["start"] <= day <= w["end"]), None)
+
+    first, last = holding(first_idle), holding(last_idle)
+    if first is None or last is None:
+        return
+    if first == last:
+        week = weeks[first]
+        played_before = (first_idle - week["start"]).days
+        played_after = (week["end"] - last_idle).days
+        if played_after <= played_before and first + 1 < len(weeks):
+            last = first + 1
+        elif first > 0:
+            first -= 1
+        else:
+            return
+
+    weeks[first] = {"start": weeks[first]["start"], "end": weeks[last]["end"],
+                    "combined": True}
+    del weeks[first + 1:last + 1]

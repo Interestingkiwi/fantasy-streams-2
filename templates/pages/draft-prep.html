@@ -7,6 +7,7 @@
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <script src="{{ url_for('static', filename='fantasy-weeks.js') }}"></script>
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
 
@@ -311,7 +312,7 @@
                 <!-- Playoff Weeks -->
                 <div id="playoff-weeks">
                     <h3 class="text-white font-semibold border-b border-gray-600 pb-2 mb-2">Playoff Weeks</h3>
-                    <p class="text-gray-400 text-sm mb-4">Week numbers are based on Yahoo's schedule.</p>
+                    <p id="playoff-weeks-note" class="text-gray-400 text-sm mb-4">Week numbers are based on Yahoo's schedule.</p>
 
                     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                         <label class="flex items-start space-x-2 cursor-pointer">
@@ -736,27 +737,75 @@
                 localStorage.setItem('fs_playoffWeeks', JSON.stringify(playoffWeeks));
             }
 
+            // Delegated, because renderPlayoffWeeks() rebuilds the checkboxes once
+            // the season's weeks have loaded, and a listener bound to the static
+            // fallback markup would be lost with it.
             function initPlayoffWeeks() {
                 document.querySelectorAll('.playoff-week-checkbox').forEach(cb => {
+                    cb.checked = playoffWeeks.includes(parseInt(cb.value, 10));
+                });
+
+                document.getElementById('playoff-weeks').addEventListener('change', event => {
+                    const cb = event.target;
+                    if (!cb.classList.contains('playoff-week-checkbox')) return;
                     const week = parseInt(cb.value, 10);
-                    cb.checked = playoffWeeks.includes(week);
 
-                    cb.addEventListener('change', () => {
-                        if (cb.checked) {
-                            if (!playoffWeeks.includes(week)) playoffWeeks.push(week);
-                        } else {
-                            playoffWeeks = playoffWeeks.filter(w => w !== week);
-                        }
-                        playoffWeeks.sort((a, b) => a - b);
-                        savePlayoffWeeks();
-                        updateSettingsSummary();
+                    if (cb.checked) {
+                        if (!playoffWeeks.includes(week)) playoffWeeks.push(week);
+                    } else {
+                        playoffWeeks = playoffWeeks.filter(w => w !== week);
+                    }
+                    playoffWeeks.sort((a, b) => a - b);
+                    savePlayoffWeeks();
+                    updateSettingsSummary();
 
-                        refreshPlayoffSchedule().then(() => {
-                            decorateScheduleColumns();
-                            applyFiltersAndSort();
-                        });
+                    refreshPlayoffSchedule().then(() => {
+                        decorateScheduleColumns();
+                        applyFiltersAndSort();
                     });
                 });
+            }
+
+            // The season's last weeks, from the same weeks the Lineups page edits
+            // (fantasy-weeks.js), so merging or moving a week there moves the
+            // playoff weeks here. The markup's hardcoded weeks stand if the load
+            // fails. A stored pick that no longer names one of these weeks is
+            // dropped rather than left counting invisibly in the summary.
+            const PLAYOFF_WEEKS_SHOWN = 5;
+
+            async function renderPlayoffWeeks() {
+                let loaded;
+                try {
+                    loaded = await FantasyWeeks.load();
+                } catch (error) {
+                    console.error('Fantasy weeks failed to load; using the built-in playoff weeks.', error);
+                    return;
+                }
+
+                const shown = loaded.weeks.slice(-PLAYOFF_WEEKS_SHOWN);
+                const numbers = shown.map(w => w.week);
+                const kept = playoffWeeks.filter(w => numbers.includes(w));
+                if (kept.length !== playoffWeeks.length) {
+                    playoffWeeks = kept;
+                    savePlayoffWeeks();
+                }
+
+                const md = iso => `${parseInt(iso.slice(5, 7), 10)}/${parseInt(iso.slice(8, 10), 10)}`;
+                document.querySelector('#playoff-weeks .grid').innerHTML = shown.map(w => `
+                    <label class="flex items-start space-x-2 cursor-pointer">
+                        <input type="checkbox" value="${w.week}" data-start="${w.start}" data-end="${w.end}"
+                               ${playoffWeeks.includes(w.week) ? 'checked' : ''}
+                               class="playoff-week-checkbox mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-600">
+                        <span class="select-none">
+                            <span class="block text-sm font-medium text-gray-300">Week ${w.week}</span>
+                            <span class="block text-xs text-gray-500">${md(w.start)} – ${md(w.end)}</span>
+                        </span>
+                    </label>`).join('');
+
+                document.getElementById('playoff-weeks-note').textContent = loaded.customised
+                    ? 'Week numbers follow the weeks edited for your league on the Lineups page.'
+                    : "Week numbers are based on Yahoo's schedule. Edit them on the Lineups page.";
+                updateSettingsSummary();
             }
 
             // One-line recap of the modal's contents, shown on the page itself
@@ -2115,7 +2164,11 @@
                 // categories picked there is nothing to rank by, so the cheaper call
                 // stands and a first-time visitor sees exactly what they saw before.
                 // Independent of each other, so pay for one round trip, not two.
-                await Promise.all([refreshPlayoffSchedule(), loadSeasonSchedule()]);
+                // Playoff weeks first: the playoff column reads their dates.
+                await Promise.all([
+                    renderPlayoffWeeks().then(refreshPlayoffSchedule),
+                    loadSeasonSchedule(),
+                ]);
 
                 if (selectedStats.length > 0) {
                     await applyRankingSettings();
