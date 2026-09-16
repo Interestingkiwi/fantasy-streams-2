@@ -212,7 +212,114 @@ check("against a lost category, the lineup chases the live one",
 
 
 # --------------------------------------------------------------------------
-print("\n=== 7. routes on real data ===")
+print("\n=== 7. planned moves ===")
+
+check("a move applies from its date, not before",
+      wp.roster_on([1, 2], [{"add": 3, "drop": 2, "date": "2027-02-02"}], "2027-02-01") == ["1", "2"]
+      and wp.roster_on([1, 2], [{"add": 3, "drop": 2, "date": "2027-02-02"}], "2027-02-02") == ["1", "3"])
+check("moves chain in date order, whatever order they arrive in",
+      wp.roster_on([1], [{"add": 3, "drop": 2, "date": "2027-02-03"},
+                         {"add": 2, "drop": 1, "date": "2027-02-01"}], "2027-02-03") == ["3"])
+check("an add with no drop just grows the roster",
+      wp.roster_on([1], [{"add": 2, "drop": None, "date": "2027-02-01"}], "2027-02-01") == ["1", "2"])
+
+# Star (TOR) plays every night; swap him for Winger (MTL) from the second night.
+moved = wp.plan_week(POOL, [1], ["G"], {"C": 1, "LW": 1}, WEEK, SEASON,
+                     moves=[{"add": 3, "drop": 1, "date": "2027-02-02"}])
+moved_by_id = {p["playerId"]: p for p in moved["players"]}
+check("the dropped player plays until the night before the move",
+      moved_by_id[1]["games"] == 1 and moved_by_id[1]["dropped"], moved_by_id[1])
+check("the added player counts from the move's night on",
+      moved_by_id[3]["games"] == 1 and moved_by_id[3]["added"], moved_by_id[3])
+check("and the lineups follow",
+      moved["days"][0]["slots"][0]["player"]["fullName"] == "Star"
+      and moved["days"][1]["slots"][0]["player"] is None
+      and moved["days"][2]["slots"][1]["player"]["fullName"] == "Winger",
+      [d["slots"] for d in moved["days"]])
+
+
+# --------------------------------------------------------------------------
+print("\n=== 8. free agents ===")
+
+# A league of three: mine, the opponent's, and one other holding the star.
+FA_POOL = POOL + [
+    skater(60, "Hot Winger", "LW", "TOR", 45),       # free, plays every night
+    skater(61, "Cold Winger", "LW", "EDM", 60),      # free, never plays this week
+    skater(62, "Owned Winger", "LW", "TOR", 55),     # on the third team
+    skater(63, "My Weak LW", "LW", "TOR", 6),
+    skater(64, "My Injured C", "C", "TOR", 2),
+]
+SMALL = {"C": 1, "LW": 1}
+week = wp.Week(FA_POOL, ["G", "SOG"], SMALL, WEEK, SEASON)
+mine, theirs, third = [1, 63, 64], [2, 3], [62]
+rostered = mine + theirs + third
+season = {"1": {"value": 9, "rank": 1}, "63": {"value": 1, "rank": 90},
+          "64": {"value": 0.5, "rank": 95}}
+
+found = wp.free_agents(week, mine, rostered, out=[64], opponent=theirs, season=season)
+names = [c["player"]["fullName"] for c in found["candidates"]]
+check("the best add is the free agent who plays and produces", names[0] == "Hot Winger", names)
+check("nobody on any roster is suggested", "Owned Winger" not in names and "Star" not in names, names)
+check("a free agent with no games this week is not suggested", "Cold Winger" not in names, names)
+check("the metric is expected categories won against an opponent",
+      found["metric"] == "expectedWins", found["metric"])
+check("the suggested drop is the weakest on the season - never the one marked out",
+      found["dropCandidates"][0] == "63" and "64" not in found["dropCandidates"],
+      found["dropCandidates"])
+
+best = found["candidates"][0]
+check("a gain is given for every night of the week", set(best["gains"]) == set(WEEK), best["gains"])
+check("the recommended date is the best of them",
+      best["gain"] == max(best["gains"].values())
+      and best["gains"][best["recommendedDate"]] == best["gain"], best)
+check("the season rank rides along for both sides of the move",
+      best["drop"]["seasonRank"] == 90, best["drop"])
+
+# The gain has to be the real difference a plan would show, not an estimate.
+before = wp.plan_week(None, mine, None, None, None, None, week=week, out=[64], opponent=theirs)
+after = wp.plan_week(None, mine, None, None, None, None, week=week, out=[64], opponent=theirs,
+                     moves=[{"add": 60, "drop": int(best["drop"]["playerId"]),
+                             "date": best["recommendedDate"]}])
+real = after["matchup"]["expectedWins"] - before["matchup"]["expectedWins"]
+check("the gain shown matches re-planning the week with the move made",
+      abs(real - best["gain"]) < 0.02, (real, best["gain"]))
+
+chosen = wp.free_agents(week, mine, rostered, out=[64], opponent=theirs, season=season,
+                        evaluate={"add": 60, "drop": 1})
+check("a user's own drop is scored instead of the suggestion",
+      len(chosen["candidates"]) == 1 and chosen["candidates"][0]["drop"]["fullName"] == "Star",
+      chosen["candidates"])
+check("and dropping the star for him is worse than dropping the weak winger",
+      chosen["candidates"][0]["gain"] < best["gain"], (chosen["candidates"][0]["gain"], best["gain"]))
+
+for label, bad in [("an add already on a roster", {"add": 62, "drop": 63}),
+                   ("a drop not on your roster", {"add": 60, "drop": 2}),
+                   ("an add not in the projections", {"add": 999999, "drop": 63})]:
+    try:
+        wp.free_agents(week, mine, rostered, opponent=theirs, evaluate=bad)
+        check(f"{label} is refused", False)
+    except ValueError:
+        check(f"{label} is refused", True)
+
+planned = wp.free_agents(week, mine, rostered, out=[64], opponent=theirs, season=season,
+                         moves=[{"add": 60, "drop": 63, "date": WEEK[0]}])
+check("a free agent already added by a planned move is not suggested again",
+      "Hot Winger" not in [c["player"]["fullName"] for c in planned["candidates"]],
+      planned["candidates"])
+
+solo = wp.free_agents(week, mine, rostered, out=[64], season=season)
+check("without an opponent the search still runs, on lineup value",
+      solo["metric"] == "value" and solo["candidates"]
+      and solo["candidates"][0]["player"]["fullName"] == "Hot Winger", solo)
+
+points_week = wp.Week(FA_POOL, ["G"], SMALL, WEEK, SEASON, points={"G": 3.0})
+in_points = wp.free_agents(points_week, mine, rostered, out=[64], opponent=theirs, season=season)
+check("a points league judges moves in points",
+      in_points["metric"] == "points" and in_points["candidates"][0]["gain"] > 0, in_points)
+
+
+# --------------------------------------------------------------------------
+print("\n=== 9. routes on real data ===")
 
 try:
     import app as app_module

@@ -7,6 +7,7 @@
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="{{ url_for('static', filename='fantasy-weeks.js') }}"></script>
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
 
@@ -62,37 +63,98 @@
                     <p class="text-xs text-gray-500 mb-2">Only slots that start. F takes any forward, W either winger, Util any skater.</p>
                     <div id="slot-inputs" class="grid grid-cols-4 sm:grid-cols-8 gap-2"></div>
                 </div>
+
+                <div>
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+                        <h3 class="text-sm font-semibold text-gray-300">Fantasy weeks</h3>
+                        <button id="weeks-toggle" type="button" aria-pressed="false" aria-controls="weeks-editor"
+                                class="column-toggle">Edit weeks</button>
+                    </div>
+                    <p id="weeks-summary" class="text-xs text-gray-500"></p>
+                    <div id="weeks-editor" class="hidden mt-3">
+                        <p class="text-xs text-gray-500 mb-2">
+                            Change a week&rsquo;s last night and the next week starts the day after.
+                            Weeks are shared with Draft Prep&rsquo;s playoff weeks and the NHL Schedule page.
+                        </p>
+                        <div class="overflow-auto max-h-[70dvh] sm:max-h-[28rem] rounded-md border border-gray-700">
+                            <table class="data-table w-full text-left text-sm">
+                                <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                    <tr>
+                                        <th class="px-3 py-2 font-medium">Week</th>
+                                        <th class="px-3 py-2 font-medium">First night</th>
+                                        <th class="px-3 py-2 font-medium">Last night</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="weeks-rows" class="divide-y divide-gray-700"></tbody>
+                            </table>
+                        </div>
+                        <button id="weeks-reset" type="button"
+                                class="mt-3 px-3 py-2 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">
+                            Reset to standard weeks
+                        </button>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <!-- Rosters: one template, two sides -->
-        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
-            {% for side, title, hint in [
-                ('mine', 'Your roster', 'Search to add your players.'),
-                ('theirs', 'Opponent', 'Optional. Add this week’s opponent to see who wins each category and set lineups to chase the close ones.'),
-            ] %}
-            <section class="bg-gray-800 rounded-lg border border-gray-700" data-side="{{ side }}">
-                <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-center justify-between gap-2">
-                    <h2 class="text-lg font-semibold text-white">{{ title }} <span class="roster-count text-sm font-normal text-gray-400"></span></h2>
-                    <div class="flex items-center gap-2 w-full sm:w-auto">
-                        <div class="relative flex-1 sm:w-72">
-                            <label for="search-{{ side }}" class="sr-only">Add a player to {{ title }}</label>
-                            <input id="search-{{ side }}" type="search" autocomplete="off" placeholder="Add a player&hellip;"
-                                   class="player-search form-input w-full p-2 text-sm" aria-controls="results-{{ side }}">
-                            <ul id="results-{{ side }}" role="listbox"
-                                class="search-results hidden absolute z-30 left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-xl max-h-[60dvh] overflow-y-auto"></ul>
-                        </div>
-                        {% if side == 'theirs' %}
-                        <button type="button" class="clear-btn hidden shrink-0 px-3 py-2 text-sm text-gray-400 hover:text-red-400 border border-gray-600 rounded-md">Clear</button>
-                        {% endif %}
+        <!-- League rosters: every team, so free agents are everyone on none -->
+        <section id="teams" class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <h2 class="text-lg font-semibold text-white">League rosters</h2>
+                    <p id="teams-summary" class="text-xs text-gray-400"></p>
+                </div>
+
+                <!-- Import every team from Yahoo's Starting Rosters page -->
+                <div class="mt-3 flex flex-wrap items-end gap-2">
+                    <div class="flex-1 min-w-[9rem] sm:flex-none sm:w-44">
+                        <label for="league-id" class="block mb-1 text-xs font-medium text-gray-400">League ID</label>
+                        <input id="league-id" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 12345"
+                               title="Find your League ID in Yahoo under League > Settings"
+                               aria-describedby="league-id-help" class="form-input w-full p-2 text-sm">
                     </div>
+                    <button id="scrape-rosters" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2">Scrape rosters</button>
                 </div>
-                <div class="roster-body overflow-x-auto" data-hint="{{ hint }}">
-                    <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
+                <p id="league-id-help" class="text-xs text-gray-500 mt-1">
+                    Find your League ID in Yahoo under <strong class="text-gray-400">League &gt; Settings</strong> &mdash; it&rsquo;s also the number in your league&rsquo;s web address.
+                    <button id="private-help" type="button" class="text-blue-400 hover:text-blue-300 underline py-1">Private league?</button>
+                </p>
+                {% if roster_scrape_test %}
+                <p class="text-xs text-amber-300 mt-1">
+                    Local test mode: the League ID is ignored, and rosters come from the completed 2025-26 league {{ roster_test_league }}.
+                    Set <code>ROSTER_SCRAPE_TEST=0</code> to use a real League ID.
+                </p>
+                {% endif %}
+                <div id="roster-import" class="hidden mt-3 rounded-md border border-gray-600 bg-gray-900 p-3 text-sm"></div>
+                <!-- One sideways-scrolling row on a phone, per the phone layout -->
+                <div id="team-tabs" class="flex gap-2 mt-3 overflow-x-auto whitespace-nowrap pb-1" role="tablist" aria-label="Teams"></div>
+            </div>
+
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-col gap-3">
+                <div class="flex flex-wrap items-end gap-3">
+                    <div class="flex-1 min-w-[12rem]">
+                        <label for="team-name" class="block mb-1 text-xs font-medium text-gray-400">Team name</label>
+                        <input id="team-name" type="text" autocomplete="off" maxlength="40" class="form-input w-full p-2 text-sm">
+                    </div>
+                    <div class="inline-flex rounded-md overflow-hidden border border-gray-600" role="group" aria-label="This team is">
+                        <button id="role-mine" type="button" aria-pressed="false" class="role-btn px-3 py-2 text-sm font-medium" data-role="mine">My team</button>
+                        <button id="role-opponent" type="button" aria-pressed="false" class="role-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-role="opponent">This week&rsquo;s opponent</button>
+                    </div>
+                    <button id="team-delete" type="button" class="px-3 py-2 text-sm text-gray-400 hover:text-red-400 border border-gray-600 rounded-md">Delete team</button>
                 </div>
-            </section>
-            {% endfor %}
-        </div>
+                <div class="relative w-full sm:w-80">
+                    <label for="team-search" class="sr-only">Add a player to this team</label>
+                    <input id="team-search" type="search" autocomplete="off" placeholder="Add a player&hellip;"
+                           class="form-input w-full p-2 text-sm" aria-controls="team-results">
+                    <ul id="team-results" role="listbox"
+                        class="hidden absolute z-30 left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-xl max-h-[60dvh] overflow-y-auto"></ul>
+                </div>
+            </div>
+
+            <div id="roster-body" class="overflow-x-auto">
+                <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
+            </div>
+        </section>
 
         <!-- Week -->
         <section class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-3 sm:gap-4">
@@ -120,6 +182,38 @@
                 Type in the matchup score as it stands (the boxes are at the end of each row). Pair it with <em>Only nights still to play</em>, or tonight is counted twice.
             </p>
             <div id="matchup-body" class="overflow-x-auto"></div>
+        </section>
+
+        <!-- Planned moves: add/drops that feed the lineups and matchup above -->
+        <section id="moves" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white">Planned moves</h2>
+                <p class="text-xs text-gray-500 mt-0.5">An add counts from its night; the player dropped plays until the night before. Change a night to move the transaction.</p>
+            </div>
+            <ul id="moves-body" class="divide-y divide-gray-700"></ul>
+        </section>
+
+        <!-- Free agents -->
+        <section id="free-agents" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-col gap-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <h2 class="text-lg font-semibold text-white">Best adds this week</h2>
+                        <p id="fa-summary" class="text-xs text-gray-500 mt-0.5"></p>
+                    </div>
+                    <button id="fa-find" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2">Find adds</button>
+                </div>
+                <div class="relative w-full sm:w-80">
+                    <label for="fa-search" class="sr-only">Score a specific free agent</label>
+                    <input id="fa-search" type="search" autocomplete="off" placeholder="Score a specific free agent&hellip;"
+                           class="form-input w-full p-2 text-sm" aria-controls="fa-results">
+                    <ul id="fa-results" role="listbox"
+                        class="hidden absolute z-30 left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-xl max-h-[60dvh] overflow-y-auto"></ul>
+                </div>
+            </div>
+            <div id="fa-body" class="overflow-x-auto">
+                <p class="text-gray-400 text-sm p-4">Enter the league&rsquo;s rosters, then select Find adds.</p>
+            </div>
         </section>
 
         <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
@@ -169,11 +263,16 @@
             mode: 'fs_leagueMode',
             pim: 'fs_pimPolarity',
             slots: 'fs_lineupSlots',
-            mine: 'fs_standaloneRoster',
-            theirs: 'fs_standaloneOpponent',
+            teams: 'fs_leagueTeams',
+            moves: 'fs_standaloneMoves',
+            // Before every team was entered there were just two rosters; read
+            // once, to seed the league, and left in place.
+            legacyMine: 'fs_standaloneRoster',
+            legacyTheirs: 'fs_standaloneOpponent',
             week: 'fs_standaloneWeek',
             remaining: 'fs_standaloneRemaining',
             banked: 'fs_standaloneBanked',
+            yahooLeagueId: 'fs_yahooLeagueId',
         };
 
         function read(key, fallback) {
@@ -206,7 +305,43 @@
             };
         }
 
-        const readRoster = key => (read(key, []) || []).filter(p => p && p.id != null);
+        const cleanRoster = list => (Array.isArray(list) ? list : [])
+            .filter(p => p && p.id != null)
+            .map(p => ({ id: p.id, out: Boolean(p.out) }));
+
+        // --- The league ------------------------------------------------------
+        // Every team's roster, because a free agent is anyone on none of them.
+        // Stored as { teams: [{ id, name, players: [{ id, out }] }], mine,
+        // opponent }, where mine and opponent are team ids. That shape is the
+        // target for a future sign-in roster scan to fill in one go.
+        function newTeamId() {
+            return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        }
+
+        function readLeague() {
+            const saved = read(KEYS.teams, null);
+            if (saved && Array.isArray(saved.teams) && saved.teams.length) {
+                const teams = saved.teams
+                    .filter(t => t && t.id)
+                    .map(t => ({ id: String(t.id), name: String(t.name || 'Team'), players: cleanRoster(t.players) }));
+                const has = id => teams.some(t => t.id === id);
+                return {
+                    teams,
+                    mine: has(saved.mine) ? saved.mine : teams[0].id,
+                    opponent: has(saved.opponent) && saved.opponent !== saved.mine ? saved.opponent : null,
+                };
+            }
+
+            // First visit since teams arrived: the two old rosters become the
+            // first two teams, and the rest of the league is laid out empty.
+            const count = Math.min(32, Math.max(2, parseInt(localStorage.getItem('fs_numTeams'), 10) || 12));
+            const teams = [
+                { id: newTeamId(), name: 'My team', players: cleanRoster(read(KEYS.legacyMine, [])) },
+                { id: newTeamId(), name: 'Opponent', players: cleanRoster(read(KEYS.legacyTheirs, [])) },
+            ];
+            while (teams.length < count) teams.push({ id: newTeamId(), name: `Team ${teams.length + 1}`, players: [] });
+            return { teams, mine: teams[0].id, opponent: teams[1].players.length ? teams[1].id : null };
+        }
 
         let setup = { players: [], categories: [] };
         let playersById = new Map();
@@ -214,12 +349,26 @@
         let selected = read(KEYS.selected, []) || [];
         let pointWeights = read(KEYS.weights, {}) || {};
         let slots = Object.assign({}, seedSlots(), read(KEYS.slots, {}) || {});
-        const rosters = { mine: readRoster(KEYS.mine), theirs: readRoster(KEYS.theirs) };
+        const league = readLeague();
+        // Save a freshly laid-out league at once, so its team ids are stable
+        if (!read(KEYS.teams, null)) write(KEYS.teams, league);
+        let activeTeamId = league.mine;
+        const teamById = id => league.teams.find(t => t.id === id) || null;
+        // The two rosters a plan is about, read live from the league
+        const rosters = {
+            get mine() { return teamById(league.mine)?.players || []; },
+            get theirs() { return teamById(league.opponent)?.players || []; },
+        };
+        // Planned add/drops, keyed by week like the score so far
+        let moves = read(KEYS.moves, {}) || {};
+        let faResults = null;     // the last free-agent search, and what it was run against
+        let faStale = false;
         // Keyed by week, so last week's score cannot leak into this one
         let banked = read(KEYS.banked, {}) || {};
         let bankedOpen = false;
         let gridSide = 'mine';
-        let weeks = [];
+        let weekData = null;     // FantasyWeeks.load(): season, standard weeks, customised
+        let weeks = [];          // the weeks in use - standard, or this league's edit
         let lastPlan = null;
 
         const pimNegative = () => parseInt(localStorage.getItem(KEYS.pim), 10) === -1;
@@ -352,35 +501,85 @@
             schedulePlan();
         });
 
-        // --- Rosters ---------------------------------------------------------
-        const sideEl = side => document.querySelector(`section[data-side="${side}"]`);
+        // --- League rosters --------------------------------------------------
+        const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+        const asId = raw => (/^\d+$/.test(String(raw)) ? Number(raw) : raw);
+        const activeTeam = () => teamById(activeTeamId) || league.teams[0];
 
-        function saveRoster(side) {
-            write(KEYS[side], rosters[side]);
-            renderRoster(side);
+        // Every rostered playerId in the league, as strings
+        function rosteredIds() {
+            return new Set(league.teams.flatMap(t => t.players.map(p => String(p.id))));
+        }
+
+        function teamOf(playerId) {
+            return league.teams.find(t => t.players.some(p => String(p.id) === String(playerId))) || null;
+        }
+
+        function saveLeague() {
+            write(KEYS.teams, league);
+            markFreeAgentsStale();
+            renderTeams();
+            renderMatchup();
             schedulePlan();
         }
 
-        function plannedFor(side) {
-            const players = side === 'mine' ? lastPlan?.players : lastPlan?.opponent?.players;
-            return new Map((players || []).map(p => [String(p.playerId), p]));
+        function renderTeams() {
+            const entered = league.teams.filter(t => t.players.length).length;
+            const players = league.teams.reduce((n, t) => n + t.players.length, 0);
+            $('teams-summary').textContent =
+                `${entered} of ${league.teams.length} teams entered · ${players} players rostered`;
+
+            $('team-tabs').innerHTML = league.teams.map(t => {
+                const on = t.id === activeTeam().id;
+                const tag = t.id === league.mine ? 'You' : t.id === league.opponent ? 'Opp' : '';
+                return `
+                <button type="button" role="tab" aria-selected="${on}" data-team="${esc(t.id)}"
+                        class="team-tab column-toggle shrink-0 inline-flex items-center gap-1.5" aria-pressed="${on}">
+                    ${esc(t.name)}
+                    <span class="text-xs opacity-75">${t.players.length}</span>
+                    ${tag ? `<span class="text-[10px] font-semibold uppercase px-1 rounded ${tag === 'You' ? 'bg-emerald-700' : 'bg-red-800'} text-white">${tag}</span>` : ''}
+                </button>`;
+            }).join('') + `
+                <button type="button" id="team-add" class="column-toggle shrink-0">+ Add team</button>`;
+
+            const team = activeTeam();
+            if (document.activeElement !== $('team-name')) $('team-name').value = team.name;
+            const roles = { mine: league.mine === team.id, opponent: league.opponent === team.id };
+            document.querySelectorAll('.role-btn').forEach(btn => {
+                const on = roles[btn.dataset.role];
+                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+                btn.classList.toggle('bg-blue-600', on);
+                btn.classList.toggle('text-white', on);
+                btn.classList.toggle('bg-gray-700', !on);
+                btn.classList.toggle('text-gray-300', !on);
+            });
+            $('team-delete').disabled = league.teams.length <= 2;
+            $('team-delete').classList.toggle('opacity-50', league.teams.length <= 2);
+
+            renderRoster();
         }
 
-        function renderRoster(side) {
-            const roster = rosters[side];
-            const section = sideEl(side);
-            const body = section.querySelector('.roster-body');
-            section.querySelector('.roster-count').textContent = roster.length ? `(${roster.length})` : '';
-            section.querySelector('.clear-btn')?.classList.toggle('hidden', !roster.length);
-
-            if (!roster.length) {
-                body.innerHTML = `<p class="text-gray-400 text-sm p-4">${body.dataset.hint}</p>`;
+        function renderRoster() {
+            const team = activeTeam();
+            const body = $('roster-body');
+            if (!team.players.length) {
+                const hint = team.id === league.mine
+                    ? 'Search above to add your players.'
+                    : team.id === league.opponent
+                        ? 'Add this week’s opponent to see who wins each category and set lineups to chase the close ones.'
+                        : 'Add this team’s players so they are not suggested as free agents.';
+                body.innerHTML = `<p class="text-gray-400 text-sm p-4">${hint}</p>`;
                 return;
             }
 
-            const planned = plannedFor(side);
+            // Games and starts only mean something for the two sides of the plan
+            const source = team.id === league.mine ? lastPlan?.players
+                : team.id === league.opponent ? lastPlan?.opponent?.players : null;
+            const planned = new Map((source || []).map(p => [String(p.playerId), p]));
+            const showPlan = Boolean(source);
+
             const order = { C: 0, L: 1, R: 2, D: 3, G: 4 };
-            const rows = roster.map(entry => ({ entry, player: playersById.get(String(entry.id)) }))
+            const rows = team.players.map(entry => ({ entry, player: playersById.get(String(entry.id)) }))
                 .sort((a, b) => (order[a.player?.positionCode] ?? 9) - (order[b.player?.positionCode] ?? 9)
                     || String(a.player?.fullName).localeCompare(String(b.player?.fullName)));
 
@@ -391,9 +590,10 @@
                             <th class="col-sticky px-4 py-2 font-medium">Player</th>
                             <th class="px-4 py-2 font-medium">Pos</th>
                             <th class="px-4 py-2 font-medium">Team</th>
+                            ${showPlan ? `
                             <th class="px-4 py-2 font-medium text-right">Games</th>
                             <th class="px-4 py-2 font-medium text-right">Starts</th>
-                            <th class="px-4 py-2 font-medium text-right">Benched</th>
+                            <th class="px-4 py-2 font-medium text-right">Benched</th>` : ''}
                             <th class="px-4 py-2 font-medium text-center">Out</th>
                             <th class="px-4 py-2 font-medium"><span class="sr-only">Remove</span></th>
                         </tr>
@@ -401,7 +601,6 @@
                     <tbody class="divide-y divide-gray-700">
                         ${rows.map(({ entry, player }) => {
                             const plan = planned.get(String(entry.id));
-                            const starts = plan ? round1(plan.starts) : '';
                             const wasted = plan?.benchedGames || 0;
                             return `
                             <tr class="table-row-hover ${entry.out ? 'opacity-60' : ''}">
@@ -409,9 +608,10 @@
                                     : `<span class="text-gray-500">Unknown player ${esc(entry.id)}</span>`}</td>
                                 <td class="px-4 py-2 text-gray-300">${esc(player?.eligiblePositions || player?.positionCode || '')}</td>
                                 <td class="px-4 py-2 text-gray-300">${esc(player?.teamAbbrevs || '')}</td>
+                                ${showPlan ? `
                                 <td class="px-4 py-2 text-right text-gray-300">${esc(plan?.games ?? '')}</td>
-                                <td class="px-4 py-2 text-right text-white font-semibold">${esc(starts)}</td>
-                                <td class="px-4 py-2 text-right ${wasted ? 'text-amber-400 font-semibold' : 'text-gray-500'}">${esc(plan ? wasted : '')}</td>
+                                <td class="px-4 py-2 text-right text-white font-semibold">${esc(plan ? round1(plan.starts) : '')}</td>
+                                <td class="px-4 py-2 text-right ${wasted ? 'text-amber-400 font-semibold' : 'text-gray-500'}">${esc(plan ? wasted : '')}</td>` : ''}
                                 <td class="px-4 py-2 text-center">
                                     <input type="checkbox" class="out-toggle w-4 h-4" data-id="${esc(entry.id)}" ${entry.out ? 'checked' : ''}
                                            aria-label="Mark ${esc(player?.fullName || entry.id)} out">
@@ -426,26 +626,20 @@
                 </table>`;
         }
 
-        const fold = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-
-        function renderSearch(side) {
-            const section = sideEl(side);
-            const query = fold(section.querySelector('.player-search').value.trim());
-            const list = section.querySelector('.search-results');
-            if (query.length < 2) {
-                list.classList.add('hidden');
-                return;
-            }
-            // A player can only be on one of the two rosters
-            const owned = new Set([...rosters.mine, ...rosters.theirs].map(p => String(p.id)));
-            const matches = setup.players
-                .filter(p => !owned.has(String(p.playerId)) && fold(p.fullName).includes(query))
+        // A player list for a search box: name matches, best first by position
+        function searchList(query, exclude) {
+            const q = fold(query.trim());
+            if (q.length < 2) return null;
+            return setup.players
+                .filter(p => !exclude.has(String(p.playerId)) && fold(p.fullName).includes(q))
                 .slice(0, 12);
+        }
 
+        function renderOptions(list, matches, buttonClass) {
             list.innerHTML = matches.length
                 ? matches.map(p => `
                     <li role="option">
-                        <button type="button" class="add-btn w-full text-left px-3 py-2.5 hover:bg-gray-700 flex justify-between gap-3"
+                        <button type="button" class="${buttonClass} w-full text-left px-3 py-2.5 hover:bg-gray-700 flex justify-between gap-3"
                                 data-id="${esc(p.playerId)}">
                             <span class="text-white">${esc(p.fullName)}</span>
                             <span class="text-gray-400 text-xs whitespace-nowrap">${esc(p.eligiblePositions || p.positionCode)} &middot; ${esc(p.teamAbbrevs)}</span>
@@ -455,51 +649,666 @@
             list.classList.remove('hidden');
         }
 
-        ['mine', 'theirs'].forEach(side => {
-            const section = sideEl(side);
-            const search = section.querySelector('.player-search');
-            const results = section.querySelector('.search-results');
+        function renderTeamSearch() {
+            // A player can only be on one team in the league
+            const matches = searchList($('team-search').value, rosteredIds());
+            if (!matches) return $('team-results').classList.add('hidden');
+            renderOptions($('team-results'), matches, 'team-add-player');
+        }
 
-            search.addEventListener('input', () => renderSearch(side));
-            search.addEventListener('focus', () => renderSearch(side));
+        $('team-search').addEventListener('input', renderTeamSearch);
+        $('team-search').addEventListener('focus', renderTeamSearch);
+        $('team-results').addEventListener('click', event => {
+            const add = event.target.closest('.team-add-player');
+            if (!add) return;
+            activeTeam().players.push({ id: asId(add.dataset.id), out: false });
+            $('team-search').value = '';
+            $('team-results').classList.add('hidden');
+            saveLeague();
+            $('team-search').focus();
+        });
 
-            results.addEventListener('click', event => {
-                const add = event.target.closest('.add-btn');
-                if (!add) return;
-                rosters[side].push({ id: /^\d+$/.test(add.dataset.id) ? Number(add.dataset.id) : add.dataset.id, out: false });
-                search.value = '';
-                results.classList.add('hidden');
-                saveRoster(side);
-                search.focus();
-            });
+        $('team-tabs').addEventListener('click', event => {
+            if (event.target.closest('#team-add')) {
+                const team = { id: newTeamId(), name: `Team ${league.teams.length + 1}`, players: [] };
+                league.teams.push(team);
+                activeTeamId = team.id;
+                saveLeague();
+                return;
+            }
+            const tab = event.target.closest('.team-tab');
+            if (!tab) return;
+            activeTeamId = tab.dataset.team;
+            renderTeams();
+        });
 
-            section.querySelector('.roster-body').addEventListener('click', event => {
-                const remove = event.target.closest('.remove-btn');
-                if (!remove) return;
-                rosters[side] = rosters[side].filter(p => String(p.id) !== remove.dataset.id);
-                saveRoster(side);
-            });
+        $('team-name').addEventListener('input', event => {
+            activeTeam().name = event.target.value.trim() || 'Team';
+            write(KEYS.teams, league);
+            // Only the tabs: redrawing the input being typed in would lose the caret
+            const tab = document.querySelector(`.team-tab[data-team="${activeTeam().id}"]`);
+            if (tab) tab.firstChild.textContent = activeTeam().name;
+        });
+        $('team-name').addEventListener('change', renderTeams);
 
-            section.querySelector('.roster-body').addEventListener('change', event => {
-                if (!event.target.classList.contains('out-toggle')) return;
-                const entry = rosters[side].find(p => String(p.id) === event.target.dataset.id);
-                if (entry) entry.out = event.target.checked;
-                saveRoster(side);
-            });
+        document.querySelectorAll('.role-btn').forEach(btn => btn.addEventListener('click', () => {
+            const team = activeTeam();
+            if (btn.dataset.role === 'mine') {
+                if (league.mine === team.id) return;     // there is always a team that is yours
+                if (league.opponent === team.id) league.opponent = null;
+                league.mine = team.id;
+            } else {
+                league.opponent = league.opponent === team.id || league.mine === team.id ? null : team.id;
+            }
+            saveLeague();
+        }));
 
-            // Opponents change every week; clearing one should be one tap
-            section.querySelector('.clear-btn')?.addEventListener('click', () => {
-                rosters[side] = [];
-                saveRoster(side);
-            });
+        $('team-delete').addEventListener('click', () => {
+            const team = activeTeam();
+            if (league.teams.length <= 2) return;
+            if (team.players.length && !window.confirm(`Delete ${team.name} and its ${team.players.length} players?`)) return;
+            league.teams = league.teams.filter(t => t.id !== team.id);
+            if (league.mine === team.id) league.mine = league.teams[0].id;
+            if (league.opponent === team.id) league.opponent = null;
+            activeTeamId = league.mine;
+            saveLeague();
+        });
+
+        $('roster-body').addEventListener('click', event => {
+            const remove = event.target.closest('.remove-btn');
+            if (!remove) return;
+            const team = activeTeam();
+            team.players = team.players.filter(p => String(p.id) !== remove.dataset.id);
+            saveLeague();
+        });
+
+        $('roster-body').addEventListener('change', event => {
+            if (!event.target.classList.contains('out-toggle')) return;
+            const entry = activeTeam().players.find(p => String(p.id) === event.target.dataset.id);
+            if (entry) entry.out = event.target.checked;
+            saveLeague();
         });
 
         document.addEventListener('click', event => {
-            document.querySelectorAll('section[data-side]').forEach(section => {
-                if (!section.querySelector('.relative').contains(event.target)) {
-                    section.querySelector('.search-results').classList.add('hidden');
+            [['team-search', 'team-results'], ['fa-search', 'fa-results']].forEach(([input, list]) => {
+                if (!$(input).parentElement.contains(event.target)) $(list).classList.add('hidden');
+            });
+        });
+
+        // --- Scraping rosters from Yahoo -------------------------------------
+        // Public leagues are fetched by the server. Private ones redirect that
+        // fetch to Yahoo's sign-in, which the server cannot get past - and the
+        // user signing in to Yahoo here does not help, since the server's
+        // request never carries this browser's cookies. For those, a
+        // bookmarklet reads the page in the user's own signed-in tab and posts
+        // it back to this page. Both end in the same preview, then Replace.
+        // This page's own origin, not one built on the server: behind Render's
+        // TLS proxy Flask sees http, and a message to the wrong scheme is dropped.
+        const APP_ORIGIN = window.location.origin;
+        const ROSTER_TEST_MODE = {{ 'true' if roster_scrape_test else 'false' }};
+        const ROSTER_TEST_URL = {{ roster_test_url | tojson }};
+        const YAHOO_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*yahoo\.com$/;
+        let pendingImport = null;
+
+        // Runs on Yahoo's page, not this one: turned into the bookmarklet's
+        // source below, so it must stand alone and name nothing from here.
+        function sendRostersToFantasyStreams(appOrigin) {
+            var onYahoo = /(^|\.)yahoo\.com$/.test(location.hostname);
+            if (!onYahoo || !document.querySelector('table[id^="Tst-team-"]')) {
+                alert('Open your league Starting Rosters page on Yahoo, signed in, then select this bookmark again.');
+                return;
+            }
+            var message = { type: 'fs-rosters', url: location.href, html: document.documentElement.outerHTML };
+
+            // Opened from Fantasy Streams: send it straight back, and wait to hear
+            // it arrived - a posted message to a window that has moved on is
+            // dropped silently, which would otherwise look like success.
+            if (window.opener && !window.opener.closed) {
+                var acked = false;
+                window.addEventListener('message', function onAck(event) {
+                    if (event.origin === appOrigin && event.data && event.data.type === 'fs-received') {
+                        acked = true;
+                        window.removeEventListener('message', onAck);
+                        alert('Rosters sent to Fantasy Streams. You can close this tab.');
+                    }
+                });
+                window.opener.postMessage(message, appOrigin);
+                setTimeout(function () {
+                    if (!acked) {
+                        alert('Fantasy Streams did not answer. Go back to its Lineups page and open Yahoo from there, then try again.');
+                    }
+                }, 5000);
+                return;
+            }
+
+            // Opened some other way: open Fantasy Streams, and send once it says it is ready.
+            var app = window.open(appOrigin + '/standalone/?rosters=receive', '_blank');
+            if (!app) {
+                alert('The Fantasy Streams tab was blocked. Allow pop-ups for Yahoo, then select the bookmark again.');
+                return;
+            }
+            window.addEventListener('message', function onReady(event) {
+                if (event.origin === appOrigin && event.source === app && event.data && event.data.type === 'fs-ready') {
+                    window.removeEventListener('message', onReady);
+                    app.postMessage(message, appOrigin);
                 }
             });
+        }
+
+        const BOOKMARKLET_HREF = 'javascript:' + encodeURIComponent(
+            `(${sendRostersToFantasyStreams.toString()})(${JSON.stringify(APP_ORIGIN)})`);
+
+        function yahooRostersUrl() {
+            if (ROSTER_TEST_MODE) return ROSTER_TEST_URL;
+            const id = leagueIdFrom($('league-id').value);
+            return id ? `https://hockey.fantasysports.yahoo.com/hockey/${id}/startingrosters` : null;
+        }
+
+        // Mirrors yahoo_rosters.league_id_from: a bare number, or a pasted league URL
+        function leagueIdFrom(raw) {
+            const text = String(raw || '').trim();
+            if (/^\d{1,10}$/.test(text)) return text;
+            const found = text.match(/\/hockey\/(?:\d{4}\/hockey\/)?(\d{1,10})(?:\/|$)/);
+            return found ? found[1] : null;
+        }
+
+        function showImportPanel(html) {
+            $('roster-import').innerHTML = html;
+            $('roster-import').classList.toggle('hidden', !html);
+            if (html) $('roster-import').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        function privateLeagueSteps(message) {
+            const url = yahooRostersUrl();
+            showImportPanel(`
+                ${message ? `<p class="text-amber-300 font-medium mb-2">${esc(message)}</p>` : ''}
+                <p class="text-gray-300 mb-2">
+                    Yahoo only shows a private league&rsquo;s rosters to someone signed in, so they have to be read in your own browser.
+                    Signing in to Yahoo on its own won&rsquo;t let Fantasy Streams see them.
+                </p>
+                <ol class="list-decimal pl-5 space-y-2 text-gray-300">
+                    <li>
+                        Drag this button to your bookmarks bar (you only do this once):
+                        <a id="bookmarklet" href="#" draggable="true"
+                           class="inline-block mt-1 px-3 py-2 rounded-md bg-emerald-700 text-white font-medium no-underline cursor-grab">Send rosters to Fantasy Streams</a>
+                    </li>
+                    <li>
+                        ${url
+                            ? `<button type="button" id="open-yahoo-rosters" class="text-blue-400 hover:text-blue-300 underline py-1">Open your league&rsquo;s rosters on Yahoo</button> and sign in if Yahoo asks.`
+                            : 'Enter your League ID above, then come back to this step.'}
+                    </li>
+                    <li>On that Yahoo page, select the bookmark. The rosters come back to this page to review.</li>
+                </ol>
+                <p class="text-xs text-gray-500 mt-2">Needs a desktop browser with a bookmarks bar.</p>
+                <button type="button" class="import-cancel mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>`);
+            // Set from script: a javascript: URL written into the markup would
+            // be one more thing to escape, and this keeps the source readable.
+            const link = $('bookmarklet');
+            link.setAttribute('href', BOOKMARKLET_HREF);
+            link.addEventListener('click', event => {
+                event.preventDefault();
+                alert('Drag this button to your bookmarks bar rather than selecting it here. Then use it on the Yahoo rosters page.');
+            });
+        }
+
+        function importError(code, message) {
+            if (code === 'private') return privateLeagueSteps(message);
+            showImportPanel(`
+                <p class="text-red-400 font-medium">${esc(message)}</p>
+                <button type="button" class="import-cancel mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>`);
+        }
+
+        function previewImport(result) {
+            pendingImport = result;
+            const teams = result.teams || [];
+            const players = teams.reduce((n, t) => n + t.players.length, 0);
+            const out = teams.reduce((n, t) => n + t.players.filter(p => p.out).length, 0);
+            const unmatched = result.unmatched || [];
+            const norm = s => String(s || '').trim().toLowerCase();
+            const currentName = id => norm(teamById(id)?.name);
+            const guessMine = teams.findIndex(t => norm(t.name) === currentName(league.mine));
+            const guessOpp = teams.findIndex(t => norm(t.name) === currentName(league.opponent));
+            const options = selected => teams.map((t, i) =>
+                `<option value="${i}" ${i === selected ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+            const entered = league.teams.filter(t => t.players.length).length;
+
+            showImportPanel(`
+                <p class="text-white font-medium">
+                    Found ${teams.length} teams and ${players} players${result.test ? ' <span class="text-amber-300">(test league)</span>' : ''}.
+                </p>
+                <ul class="list-disc pl-5 mt-1 text-gray-300 space-y-0.5">
+                    ${out ? `<li>${out} on IR, IR+ or NA &mdash; they stay on their team, marked Out.</li>` : ''}
+                    ${unmatched.length
+                        ? `<li>${unmatched.length} not in the projections, so left off: ${esc(unmatched.join(', '))}.</li>`
+                        : '<li>Every player matched a projection.</li>'}
+                    ${entered ? `<li class="text-amber-300">This replaces all ${league.teams.length} teams you have entered.</li>` : ''}
+                </ul>
+                <div class="flex flex-wrap gap-3 mt-3">
+                    <label class="text-xs text-gray-400 flex flex-col gap-1">Which team is yours?
+                        <select id="import-mine" class="form-select p-2 text-sm">
+                            ${guessMine < 0 ? '<option value="" selected disabled>Choose your team</option>' : ''}
+                            ${options(guessMine)}
+                        </select>
+                    </label>
+                    <label class="text-xs text-gray-400 flex flex-col gap-1">This week&rsquo;s opponent
+                        <select id="import-opponent" class="form-select p-2 text-sm">
+                            <option value="">None yet</option>
+                            ${options(guessOpp)}
+                        </select>
+                    </label>
+                </div>
+                <div class="flex flex-wrap gap-2 mt-3">
+                    <button type="button" id="import-apply" class="btn-primary rounded-md text-sm font-medium px-4 py-2" ${guessMine < 0 ? 'disabled' : ''}>Replace league rosters</button>
+                    <button type="button" class="import-cancel px-3 py-2 text-sm text-gray-400 hover:text-white border border-gray-600 rounded-md">Cancel</button>
+                </div>`);
+        }
+
+        function applyImport() {
+            if (!pendingImport) return;
+            const mineIndex = $('import-mine').value;
+            if (mineIndex === '') return;
+            const oppIndex = $('import-opponent').value;
+            const norm = s => String(s || '').trim().toLowerCase();
+
+            // A team keeps its id when its name comes back unchanged, so
+            // anything keyed to it survives a re-import.
+            const teams = pendingImport.teams.map(scraped => {
+                const same = league.teams.find(t => norm(t.name) === norm(scraped.name));
+                const seen = new Set();
+                return {
+                    id: same ? same.id : newTeamId(),
+                    name: scraped.name,
+                    players: scraped.players
+                        .filter(p => p.playerId != null && !seen.has(String(p.playerId)) && seen.add(String(p.playerId)))
+                        .map(p => ({ id: p.playerId, out: Boolean(p.out) })),
+                };
+            });
+
+            league.teams = teams;
+            league.mine = teams[Number(mineIndex)].id;
+            league.opponent = oppIndex !== '' && oppIndex !== mineIndex ? teams[Number(oppIndex)].id : null;
+            activeTeamId = league.mine;
+            pendingImport = null;
+            showImportPanel('');
+            saveLeague();
+        }
+
+        async function importFromHtml(html, url) {
+            showImportPanel('<p class="text-gray-300">Reading the rosters from Yahoo&hellip;</p>');
+            try {
+                const response = await fetch('/standalone/api/rosters/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html, url }),
+                });
+                const data = await response.json();
+                if (!response.ok) return importError(data.code, data.message || 'Those rosters could not be read.');
+                previewImport(data);
+            } catch (error) {
+                importError('unreachable', error.message);
+            }
+        }
+
+        $('scrape-rosters').addEventListener('click', async () => {
+            const raw = $('league-id').value;
+            if (!ROSTER_TEST_MODE && !leagueIdFrom(raw)) {
+                return importError('invalid_id', 'Enter your League ID - find it in Yahoo under League > Settings.');
+            }
+            write(KEYS.yahooLeagueId, raw.trim());
+            $('scrape-rosters').disabled = true;
+            $('scrape-rosters').textContent = 'Scraping…';
+            showImportPanel('<p class="text-gray-300">Reading your league&rsquo;s rosters from Yahoo&hellip;</p>');
+            try {
+                const response = await fetch('/standalone/api/rosters/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ league_id: raw }),
+                });
+                const data = await response.json();
+                if (!response.ok) importError(data.code, data.message || 'Scraping the rosters failed.');
+                else previewImport(data);
+            } catch (error) {
+                importError('unreachable', error.message);
+            } finally {
+                $('scrape-rosters').disabled = false;
+                $('scrape-rosters').textContent = 'Scrape rosters';
+            }
+        });
+
+        $('private-help').addEventListener('click', () => privateLeagueSteps(''));
+
+        $('roster-import').addEventListener('click', event => {
+            if (event.target.closest('.import-cancel')) {
+                pendingImport = null;
+                showImportPanel('');
+            } else if (event.target.closest('#import-apply')) {
+                applyImport();
+            } else if (event.target.closest('#open-yahoo-rosters')) {
+                // window.open without noopener, so the Yahoo tab can post back
+                const url = yahooRostersUrl();
+                if (url) window.open(url, 'fs-yahoo-rosters');
+            }
+        });
+
+        $('roster-import').addEventListener('change', event => {
+            if (event.target.id === 'import-mine') $('import-apply').disabled = event.target.value === '';
+        });
+
+        // Rosters posted back by the bookmarklet. Only Yahoo may send them, and
+        // only HTML is taken - it goes to the server to be parsed, never run.
+        window.addEventListener('message', event => {
+            if (!YAHOO_ORIGIN.test(event.origin)) return;
+            const data = event.data;
+            if (!data || data.type !== 'fs-rosters' || typeof data.html !== 'string') return;
+            if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
+            document.getElementById('teams').scrollIntoView({ block: 'start' });
+            importFromHtml(data.html, String(data.url || ''));
+        });
+
+        // Opened by the bookmarklet from a Yahoo tab this page did not open:
+        // say we are listening. The message carries nothing, and what comes
+        // back is checked by origin above.
+        if (new URLSearchParams(location.search).get('rosters') === 'receive' && window.opener) {
+            window.opener.postMessage({ type: 'fs-ready' }, '*');
+        }
+
+        // --- Planned moves ---------------------------------------------------
+        const weekMoves = () => moves[$('week-select').value] || [];
+
+        function saveMoves(list) {
+            const week = $('week-select').value;
+            if (list.length) moves[week] = list;
+            else delete moves[week];
+            write(KEYS.moves, moves);
+            markFreeAgentsStale();
+            renderMoves();
+            schedulePlan();
+        }
+
+        function nightOptions(selectedDate, gains) {
+            const span = planWindow();
+            if (!span) return '';
+            const nights = [];
+            for (let d = span.start; d <= span.end; d = addDay(d)) nights.push(d);
+            if (selectedDate && !nights.includes(selectedDate)) nights.unshift(selectedDate);
+            return nights.map(d => `
+                <option value="${esc(d)}" ${d === selectedDate ? 'selected' : ''}>
+                    ${esc(fmt(d, { weekday: 'short', month: 'short', day: 'numeric' }))}${gains && gains[d] != null ? ` · ${esc(formatGain(gains[d]))}` : ''}
+                </option>`).join('');
+        }
+
+        function addDay(iso) {
+            const [y, m, d] = iso.split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+        }
+
+        const playerLabel = id => {
+            const p = playersById.get(String(id));
+            return p ? `${p.fullName} <span class="text-xs text-gray-400">${esc(p.eligiblePositions || p.positionCode)} · ${esc(p.teamAbbrevs)}</span>`
+                     : `<span class="text-gray-500">Unknown ${esc(id)}</span>`;
+        };
+
+        function renderMoves() {
+            const list = weekMoves();
+            $('moves').classList.toggle('hidden', !list.length);
+            $('moves-body').innerHTML = list.map((move, index) => `
+                <li class="p-3 sm:px-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <div class="flex-1 min-w-[14rem] text-sm">
+                        <div><span class="text-emerald-400 font-semibold">Add</span> <span class="text-white">${playerLabel(move.add)}</span></div>
+                        <div><span class="text-red-400 font-semibold">Drop</span> <span class="text-gray-300">${move.drop != null ? playerLabel(move.drop) : 'nobody'}</span></div>
+                    </div>
+                    <label class="text-xs text-gray-400 flex items-center gap-2">
+                        Night
+                        <select class="move-date form-select p-2 text-sm" data-index="${index}">${nightOptions(move.date)}</select>
+                    </label>
+                    <button type="button" class="move-remove px-3 py-2 text-sm text-gray-400 hover:text-red-400 border border-gray-600 rounded-md" data-index="${index}">Remove</button>
+                </li>`).join('');
+        }
+
+        $('moves-body').addEventListener('change', event => {
+            if (!event.target.classList.contains('move-date')) return;
+            const list = weekMoves().slice();
+            list[Number(event.target.dataset.index)] = { ...list[Number(event.target.dataset.index)], date: event.target.value };
+            saveMoves(list);
+        });
+
+        $('moves-body').addEventListener('click', event => {
+            const remove = event.target.closest('.move-remove');
+            if (!remove) return;
+            saveMoves(weekMoves().filter((_m, i) => i !== Number(remove.dataset.index)));
+        });
+
+        // --- Free agents -----------------------------------------------------
+        function formatGain(value) {
+            const metric = faResults?.metric;
+            const n = Number(value) || 0;
+            const sign = n > 0 ? '+' : n < 0 ? '−' : '±';
+            const abs = Math.abs(n);
+            if (metric === 'points') return `${sign}${abs.toFixed(1)} pts`;
+            if (metric === 'expectedWins') return `${sign}${abs.toFixed(2)} cats`;
+            return `${sign}${abs.toFixed(1)} value`;
+        }
+
+        const gainTone = n => (n > 0.005 ? 'text-emerald-400' : n < -0.005 ? 'text-red-400' : 'text-gray-400');
+
+        function markFreeAgentsStale() {
+            if (!faResults) return;
+            faStale = true;
+            renderFreeAgents();
+        }
+
+        function renderFreeAgentSummary() {
+            const entered = league.teams.filter(t => t.players.length).length;
+            const parts = [];
+            if (entered < league.teams.length) {
+                parts.push(`${entered} of ${league.teams.length} teams entered — players on the others will show up as free agents.`);
+            }
+            if (!rosters.theirs.length) parts.push('Pick this week’s opponent to rank adds by categories won.');
+            if (faResults) {
+                parts.push(`${faResults.freeAgents ?? ''} free agents searched.`.trim());
+            }
+            $('fa-summary').textContent = parts.join(' ');
+        }
+
+        function renderFreeAgents() {
+            renderFreeAgentSummary();
+            if (!faResults) return;
+            const rows = faResults.candidates;
+            const stale = faStale
+                ? '<p class="px-3 sm:px-4 py-2 text-xs text-amber-300 border-b border-gray-700">Rosters, moves or settings have changed since this search. Select Find adds to refresh.</p>'
+                : '';
+            if (!rows.length) {
+                $('fa-body').innerHTML = `${stale}<p class="text-gray-400 text-sm p-4">No free agent with a game left this week would help.</p>`;
+                return;
+            }
+
+            const myIds = rosterOnLastNight();
+            $('fa-body').innerHTML = `${stale}
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th class="col-sticky px-3 py-2 font-medium">Add</th>
+                            <th class="px-3 py-2 font-medium text-right">Gms</th>
+                            <th class="px-3 py-2 font-medium">Drop</th>
+                            <th class="px-3 py-2 font-medium">Night</th>
+                            <th class="px-3 py-2 font-medium text-right">Gain</th>
+                            <th class="px-3 py-2 font-medium"><span class="sr-only">Plan</span></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${rows.map((c, index) => {
+                            const chosen = c.chosenDate || c.recommendedDate;
+                            const gain = c.gains[chosen];
+                            const dropId = c.drop ? String(c.drop.playerId) : '';
+                            // A move planned since the search can take this row's drop
+                            // off the roster. Say so rather than let the menu fall back
+                            // to "No drop" while Plan move would still drop him.
+                            const dropGone = dropId !== '' && !myIds.includes(dropId);
+                            const rank = c.player.seasonRank ? `#${c.player.seasonRank}` : '';
+                            return `
+                            <tr data-index="${index}" class="${c.loading ? 'opacity-50' : ''}">
+                                <td class="col-sticky px-3 py-2">
+                                    <div class="text-white font-medium whitespace-nowrap">${esc(c.player.fullName)}</div>
+                                    <div class="text-xs text-gray-400 whitespace-nowrap">${esc(c.player.eligiblePositions)} · ${esc(c.player.teamAbbrevs)}${rank ? ` · season ${esc(rank)}` : ''}</div>
+                                </td>
+                                <td class="px-3 py-2 text-right text-gray-300">${esc(c.gamesLeft)}</td>
+                                <td class="px-3 py-2">
+                                    <select class="fa-drop form-select p-2 text-sm max-w-[12rem]" data-index="${index}" aria-label="Drop for ${esc(c.player.fullName)}">
+                                        <option value="" ${dropId === '' ? 'selected' : ''}>No drop</option>
+                                        ${dropGone ? `<option value="${esc(dropId)}" selected disabled>${esc(c.drop.fullName)} (no longer on your roster)</option>` : ''}
+                                        ${myIds.map(id => {
+                                            const p = playersById.get(id);
+                                            if (!p) return '';
+                                            const suggested = (faResults.dropCandidates || []).includes(id) ? ' (suggested)' : '';
+                                            return `<option value="${esc(id)}" ${id === dropId ? 'selected' : ''}>${esc(p.fullName)}${suggested}</option>`;
+                                        }).join('')}
+                                    </select>
+                                    ${c.drop?.seasonRank ? `<div class="text-xs text-gray-500 mt-0.5">season #${esc(c.drop.seasonRank)}</div>` : ''}
+                                </td>
+                                <td class="px-3 py-2">
+                                    <select class="fa-date form-select p-2 text-sm" data-index="${index}" aria-label="Night to add ${esc(c.player.fullName)}">
+                                        ${nightOptions(chosen, c.gains)}
+                                    </select>
+                                    <div class="text-xs mt-0.5 ${chosen === c.recommendedDate ? 'text-emerald-400' : 'text-gray-500'}">
+                                        ${chosen === c.recommendedDate ? 'Recommended night' : `Recommended: ${esc(fmt(c.recommendedDate, { weekday: 'short', month: 'short', day: 'numeric' }))}`}
+                                    </div>
+                                </td>
+                                <td class="px-3 py-2 text-right font-semibold whitespace-nowrap ${gainTone(gain)}">${esc(formatGain(gain))}</td>
+                                <td class="px-3 py-2 text-right">
+                                    <button type="button" class="fa-plan btn-primary rounded-md text-xs font-medium px-3 py-2 whitespace-nowrap" data-index="${index}"
+                                            ${dropGone || c.loading ? 'disabled' : ''}>Plan move</button>
+                                    ${dropGone ? '<div class="text-xs text-amber-300 mt-1 whitespace-nowrap">Pick another drop</div>' : ''}
+                                </td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        // The playerIds on my roster once this week's planned moves are made
+        function rosterOnLastNight() {
+            const ids = rosters.mine.map(p => String(p.id));
+            [...weekMoves()].sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach(m => {
+                if (m.drop != null) {
+                    const at = ids.indexOf(String(m.drop));
+                    if (at >= 0) ids.splice(at, 1);
+                }
+                if (!ids.includes(String(m.add))) ids.push(String(m.add));
+            });
+            return ids;
+        }
+
+        async function postFreeAgents(extra) {
+            const body = planBody();
+            if (!body) throw new Error('Add your players, choose categories and set starting slots first.');
+            const response = await fetch('/standalone/api/free-agents', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...body,
+                    rostered: [...rosteredIds()].map(asId),
+                    num_teams: league.teams.length,
+                    draft_slots: read('fs_rosterSlots', null),
+                    roster_mode: localStorage.getItem('fs_rosterMode') || 'split',
+                    ...extra,
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message || 'The free agent search failed.');
+            return data;
+        }
+
+        $('fa-find').addEventListener('click', async () => {
+            $('fa-find').disabled = true;
+            $('fa-find').textContent = 'Searching…';
+            try {
+                faResults = await postFreeAgents({});
+                faStale = false;
+                showError('');
+                renderFreeAgents();
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                $('fa-find').disabled = false;
+                $('fa-find').textContent = 'Find adds';
+            }
+        });
+
+        // Score one pair the user chose - a different drop, or a player the
+        // search did not surface - and put it at the top.
+        async function evaluatePair(add, drop, index) {
+            const row = index != null ? faResults.candidates[index] : null;
+            if (row) {
+                row.loading = true;
+                renderFreeAgents();
+            }
+            try {
+                const data = await postFreeAgents({ evaluate: { add: asId(add), drop: drop === '' || drop == null ? null : asId(drop) } });
+                if (!faResults) {
+                    faResults = { ...data, candidates: [] };
+                    faStale = false;
+                }
+                const fresh = data.candidates[0];
+                if (row) {
+                    // Keep the night the user picked if they had picked one
+                    fresh.chosenDate = row.chosenDate && fresh.gains[row.chosenDate] != null ? row.chosenDate : undefined;
+                    faResults.candidates[index] = fresh;
+                } else {
+                    faResults.candidates = [fresh, ...faResults.candidates.filter(c => String(c.player.playerId) !== String(add))];
+                }
+                faResults.metric = data.metric;
+                showError('');
+            } catch (error) {
+                if (row) row.loading = false;
+                showError(error.message);
+            }
+            renderFreeAgents();
+        }
+
+        $('fa-body').addEventListener('change', event => {
+            const el = event.target;
+            const index = Number(el.dataset.index);
+            const row = faResults?.candidates[index];
+            if (!row) return;
+            if (el.classList.contains('fa-date')) {
+                row.chosenDate = el.value;
+                renderFreeAgents();
+            } else if (el.classList.contains('fa-drop')) {
+                evaluatePair(row.player.playerId, el.value, index);
+            }
+        });
+
+        $('fa-body').addEventListener('click', event => {
+            const plan = event.target.closest('.fa-plan');
+            if (!plan) return;
+            const row = faResults.candidates[Number(plan.dataset.index)];
+            saveMoves([...weekMoves(), {
+                add: row.player.playerId,
+                drop: row.drop ? row.drop.playerId : null,
+                date: row.chosenDate || row.recommendedDate,
+            }]);
+            faResults.candidates.splice(Number(plan.dataset.index), 1);
+            renderFreeAgents();
+        });
+
+        function renderFaSearch() {
+            const exclude = rosteredIds();
+            weekMoves().forEach(m => exclude.add(String(m.add)));
+            const matches = searchList($('fa-search').value, exclude);
+            if (!matches) return $('fa-results').classList.add('hidden');
+            renderOptions($('fa-results'), matches, 'fa-pick');
+        }
+
+        $('fa-search').addEventListener('input', renderFaSearch);
+        $('fa-search').addEventListener('focus', renderFaSearch);
+        $('fa-results').addEventListener('click', event => {
+            const pick = event.target.closest('.fa-pick');
+            if (!pick) return;
+            $('fa-search').value = '';
+            $('fa-results').classList.add('hidden');
+            // No drop to start with; the drop menu scores any the user picks
+            const suggested = faResults?.dropCandidates?.[0] ?? null;
+            evaluatePair(pick.dataset.id, suggested, null);
         });
 
         // --- Week ------------------------------------------------------------
@@ -540,15 +1349,121 @@
             return { start, end: week.end };
         }
 
+        function renderWeekSelect() {
+            const previous = $('week-select').value;
+            $('week-select').innerHTML = weeks.map(w => `
+                <option value="${esc(w.start)}">Week ${esc(w.week)} &middot; ${esc(fmt(w.start, { month: 'short', day: 'numeric' }))} &ndash; ${esc(fmt(w.end, { month: 'short', day: 'numeric' }))}</option>`).join('');
+            // Keep the week being looked at if an edit left it standing
+            const start = weeks.some(w => w.start === previous) ? previous : defaultWeek();
+            if (start) $('week-select').value = start;
+        }
+
+        // --- Fantasy weeks ---------------------------------------------------
+        const shortDate = iso => fmt(iso, { month: 'short', day: 'numeric' });
+
+        function renderWeeksSummary() {
+            if (!weekData) return;
+            if (weekData.source === 'league') {
+                $('weeks-summary').textContent = `${weeks.length} weeks from your synced league.`;
+                $('weeks-toggle').classList.add('hidden');
+                return;
+            }
+            const long = weeks.filter(w => FantasyWeeks.length(w) > 7)
+                .map(w => `Week ${w.week} runs ${shortDate(w.start)} – ${shortDate(w.end)}`);
+            $('weeks-summary').textContent = [
+                `${weeks.length} weeks`,
+                weekData.customised ? 'edited for this league' : 'standard Yahoo schedule',
+                ...long,
+            ].join(' · ') + '.';
+        }
+
+        function renderWeeksEditor() {
+            const last = weeks.length - 1;
+            $('weeks-rows').innerHTML = weeks.map((w, i) => {
+                const days = FantasyWeeks.length(w);
+                return `
+                <tr>
+                    <td class="px-3 py-2 font-semibold text-gray-300 whitespace-nowrap">${esc(w.week)}</td>
+                    <td class="px-3 py-2 text-gray-400 whitespace-nowrap">${esc(shortDate(w.start))}</td>
+                    <td class="px-3 py-1.5 whitespace-nowrap">
+                        ${i === last
+                            ? `<span class="text-gray-400">${esc(shortDate(w.end))}</span> <span class="text-xs text-gray-500">(season end)</span>`
+                            : `<input type="date" class="week-end form-input p-1.5 text-sm" data-index="${i}"
+                                      value="${esc(w.end)}" min="${esc(w.start)}" max="${esc(weekData.season.end)}"
+                                      aria-label="Week ${esc(w.week)} last night">`}
+                        <!-- Under the date rather than in a column of their own, which
+                             scrolled off the side of a phone -->
+                        <div class="flex flex-wrap items-center gap-x-3 mt-1">
+                            ${days > 7 ? `<span class="text-xs text-amber-300">${days} days</span>` : ''}
+                            ${days > 7 ? `<button type="button" class="week-split py-2 text-xs text-blue-400 hover:text-blue-300" data-index="${i}">Split</button>` : ''}
+                            ${i < last ? `<button type="button" class="week-merge py-2 text-xs text-blue-400 hover:text-blue-300" data-index="${i}">Merge with next</button>` : ''}
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function applyWeeks(next) {
+            if (!next) return;
+            weeks = next;
+            // An edit that lands back on the standard weeks is no edit at all
+            const standard = JSON.stringify(weekData.standard.map(w => [w.start, w.end]));
+            if (JSON.stringify(weeks.map(w => [w.start, w.end])) === standard) {
+                FantasyWeeks.reset();
+                weekData.customised = false;
+            } else if (FantasyWeeks.save(weekData.season, weeks)) {
+                weekData.customised = true;
+            } else {
+                showError('Could not save to this browser - changes will be lost on reload.');
+            }
+            renderWeeksSummary();
+            renderWeeksEditor();
+            renderWeekSelect();
+            renderRemaining();
+            renderMatchup();
+            renderMoves();
+            schedulePlan();
+        }
+
+        $('weeks-toggle').addEventListener('click', () => {
+            const open = $('weeks-editor').classList.contains('hidden');
+            $('weeks-editor').classList.toggle('hidden', !open);
+            $('weeks-toggle').setAttribute('aria-pressed', open ? 'true' : 'false');
+            if (open) renderWeeksEditor();
+        });
+
+        // change, not input: a date picker fires input on every partial edit
+        $('weeks-rows').addEventListener('change', event => {
+            const el = event.target;
+            if (!el.classList.contains('week-end')) return;
+            const next = FantasyWeeks.setEnd(weeks, Number(el.dataset.index), el.value, weekData.season);
+            if (next) applyWeeks(next);
+            else renderWeeksEditor();   // put back a date before the week began
+        });
+
+        $('weeks-rows').addEventListener('click', event => {
+            const merge = event.target.closest('.week-merge');
+            const split = event.target.closest('.week-split');
+            if (merge) applyWeeks(FantasyWeeks.merge(weeks, Number(merge.dataset.index)));
+            if (split) applyWeeks(FantasyWeeks.split(weeks, Number(split.dataset.index)));
+        });
+
+        $('weeks-reset').addEventListener('click', () => {
+            FantasyWeeks.reset();
+            applyWeeks(weekData.standard.map(w => ({ ...w })));
+        });
+
         $('week-select').addEventListener('change', event => {
             write(KEYS.week, event.target.value);
             renderRemaining();
             renderMatchup();
+            renderMoves();
             schedulePlan();
         });
 
         $('remaining-only').addEventListener('change', event => {
             write(KEYS.remaining, event.target.checked ? '1' : '0');
+            renderMoves();
             schedulePlan();
         });
 
@@ -577,19 +1492,47 @@
         let planTimer = null;
         let planRequest = 0;
 
+        // Anything worth re-planning for also makes the last free-agent search stale
         function schedulePlan() {
+            markFreeAgentsStale();
             clearTimeout(planTimer);
             planTimer = setTimeout(plan, 300);
         }
 
-        async function plan() {
-            const span = planWindow();
-            const cats = activeCategories();
+        // What still has to be filled in before there is anything to plan
+        function planNeeds() {
             const needs = [];
             if (!rosters.mine.some(p => playersById.has(String(p.id)))) needs.push('add your players');
-            if (!cats.length) needs.push(leagueMode === 'points' ? 'give stats a points value' : 'choose categories');
+            if (!activeCategories().length) needs.push(leagueMode === 'points' ? 'give stats a points value' : 'choose categories');
             if (!SLOT_KEYS.some(s => slots[s] > 0)) needs.push('set starting slots');
-            if (!span) needs.push('pick a week');
+            if (!planWindow()) needs.push('pick a week');
+            return needs;
+        }
+
+        // The request both the week plan and the free-agent search send
+        function planBody() {
+            if (planNeeds().length) return null;
+            const span = planWindow();
+            const cats = activeCategories();
+            return {
+                roster: rosters.mine.map(p => p.id),
+                out: rosters.mine.filter(p => p.out).map(p => p.id),
+                opponent: rosters.theirs.map(p => p.id),
+                opponent_out: rosters.theirs.filter(p => p.out).map(p => p.id),
+                league_mode: leagueMode,
+                categories: cats.map(c => c.column),
+                points: Object.fromEntries(cats.map(c => [c.column, pointWeights[c.column]])),
+                pim_positive: !pimNegative(),
+                slots,
+                banked: weekBanked(),
+                moves: weekMoves(),
+                start: span.start,
+                end: span.end,
+            };
+        }
+
+        async function plan() {
+            const needs = planNeeds();
             if (needs.length) {
                 $('plan-status').textContent = `To see lineups: ${needs.join(', ')}.`;
                 return;
@@ -601,20 +1544,7 @@
                 const response = await fetch('/standalone/api/week', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        roster: rosters.mine.map(p => p.id),
-                        out: rosters.mine.filter(p => p.out).map(p => p.id),
-                        opponent: rosters.theirs.map(p => p.id),
-                        opponent_out: rosters.theirs.filter(p => p.out).map(p => p.id),
-                        league_mode: leagueMode,
-                        categories: cats.map(c => c.column),
-                        points: Object.fromEntries(cats.map(c => [c.column, pointWeights[c.column]])),
-                        pim_positive: !pimNegative(),
-                        slots,
-                        banked: weekBanked(),
-                        start: span.start,
-                        end: span.end,
-                    }),
+                    body: JSON.stringify(planBody()),
                 });
                 const data = await response.json();
                 // Typing a value fires several plans; only the newest may draw
@@ -625,8 +1555,7 @@
                 lastPlan = data;
                 if (!data.matchup) gridSide = 'mine';
                 renderPlan(data);
-                renderRoster('mine');
-                renderRoster('theirs');
+                renderRoster();
             } catch (error) {
                 if (requestId !== planRequest) return;
                 $('plan-status').textContent = '';
@@ -849,22 +1778,23 @@
 
         (async () => {
             try {
-                const [setupData, weekData] = await Promise.all([
+                const [setupData, loadedWeeks] = await Promise.all([
                     getJSON('/standalone/api/setup'),
-                    getJSON('/schedules/api/weeks'),
+                    FantasyWeeks.load(),
                 ]);
                 setup = setupData;
                 playersById = new Map(setup.players.map(p => [String(p.playerId), p]));
-                weeks = weekData.weeks || [];
+                weekData = loadedWeeks;
+                weeks = weekData.weeks;
 
-                $('week-select').innerHTML = weeks.map(w => `
-                    <option value="${esc(w.start)}">Week ${esc(w.week)} &middot; ${esc(fmt(w.start, { month: 'short', day: 'numeric' }))} &ndash; ${esc(fmt(w.end, { month: 'short', day: 'numeric' }))}</option>`).join('');
-                const start = defaultWeek();
-                if (start) $('week-select').value = start;
+                renderWeekSelect();
+                renderWeeksSummary();
 
                 renderLeague();
-                renderRoster('mine');
-                renderRoster('theirs');
+                renderTeams();
+                renderMoves();
+                renderFreeAgentSummary();
+                $('league-id').value = localStorage.getItem(KEYS.yahooLeagueId) || '';
                 renderRemaining();
                 renderMatchup();
                 // A first visit has nothing to plan against, so open the form

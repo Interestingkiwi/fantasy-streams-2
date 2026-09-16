@@ -37,9 +37,11 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST), `/api/export` (POST, returns an `.xlsx`) |
 | `routes/league_routes.py` | `/league/` League Database viewer + read-only APIs, all scoped to the session's league |
 | `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
-| `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups from a hand-entered league and roster; no session, no Yahoo. See *Standalone mode* below |
-| `week_planner.py` | Chains the optimizer modules into a week of nightly lineups for one roster; pure, the route loads the rows |
-| `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation — shared by draft-prep and Schedules |
+| `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups, matchup, planned moves and free agents from a hand-entered league; no session, no Yahoo. See *Standalone mode* below |
+| `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
+| `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows |
+| `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
+| `static/fantasy-weeks.js` | The weeks every page numbers by: standard weeks plus a league's edits (`fs_fantasyWeeks`), and the edit operations. See *Fantasy weeks* |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
 | `ranking_utils.py` | Ranking engine — see *Ranking* below |
 | `lineup_utils.py` | Daily lineup matcher — seats a night's players into the league's slots, exactly. See *Lineups* below |
@@ -60,7 +62,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone Lineups — league settings, roster search, a nights-by-slots lineup grid, projected week totals |
+| `templates/pages/standalone.html` | Standalone Lineups — league settings and weeks, every team's roster, matchup, planned moves, best adds, nightly lineup grid |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -645,9 +647,10 @@ PIM polarity are draft prep's own keys (`fs_selectedStats`, `fs_statWeights`,
 `fs_leagueMode`, `fs_pimPolarity`), so the two pages describe one league.
 Starting slots are **not** shared: draft prep's roster settings have no `Util`
 or `W` and would drop them on its next save, so the lineup keeps
-`fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_standaloneRoster`
-(`[{id, out}]`), `fs_standaloneOpponent` (same shape), `fs_standaloneWeek`,
-`fs_standaloneRemaining` and `fs_standaloneBanked`. Toggling a chip changes only that
+`fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
+(below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
+`fs_standaloneBanked` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
+`fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
 
@@ -657,11 +660,175 @@ the two cannot drift. GWG and the derived PPA/SHA have no column, so they cannot
 be chosen here yet.
 
 **Out** keeps a player's games counted but never seats him — for injuries until
-there is a feed for them. Weeks come from `/schedules/api/weeks`, so they are
-derived Mon–Sun weeks unless a synced league supplies its own.
+there is a feed for them. Weeks come from `fantasy-weeks.js` — see *Fantasy
+weeks* below — and the League panel carries the editor for them.
 
-Next slice: free agents / streaming against the same saved league — which
-players, added on which nights, move the matchup the most.
+### Fantasy weeks (`derive_weeks` + `static/fantasy-weeks.js`)
+
+**Standard weeks follow Yahoo, breaks included.** Mon–Sun, except that a week
+holding a league-wide break of `BREAK_MIN_IDLE_DAYS` (4) idle days is folded
+into a neighbour and everything after renumbered. In 2026-27 the All-Star break
+leaves Feb 4–7 idle at the back of the Feb 1–7 week, so **Week 19 runs Feb 1–14**
+and the season has 27 weeks, the last Apr 5–10. Christmas (three idle days) is
+left alone. Read from the schedule, not pinned to a date, so next season's break
+is found the same way — `test_schedules.py` pins both this season's result and
+the rule's shapes (break through Sunday folds forward, from Monday folds back,
+across a boundary joins the two).
+
+This fixed a disagreement that had gone unnoticed: draft prep's hardcoded playoff
+weeks already assumed the merge (Week 23 = Mar 8–14) while `/schedules/api/weeks`
+did not, so every week from February on was numbered one apart between the two.
+
+**Leagues that differ edit their weeks** on the Lineups League panel: move a
+week's last night (the next week starts the day after; weeks swallowed whole are
+absorbed), Merge with next, Split a week over seven days at its first Sunday, or
+Reset. Edits live in `fs_fantasyWeeks` as `{season, weeks}`; a different season
+start ignores them rather than misapplying last year's, and they never override
+a synced league's own weeks. Every operation is pure and returns a contiguous
+season from opening night to the last, so there is no gap or overlap to handle.
+An edit that lands back on the standard weeks clears the key.
+
+**One module, three pages.** Lineups, draft prep's playoff weeks and the Schedules
+page all load weeks through `FantasyWeeks.load()`, so an edit renumbers all three.
+Draft prep now builds its playoff checkboxes from the season's last five weeks
+(the static markup stays as a fallback if the load fails) and drops a stored pick
+that no longer names one of them, rather than leaving it counting invisibly in
+the summary. Its checkbox listener is delegated for that reason — the rebuilt
+checkboxes would otherwise have none.
+
+`MAX_PLAN_DAYS` is 35: the combined week is 14 days, and a league can merge more.
+
+### League rosters, planned moves and free agents
+
+**Every team's roster is entered**, because a free agent is anyone on none of
+them. `fs_leagueTeams` is `{teams: [{id, name, players: [{id, out}]}], mine,
+opponent}` — mine and opponent are team ids, and the opponent is simply whichever
+team is marked for this week. **That shape is the target for the planned
+sign-in roster scan**: a scan the user starts while signed in to their league,
+reading each team's roster page, should write exactly this and nothing else
+— and *Scraping rosters from Yahoo* below is that scan.
+The first visit lays out `fs_numTeams` teams (default 12), with the old two
+rosters as the first two, and saves at once so team ids are stable.
+
+**A move is `{add, drop, date}`**, saved per week in `fs_standaloneMoves`. The
+added player counts from `date`, the dropped one plays up to the night before —
+how an add made before tonight's games lock behaves. `week_planner.roster_on`
+applies moves in date order; moves feed the plan like any roster, so lineups,
+the matchup and the grid all show them. They are plans, not roster edits: the
+team's roster is not changed, and nothing is sent to Yahoo.
+
+**Best adds** (`free_agents`, `/api/free-agents`) ranks free agents by what
+they add to *this week's* metric — expected categories won against an opponent,
+projected points in a points league, flat lineup value with no opponent — each
+with a drop and a date. Re-planning every free agent x drop x date would be
+~670 x 16 x 7 full plans, so it narrows in three passes: screen everyone on
+unadjusted weighted value; shortlist 40 against the 3 weakest drops night by
+night under the current plan's weights (suffix sums give every date at once);
+then re-plan the best 10 exactly on every date. ~0.8s for a 12-team league.
+Because the gains are exact on every date, **changing the night in the table
+needs no request**; changing the drop re-scores that pair (`evaluate`). A test
+pins that the gain shown equals re-planning the week with the move made.
+
+**The recommended date is a recommendation.** It is the date with the largest
+gain (earliest on a tie); the user can pick any night, and the table keeps their
+pick when the drop changes. The planned move carries whatever they chose.
+
+**Suggested drops come from the draft board, not the lineup engine.** A one-week
+gain says nothing about March, so drops are the roster's lowest on
+`value_over_replacement` from `calculate_player_ranks` — the same call the draft
+board makes, with the league's `fs_rosterSlots` / `fs_rosterMode` and team count
+— and never a player marked Out (often stashed on IR, not cut). This had to be
+the draft board's number: the first version ranked drops on per-game lineup
+value, which is not comparable between goalies and skaters, and suggested
+cutting Ilya Sorokin, 13th on the board. Each side of a suggestion carries its
+season rank so the long-term cost is visible.
+
+A search goes **stale** as soon as rosters, moves or settings change; the table
+says so rather than silently re-running. A stale row whose drop a later move
+already dropped shows that drop as "no longer on your roster" and blocks Plan
+move — before this, the menu fell back to "No drop" while Plan move would still
+have dropped him.
+
+Not modelled yet: waiver periods, weekly add limits, roster size (a move with
+"No drop" is allowed and assumes an open spot), and anything past this week.
+
+### Scraping rosters from Yahoo (`yahoo_rosters.py`)
+
+**League ID + Scrape rosters** fills every team from Yahoo's
+`/hockey/<league id>/startingrosters` page: one page, every team, every slot.
+The ID comes from Yahoo's League > Settings (a pasted league URL works too), and
+is remembered in `fs_yahooLeagueId`.
+
+**Public leagues are fetched by the server; private ones cannot be.** Verified
+with an empty cookie jar: a public league's page comes back complete, rendered
+for a signed-out visitor (its only login link is "Sign in"). A private league
+(checked against a real one) redirects the same request to `login.yahoo.com`. No
+server-side change gets past that, and **the user signing in to Yahoo in their
+browser does not help** — the server's request never carries the browser's
+cookies, the page cannot read another site's page, and Yahoo refuses framing
+(`X-Frame-Options: SAMEORIGIN`).
+
+**So private leagues use a bookmarklet.** The panel offers a "Send rosters to
+Fantasy Streams" button to drag to the bookmarks bar, and a link that opens the
+Yahoo page with `window.open` (no `noopener`, so the Yahoo tab can post back).
+On Yahoo, the bookmarklet posts `document.documentElement.outerHTML` to its
+opener and waits for an `fs-received` acknowledgement — a message to a window
+that has navigated away is dropped silently, so without the ack a failure would
+look like success. With no opener it opens `/standalone/?rosters=receive`,
+which announces `fs-ready`, and sends then. The page accepts `fs-rosters` only
+from a `*.yahoo.com` origin, and the HTML only goes to `/api/rosters/parse` to
+be parsed — never run, never stored. `APP_ORIGIN` is `location.origin`, not
+built on the server: behind Render's TLS proxy Flask sees `http`, and a message
+aimed at the wrong scheme is dropped. The bookmarklet's source is the
+`sendRostersToFantasyStreams` function in the page, serialised — it must name
+nothing outside itself.
+
+**One parser for both.** The live page the bookmarklet sends is ~2.2 MB against
+the ~1.2 MB served, because Yahoo's scripts rewrite it — checked by running the
+parser's selectors on the live DOM: the same 12 teams, 197 players and 5 IR
+players as the served page. Teams are `table[id^="Tst-team-"]`, each after a link
+to `/hockey/<league>/<team number>` holding its name; each row is `td.pos` (the
+slot) and `.ysf-player-name a.name` (title = name, href = Yahoo player id).
+
+**IR, IR+ and NA players stay on their team, marked Out** — still rostered, so
+still not free agents, but not playing. Out follows Yahoo's slots on every
+import.
+
+**Matching.** The page has no NHL team or position per player, only the name
+and Yahoo's player id. A name matching exactly one projected player is taken.
+Otherwise — two projected players with one name, or none — the Yahoo ids go to
+the public read-only player API (`pub-api-ro`, as the ADP scrape uses), whose
+team and position settle it: team, then position, then alias, then surname on
+the same team. On the real test league 196 of 197 matched with two lookups; the
+miss was a goalie with no projection, and unmatched players are listed in the
+preview, not dropped silently. `normalise`, `TEAM_FIXES` and
+`POSITION_WIDENING` are copies of the pipeline's (whose modules import its
+database module and cannot be imported by the web app); a test fails if they
+drift.
+
+**Nothing is replaced until the user says so.** Every import shows a preview —
+teams and players found, how many Out, who could not be matched, a warning when
+it replaces entered teams — and asks which team is theirs (required) and this
+week's opponent. A team whose name comes back unchanged keeps its id.
+
+**Errors each say what happened**: `invalid_id` (not a number, checked before
+any fetch), `private` (the bookmarklet steps), `not_found` (Yahoo's "There was a
+problem" or "not found" page), `unrecognised` (some other page, or HTML claiming
+a non-Yahoo URL), `unreachable`.
+
+**Local test mode.** `ROSTER_SCRAPE_TEST` — on by default outside production —
+ignores the typed ID and reads a completed public 2025-26 league
+(`yahoo_rosters.TEST_ROSTERS_URL`, league 22705), so the scrape can be developed
+against real markup with nobody's current league or sign-in. The page says so
+when it is on. `ROSTER_SCRAPE_TEST=0` uses real IDs locally. The bookmarklet's
+Yahoo link follows the same switch.
+
+**Not yet verified end to end: the two-tab handoff.** The browser pane used to
+build this will not open tabs from automated input, so the opener post, the ack
+and the `?rosters=receive` path were each tested in halves — the bookmarklet on
+Yahoo's real page, and the receiving page with messages from a Yahoo origin —
+but never joined by a real bookmark click. Check it by hand in desktop Chrome
+before relying on it.
 
 **Editing the page's JS through a shell heredoc mangles backslashes** — a regex
 word boundary (backslash-b) became a literal backspace byte and shipped. Use the
@@ -801,7 +968,8 @@ light.
 column showing games in the selected weeks, colour-coded against the league average,
 with light-night games (dates at or under `LIGHT_NIGHT_MAX_GAMES` — the
 comparison is inclusive, so an 8-game night counts) as a suffix. Week numbers
-are Yahoo's; the date ranges live in `data-start`/`data-end` on the checkboxes.
+follow `fantasy-weeks.js` (see *Fantasy weeks*); the date ranges live in
+`data-start`/`data-end` on checkboxes built from the season's last five weeks.
 
 **In the export that column becomes `10(3)`** — ten playoff games, three of them
 on light nights. The screen carries the light count in a smaller suffix and a
@@ -1080,7 +1248,8 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
-| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; then the routes on real data including every 400 |
+| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; then the routes on real data including every 400 |
+| `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
 
@@ -1201,7 +1370,7 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   change.
 - Token refresh has no lock: two concurrent requests on an expired token both
   refresh, and the later write wins. Harmless now; revisit with the Phase 2 worker.
-- The automation / streaming features are stubs.
+- Automated transactions are stubs. Standalone mode plans add/drops but executes nothing.
 - ~~`/api/projections` and `/api/rank-players` each take ~2s~~ **Retired 9/7/2026 -
   measured, and it was never the endpoints.** The query is 7ms, `jsonify` 12ms,
   the whole request through Flask's test client ~30ms. The 2s was a flat

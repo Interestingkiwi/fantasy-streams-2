@@ -11,7 +11,7 @@ connection and reads it directly.
 
 Author - Jason Druckenmiller
 Created - 9/6/2026
-Updated - 9/6/2026
+Updated - 9/16/2026
 """
 
 import logging
@@ -91,6 +91,13 @@ class Config:
 
     # Optional: "<league_id>-<pass>" in the login box bypasses Yahoo in dev.
     DEV_BACKDOOR_PASS = os.getenv("DEV_BACKDOOR_PASS") or None
+
+    # Standalone's roster scrape ignores the League ID typed in and reads a
+    # completed public 2025-26 league instead (yahoo_rosters.TEST_ROSTERS_URL),
+    # so it can be built and tested against real markup with nobody's league or
+    # sign-in. On by default everywhere but production; ROSTER_SCRAPE_TEST=0
+    # tries a real League ID locally.
+    ROSTER_SCRAPE_TEST = _bool("ROSTER_SCRAPE_TEST", not IS_PRODUCTION)
 
 
 def check_config(cfg=Config):
