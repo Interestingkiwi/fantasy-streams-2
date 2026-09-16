@@ -2,7 +2,7 @@
 Routes used for main nav
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 9/6/2026
+Updated - 9/16/2026
 """
 
 
@@ -38,11 +38,6 @@ def home():
         ),
         auth_error=session.pop(SESSION_ERROR, None),
     )
-
-@main_bp.route('/standalone')
-def standalone():
-    """Placeholder for your standalone mode."""
-    return "Standalone Mode Dashboard coming soon!"
 
 @main_bp.route('/terms')
 def terms():

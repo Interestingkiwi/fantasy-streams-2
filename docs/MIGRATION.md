@@ -162,5 +162,7 @@ meanwhile — which is what makes Phase 2 work possible while this is pending.
 
 ### Cross-cutting
 
-- Standalone mode (already stubbed) is a parallel track — several old pages
-  already support manual entry of lineup/league settings.
+- Standalone mode is a parallel track. The old repo only ever had the stub, so
+  it is built fresh rather than ported: started 9/16/2026 at `/standalone/` with
+  weekly lineups from a hand-entered league and roster (see CLAUDE.md,
+  *Standalone mode*).

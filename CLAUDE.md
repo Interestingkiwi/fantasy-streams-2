@@ -26,8 +26,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 
 | Path | Purpose |
 |---|---|
-| `app.py` | Entry point; registers the `main`, `auth`, `draft`, `league`, `schedules` blueprints; `python app.py` -> debug server on :5000 |
-| `routes/main_routes.py` | `/` (renders signed-in or signed-out from the session), `/terms`; `/standalone` still a placeholder |
+| `app.py` | Entry point; registers the `main`, `auth`, `draft`, `league`, `schedules`, `standalone` blueprints; `python app.py` -> debug server on :5000 |
+| `routes/main_routes.py` | `/` (renders signed-in or signed-out from the session), `/terms` |
 | `routes/auth_routes.py` | Yahoo OAuth: `/login`, `/callback`, `/logout`, `/api/session`, `/api/my_leagues`, `/api/switch_league` |
 | `yahoo_auth.py` | Yahoo OAuth2 client — consent URL, code exchange, token refresh, authenticated API calls (see *Auth* below) |
 | `config.py` | `Config` from env + `check_config()` fail-fast at startup |
@@ -37,6 +37,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `routes/draft_routes.py` | `/draft-prep/` page + JSON APIs: `/api/available-stats`, `/api/projections`, `/api/rank-players` (POST), `/api/playoff-schedule` (POST), `/api/export` (POST, returns an `.xlsx`) |
 | `routes/league_routes.py` | `/league/` League Database viewer + read-only APIs, all scoped to the session's league |
 | `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
+| `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups from a hand-entered league and roster; no session, no Yahoo. See *Standalone mode* below |
+| `week_planner.py` | Chains the optimizer modules into a week of nightly lineups for one roster; pure, the route loads the rows |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation — shared by draft-prep and Schedules |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
 | `ranking_utils.py` | Ranking engine — see *Ranking* below |
@@ -58,6 +60,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
+| `templates/pages/standalone.html` | Standalone Lineups — league settings, roster search, a nights-by-slots lineup grid, projected week totals |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -578,6 +581,54 @@ than imprecise. `supported()` splits a league's categories into scored, rate
 and missing — GWG is in no projection column and 8 of the 25 imported leagues
 score it, so `value_players` logs a warning rather than dropping it silently.
 
+## Standalone mode (`/standalone/`)
+
+Lineups for anyone who has not linked Yahoo — which, while the Fantasy API is
+gated, is everyone. The league and roster are typed in and live in
+`localStorage`; each request posts them, so the routes read no session and no
+per-league table. Nav label: **Lineups**.
+
+**First slice: a week of best lineups for one roster.** `week_planner.plan_week`
+runs the *Lineups* chain one night at a time — `daily_value` against the whole
+pool (σ comes from everyone, not the roster), `opponent_strength.adjust` for the
+opponent and venue, re-`score` under the same weights, `goalie_starts` for the
+start odds, then `optimal_lineup`. ~20ms for a week; the one slow read,
+`peripheral_venue` over `player_game_stats` (~200ms), is cached in-process for an
+hour since it only moves nightly.
+
+**No matchup weighting yet**, deliberately: `matchup_weights` needs an opponent
+projection to know which categories are in doubt, and there is no opponent
+roster. Flat weights are the honest answer until there is; `plan_week` takes the
+weights where §5 would plug in.
+
+**Goalie odds are balanced over the whole NHL team, not the roster.** Owning
+only the backup does not make him the starter, so `_goalie_probabilities` runs
+the balancing over every projected goalie on each rostered goalie's team, across
+the full season schedule. There is a test for exactly this.
+
+**Storage, and what is shared with draft prep.** Categories, points values and
+PIM polarity are draft prep's own keys (`fs_selectedStats`, `fs_statWeights`,
+`fs_leagueMode`, `fs_pimPolarity`), so the two pages describe one league.
+Starting slots are **not** shared: draft prep's roster settings have no `Util`
+or `W` and would drop them on its next save, so the lineup keeps
+`fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_standaloneRoster`
+(`[{id, out}]`) and `fs_standaloneWeek`. Toggling a chip changes only that
+column, so a stat draft prep selects that the lineup engine cannot score
+survives a visit here.
+
+Draft prep stores categories as projection column names; the engine speaks Yahoo
+codes. `week_planner.COLUMN_TO_CATEGORY` inverts `daily_value`'s own tables, so
+the two cannot drift. GWG and the derived PPA/SHA have no column, so they cannot
+be chosen here yet.
+
+**Out** keeps a player's games counted but never seats him — for injuries until
+there is a feed for them. Weeks come from `/schedules/api/weeks`, so they are
+derived Mon–Sun weeks unless a synced league supplies its own.
+
+Next slices, in the order they build on each other: an opponent roster and
+`optimise_week` (win odds per category), then free agents / streaming against
+the same saved league.
+
 ## Draft prep page
 
 Everything except the ranking-method control lives in the **League Settings** modal:
@@ -990,6 +1041,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
+| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values, then the routes on real data including every 400 |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
 
@@ -1076,7 +1128,7 @@ call because Yahoo gated the API — see *When Yahoo API access is granted*.
 
 **Phase 2 — the league ETL (`db_builder.py` -> `league_sync/`) — is next and is
 blocked on that grant.** Two Phase 3 pages were built ahead of it, because both
-work without one:
+work without one (and Standalone mode, below, needs no league at all):
 
 - **League Database viewer** (`/league/`) — Phase 3 item 1. Reads the per-league
   tables, which `import_legacy_league_data.py` fills with real fixtures from the
@@ -1102,7 +1154,7 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 - The per-league tables hold **imported 2025-26 fixtures**, including other
   people's leagues. Local development only: do not commit the data or load it
   into a deployment.
-- `/` and `/league/` consume the session; draft-prep and `/schedules/` are
+- `/` and `/league/` consume the session; draft-prep, `/schedules/` and `/standalone/` are
   deliberately league-agnostic.
 - `users.tos_accepted_version` is an INTEGER (`Config.TOS_VERSION`), while
   `index.html` keeps its own `CURRENT_TERMS_VERSION` date string in

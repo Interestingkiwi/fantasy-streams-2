@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lineups - Fantasy Streams</title>
+    <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
+
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
+        <div>
+            <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wide">Lineups</h1>
+            <p class="text-gray-400 text-sm mt-1">Standalone mode &middot; your league and roster are saved in this browser</p>
+        </div>
+        {% set active = 'standalone' %}{% include 'partials/page-nav.html' %}
+    </header>
+
+    <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-4 sm:gap-6">
+
+        <div id="page-error" class="hidden error-message"></div>
+
+        <!-- League -->
+        <section class="bg-gray-800 rounded-lg border border-gray-700">
+            <button id="league-toggle" type="button" aria-expanded="false" aria-controls="league-body"
+                    class="w-full flex items-center justify-between gap-3 p-3 sm:p-4 text-left">
+                <span>
+                    <span class="block text-lg font-semibold text-white">League</span>
+                    <span id="league-summary" class="block text-xs text-gray-400 mt-0.5"></span>
+                </span>
+                <span id="league-caret" class="text-gray-400 text-sm shrink-0">Edit</span>
+            </button>
+
+            <div id="league-body" class="hidden border-t border-gray-700 p-3 sm:p-4 flex flex-col gap-5">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-xs font-medium text-gray-400 uppercase tracking-wide">Scoring</span>
+                    <div class="inline-flex rounded-md overflow-hidden border border-gray-600" role="radiogroup" aria-label="Scoring">
+                        <button type="button" class="mode-btn px-3 py-2 text-sm font-medium" data-mode="categories" role="radio">Categories</button>
+                        <button type="button" class="mode-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-mode="points" role="radio">Points</button>
+                    </div>
+                    <p class="text-xs text-gray-500 w-full sm:w-auto sm:flex-1">Shared with Draft Prep &mdash; changing it here changes it there.</p>
+                </div>
+
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-300 mb-2">Skater stats</h3>
+                    <div id="skater-cats" class="flex flex-wrap gap-2"></div>
+                </div>
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-300 mb-2">Goalie stats</h3>
+                    <div id="goalie-cats" class="flex flex-wrap gap-2"></div>
+                </div>
+
+                <label id="pim-row" class="hidden flex items-center gap-2 text-sm text-gray-300">
+                    <input id="pim-negative" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
+                    Penalty minutes count against you
+                </label>
+
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-300 mb-1">Starting slots</h3>
+                    <p class="text-xs text-gray-500 mb-2">Only slots that start. F takes any forward, W either winger, Util any skater.</p>
+                    <div id="slot-inputs" class="grid grid-cols-4 sm:grid-cols-8 gap-2"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Roster -->
+        <section class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-center justify-between gap-2">
+                <h2 class="text-lg font-semibold text-white">Roster <span id="roster-count" class="text-sm font-normal text-gray-400"></span></h2>
+                <div class="relative w-full sm:w-80">
+                    <label for="player-search" class="sr-only">Add a player</label>
+                    <input id="player-search" type="search" autocomplete="off" placeholder="Add a player&hellip;"
+                           class="form-input w-full p-2 text-sm" aria-controls="search-results">
+                    <ul id="search-results" role="listbox"
+                        class="hidden absolute z-30 left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-xl max-h-[60dvh] overflow-y-auto"></ul>
+                </div>
+            </div>
+            <div id="roster-body" class="overflow-x-auto">
+                <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
+            </div>
+        </section>
+
+        <!-- Week -->
+        <section class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-3 sm:gap-4">
+            <div class="w-full sm:w-auto">
+                <label for="week-select" class="block mb-1 text-xs font-medium text-gray-400">Week</label>
+                <select id="week-select" class="form-select p-2 text-sm w-full sm:w-auto sm:min-w-[18rem]"></select>
+            </div>
+            <p id="plan-status" class="text-xs text-gray-500 flex-1 min-w-[14rem]"></p>
+        </section>
+
+        <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
+
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-1 flex-wrap">
+                <h2 class="text-lg font-semibold text-white">Best lineup each night</h2>
+                <p class="text-xs text-gray-500">Goalies show their chance of starting</p>
+            </div>
+            <div id="grid-body" class="overflow-x-auto">
+                <p class="text-gray-400 text-sm p-4">Set up your league and add players to see lineups.</p>
+            </div>
+        </section>
+
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <h2 class="text-lg font-semibold text-white p-3 sm:p-4 border-b border-gray-700">Projected week</h2>
+            <div id="totals-body" class="p-3 sm:p-4 text-sm text-gray-400">&mdash;</div>
+        </section>
+
+    </main>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const $ = id => document.getElementById(id);
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+        const showError = msg => {
+            $('page-error').textContent = msg;
+            $('page-error').classList.toggle('hidden', !msg);
+        };
+
+        // --- Storage ---------------------------------------------------------
+        // Categories, points and PIM polarity are draft prep's own keys, so the
+        // two pages describe one league. Starting slots are not: draft prep's
+        // roster settings have no Util or W and would drop them on its next
+        // save, so the lineup keeps its own key and only seeds from draft prep.
+        const KEYS = {
+            selected: 'fs_selectedStats',
+            weights: 'fs_statWeights',
+            mode: 'fs_leagueMode',
+            pim: 'fs_pimPolarity',
+            slots: 'fs_lineupSlots',
+            roster: 'fs_standaloneRoster',
+            week: 'fs_standaloneWeek',
+        };
+
+        function read(key, fallback) {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw === null ? fallback : JSON.parse(raw);
+            } catch (error) {
+                return fallback;
+            }
+        }
+
+        function write(key, value) {
+            try {
+                localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+            } catch (error) {
+                showError('Could not save to this browser - changes will be lost on reload.');
+            }
+        }
+
+        const SLOT_KEYS = ['C', 'LW', 'RW', 'F', 'W', 'D', 'Util', 'G'];
+
+        function seedSlots() {
+            const draft = read('fs_rosterSlots', {}) || {};
+            const grouped = localStorage.getItem('fs_rosterMode') === 'group';
+            const n = (v, d) => Number.isInteger(parseInt(v, 10)) ? parseInt(v, 10) : d;
+            return {
+                C: grouped ? 0 : n(draft.C, 2), LW: grouped ? 0 : n(draft.LW, 2),
+                RW: grouped ? 0 : n(draft.RW, 2), F: grouped ? n(draft.F, 6) : 0,
+                W: 0, D: n(draft.D, 4), Util: 1, G: n(draft.G, 2),
+            };
+        }
+
+        let setup = { players: [], categories: [] };
+        let playersById = new Map();
+        let leagueMode = localStorage.getItem(KEYS.mode) === 'points' ? 'points' : 'categories';
+        let selected = read(KEYS.selected, []) || [];
+        let pointWeights = read(KEYS.weights, {}) || {};
+        let slots = Object.assign({}, seedSlots(), read(KEYS.slots, {}) || {});
+        let roster = (read(KEYS.roster, []) || []).filter(p => p && p.id != null);
+        let weeks = [];
+        let lastPlan = null;
+
+        const pimNegative = () => parseInt(localStorage.getItem(KEYS.pim), 10) === -1;
+
+        // --- League ----------------------------------------------------------
+        const statName = column => column.replace('proj_', '')
+            .replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())
+            .replace(/(Pp|Sh|Ot)/g, w => w.toUpperCase());
+
+        function renderMode() {
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                const on = btn.dataset.mode === leagueMode;
+                btn.classList.toggle('bg-blue-600', on);
+                btn.classList.toggle('text-white', on);
+                btn.classList.toggle('bg-gray-700', !on);
+                btn.classList.toggle('text-gray-300', !on);
+                btn.setAttribute('aria-checked', on ? 'true' : 'false');
+            });
+        }
+
+        function categoryChip(cat) {
+            const label = `<span class="font-semibold">${esc(cat.code)}</span>
+                           <span class="text-xs opacity-75">${esc(statName(cat.column))}</span>`;
+            if (leagueMode === 'points') {
+                // A rate cannot be worth points per unit, so it has no box
+                if (cat.rate) return '';
+                const value = pointWeights[cat.column] ?? '0';
+                return `<label class="flex items-center gap-2 px-2 py-1.5 rounded-md border border-gray-700 text-gray-300 text-sm">
+                            <input type="number" step="0.1" inputmode="decimal" value="${esc(value)}"
+                                   class="point-input form-input w-16 px-1 py-1 text-center text-sm" data-column="${esc(cat.column)}">
+                            ${label}
+                        </label>`;
+            }
+            const on = selected.includes(cat.column);
+            return `<button type="button" class="cat-chip column-toggle flex items-baseline gap-1.5"
+                            data-column="${esc(cat.column)}" aria-pressed="${on}">${label}</button>`;
+        }
+
+        function renderLeague() {
+            renderMode();
+            const cats = setup.categories;
+            $('skater-cats').innerHTML = cats.filter(c => !c.goalie).map(categoryChip).join('');
+            $('goalie-cats').innerHTML = cats.filter(c => c.goalie).map(categoryChip).join('');
+
+            const pimOn = leagueMode === 'categories' && selected.includes('proj_penaltyMinutes');
+            $('pim-row').classList.toggle('hidden', !pimOn);
+            $('pim-negative').checked = pimNegative();
+
+            $('slot-inputs').innerHTML = SLOT_KEYS.map(slot => `
+                <label class="flex flex-col items-center gap-1 text-xs text-gray-400">
+                    ${esc(slot)}
+                    <input type="number" min="0" max="20" inputmode="numeric" value="${esc(slots[slot] ?? 0)}"
+                           class="slot-input form-input w-full p-2 text-center text-sm" data-slot="${esc(slot)}">
+                </label>`).join('');
+
+            renderLeagueSummary();
+        }
+
+        function activeCategories() {
+            const known = new Set(setup.categories.map(c => c.column));
+            if (leagueMode === 'points') {
+                return setup.categories.filter(c => parseFloat(pointWeights[c.column]) || 0);
+            }
+            return setup.categories.filter(c => selected.includes(c.column) && known.has(c.column));
+        }
+
+        function renderLeagueSummary() {
+            const cats = activeCategories().map(c => c.code);
+            const seats = SLOT_KEYS.filter(s => slots[s] > 0).map(s => `${slots[s]} ${s}`);
+            $('league-summary').textContent = [
+                leagueMode === 'points' ? 'Points' : 'Categories',
+                cats.length ? cats.join(', ') : 'no stats chosen',
+                seats.length ? seats.join(' · ') : 'no starting slots',
+            ].join(' — ');
+        }
+
+        function setLeagueOpen(open) {
+            $('league-body').classList.toggle('hidden', !open);
+            $('league-toggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+            $('league-caret').textContent = open ? 'Done' : 'Edit';
+        }
+
+        $('league-toggle').addEventListener('click', () =>
+            setLeagueOpen($('league-body').classList.contains('hidden')));
+
+        document.querySelectorAll('.mode-btn').forEach(btn => btn.addEventListener('click', () => {
+            if (btn.dataset.mode === leagueMode) return;
+            leagueMode = btn.dataset.mode;
+            write(KEYS.mode, leagueMode);
+            renderLeague();
+            schedulePlan();
+        }));
+
+        $('league-body').addEventListener('click', event => {
+            const chip = event.target.closest('.cat-chip');
+            if (!chip) return;
+            const column = chip.dataset.column;
+            // Toggle only this column, and keep any draft prep has selected
+            // that the lineup engine does not model.
+            selected = selected.includes(column)
+                ? selected.filter(c => c !== column)
+                : [...selected, column];
+            write(KEYS.selected, selected);
+            renderLeague();
+            schedulePlan();
+        });
+
+        $('league-body').addEventListener('input', event => {
+            const el = event.target;
+            if (el.classList.contains('point-input')) {
+                pointWeights = Object.assign({}, read(KEYS.weights, {}) || {}, { [el.dataset.column]: el.value });
+                write(KEYS.weights, pointWeights);
+            } else if (el.classList.contains('slot-input')) {
+                const n = parseInt(el.value, 10);
+                slots[el.dataset.slot] = Number.isInteger(n) ? Math.min(20, Math.max(0, n)) : 0;
+                write(KEYS.slots, slots);
+            } else if (el.id === 'pim-negative') {
+                write(KEYS.pim, el.checked ? '-1' : '1');
+            } else {
+                return;
+            }
+            renderLeagueSummary();
+            schedulePlan();
+        });
+
+        // --- Roster ----------------------------------------------------------
+        function saveRoster() {
+            write(KEYS.roster, roster);
+            renderRoster();
+            schedulePlan();
+        }
+
+        function renderRoster() {
+            $('roster-count').textContent = roster.length ? `(${roster.length})` : '';
+            if (!roster.length) {
+                $('roster-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Search above to add your players.</p>';
+                return;
+            }
+
+            const planned = new Map((lastPlan?.players || []).map(p => [String(p.playerId), p]));
+            const order = { C: 0, L: 1, R: 2, D: 3, G: 4 };
+            const rows = roster.map(entry => ({ entry, player: playersById.get(String(entry.id)) }))
+                .sort((a, b) => (order[a.player?.positionCode] ?? 9) - (order[b.player?.positionCode] ?? 9)
+                    || String(a.player?.fullName).localeCompare(String(b.player?.fullName)));
+
+            $('roster-body').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th class="col-sticky px-4 py-2 font-medium">Player</th>
+                            <th class="px-4 py-2 font-medium">Pos</th>
+                            <th class="px-4 py-2 font-medium">Team</th>
+                            <th class="px-4 py-2 font-medium text-right">Games</th>
+                            <th class="px-4 py-2 font-medium text-right">Starts</th>
+                            <th class="px-4 py-2 font-medium text-right">Benched</th>
+                            <th class="px-4 py-2 font-medium text-center">Out</th>
+                            <th class="px-4 py-2 font-medium"><span class="sr-only">Remove</span></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${rows.map(({ entry, player }) => {
+                            const plan = planned.get(String(entry.id));
+                            const starts = plan ? (Math.round(plan.starts * 10) / 10) : '';
+                            const wasted = plan?.benchedGames || 0;
+                            return `
+                            <tr class="table-row-hover ${entry.out ? 'opacity-60' : ''}">
+                                <td class="col-sticky px-4 py-2 text-white font-medium">${player ? esc(player.fullName)
+                                    : `<span class="text-gray-500">Unknown player ${esc(entry.id)}</span>`}</td>
+                                <td class="px-4 py-2 text-gray-300">${esc(player?.eligiblePositions || player?.positionCode || '')}</td>
+                                <td class="px-4 py-2 text-gray-300">${esc(player?.teamAbbrevs || '')}</td>
+                                <td class="px-4 py-2 text-right text-gray-300">${esc(plan?.games ?? '')}</td>
+                                <td class="px-4 py-2 text-right text-white font-semibold">${esc(starts)}</td>
+                                <td class="px-4 py-2 text-right ${wasted ? 'text-amber-400 font-semibold' : 'text-gray-500'}">${esc(plan ? wasted : '')}</td>
+                                <td class="px-4 py-2 text-center">
+                                    <input type="checkbox" class="out-toggle w-4 h-4" data-id="${esc(entry.id)}" ${entry.out ? 'checked' : ''}
+                                           aria-label="Mark ${esc(player?.fullName || entry.id)} out">
+                                </td>
+                                <td class="px-2 py-1 text-right">
+                                    <button type="button" class="remove-btn px-3 py-2 text-gray-400 hover:text-red-400" data-id="${esc(entry.id)}"
+                                            aria-label="Remove ${esc(player?.fullName || entry.id)}">&times;</button>
+                                </td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        $('roster-body').addEventListener('click', event => {
+            const remove = event.target.closest('.remove-btn');
+            if (!remove) return;
+            roster = roster.filter(p => String(p.id) !== remove.dataset.id);
+            saveRoster();
+        });
+
+        $('roster-body').addEventListener('change', event => {
+            if (!event.target.classList.contains('out-toggle')) return;
+            const entry = roster.find(p => String(p.id) === event.target.dataset.id);
+            if (entry) entry.out = event.target.checked;
+            saveRoster();
+        });
+
+        const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+        function renderSearch() {
+            const query = fold($('player-search').value.trim());
+            const list = $('search-results');
+            if (query.length < 2) {
+                list.classList.add('hidden');
+                return;
+            }
+            const owned = new Set(roster.map(p => String(p.id)));
+            const matches = setup.players
+                .filter(p => !owned.has(String(p.playerId)) && fold(p.fullName).includes(query))
+                .slice(0, 12);
+
+            list.innerHTML = matches.length
+                ? matches.map(p => `
+                    <li role="option">
+                        <button type="button" class="add-btn w-full text-left px-3 py-2.5 hover:bg-gray-700 flex justify-between gap-3"
+                                data-id="${esc(p.playerId)}">
+                            <span class="text-white">${esc(p.fullName)}</span>
+                            <span class="text-gray-400 text-xs whitespace-nowrap">${esc(p.eligiblePositions || p.positionCode)} &middot; ${esc(p.teamAbbrevs)}</span>
+                        </button>
+                    </li>`).join('')
+                : '<li class="px-3 py-2.5 text-sm text-gray-400">No players match.</li>';
+            list.classList.remove('hidden');
+        }
+
+        $('player-search').addEventListener('input', renderSearch);
+        $('player-search').addEventListener('focus', renderSearch);
+        $('search-results').addEventListener('click', event => {
+            const add = event.target.closest('.add-btn');
+            if (!add) return;
+            roster.push({ id: /^\d+$/.test(add.dataset.id) ? Number(add.dataset.id) : add.dataset.id, out: false });
+            $('player-search').value = '';
+            $('search-results').classList.add('hidden');
+            saveRoster();
+            $('player-search').focus();
+        });
+        document.addEventListener('click', event => {
+            if (!event.target.closest('#player-search, #search-results')) {
+                $('search-results').classList.add('hidden');
+            }
+        });
+
+        // --- Week ------------------------------------------------------------
+        const fmt = (iso, opts) => {
+            const [y, m, d] = iso.split('-');
+            return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined,
+                Object.assign({ timeZone: 'UTC' }, opts));
+        };
+
+        function defaultWeek() {
+            const saved = localStorage.getItem(KEYS.week);
+            if (weeks.some(w => w.start === saved)) return saved;
+            const today = new Date().toISOString().slice(0, 10);
+            const current = weeks.find(w => w.start <= today && today <= w.end)
+                || weeks.find(w => w.start >= today)
+                || weeks[weeks.length - 1];
+            return current?.start;
+        }
+
+        $('week-select').addEventListener('change', event => {
+            write(KEYS.week, event.target.value);
+            schedulePlan();
+        });
+
+        // --- Plan ------------------------------------------------------------
+        let planTimer = null;
+        let planRequest = 0;
+
+        function schedulePlan() {
+            clearTimeout(planTimer);
+            planTimer = setTimeout(plan, 300);
+        }
+
+        async function plan() {
+            const week = weeks.find(w => w.start === $('week-select').value);
+            const cats = activeCategories();
+            const needs = [];
+            if (!roster.some(p => playersById.has(String(p.id)))) needs.push('add players');
+            if (!cats.length) needs.push(leagueMode === 'points' ? 'give stats a points value' : 'choose categories');
+            if (!SLOT_KEYS.some(s => slots[s] > 0)) needs.push('set starting slots');
+            if (!week) needs.push('pick a week');
+            if (needs.length) {
+                $('plan-status').textContent = `To see lineups: ${needs.join(', ')}.`;
+                return;
+            }
+
+            const requestId = ++planRequest;
+            $('plan-status').textContent = 'Planning…';
+            try {
+                const response = await fetch('/standalone/api/week', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        roster: roster.map(p => p.id),
+                        out: roster.filter(p => p.out).map(p => p.id),
+                        league_mode: leagueMode,
+                        categories: cats.map(c => c.column),
+                        points: Object.fromEntries(cats.map(c => [c.column, pointWeights[c.column]])),
+                        pim_positive: !pimNegative(),
+                        slots,
+                        start: week.start,
+                        end: week.end,
+                    }),
+                });
+                const data = await response.json();
+                // Typing a points value fires several plans; only the newest may draw
+                if (requestId !== planRequest) return;
+                if (!response.ok) throw new Error(data.message || 'Planning failed.');
+
+                showError('');
+                lastPlan = data;
+                renderPlan(data);
+                renderRoster();
+            } catch (error) {
+                if (requestId !== planRequest) return;
+                $('plan-status').textContent = '';
+                showError(error.message);
+            }
+        }
+
+        const card = (label, value, tone = 'text-white') => `
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold ${tone}">${esc(value)}</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mt-1">${esc(label)}</div>
+            </div>`;
+
+        const round1 = n => Math.round(n * 10) / 10;
+
+        function seatCell(player) {
+            if (!player) return '<span class="text-gray-600">&mdash;</span>';
+            const where = `${player.home ? 'vs' : '@'} ${esc(player.opponent)}`;
+            const odds = player.startProbability != null
+                ? ` <span class="${player.startProbability >= 0.5 ? 'text-emerald-400' : 'text-amber-400'}">${Math.round(player.startProbability * 100)}%</span>`
+                : '';
+            return `<div class="text-white whitespace-nowrap">${esc(player.fullName)}</div>
+                    <div class="text-xs text-gray-400 whitespace-nowrap">${where}${odds}</div>`;
+        }
+
+        function renderPlan(data) {
+            const players = data.players || [];
+            const games = players.filter(p => !p.out).reduce((sum, p) => sum + p.games, 0);
+            const starts = players.reduce((sum, p) => sum + p.starts, 0);
+            const benched = players.reduce((sum, p) => sum + p.benchedGames, 0);
+            const empty = data.days.reduce((sum, d) => sum + d.slots.filter(s => !s.player).length, 0);
+
+            $('summary').innerHTML = [
+                card('Expected starts', round1(starts)),
+                card('Roster games', games),
+                card('Benched games', benched, benched ? 'text-amber-400' : 'text-white'),
+                card('Empty slots', empty, empty ? 'text-red-400' : 'text-white'),
+            ].join('');
+
+            const notes = [];
+            notes.push(data.adjusted ? 'Adjusted for each opponent and home ice.' : 'Opponent strength not loaded - unadjusted projections.');
+            if (data.rateCategories?.length) notes.push(`${data.rateCategories.join(', ')} not used to set lineups (rate stats).`);
+            if (data.missingCategories?.length) notes.push(`No projection for ${data.missingCategories.join(', ')}.`);
+            if (data.unknownPlayers?.length) notes.push(`${data.unknownPlayers.length} roster player(s) no longer projected.`);
+            $('plan-status').textContent = notes.join(' ');
+
+            // Rows are seats, columns are nights: the slot label freezes on a
+            // phone so a name three nights over still says where it sits. Inline
+            // min-width, because the shared .col-sticky floor is sized for names.
+            const seats = data.days[0]?.slots || [];
+            $('grid-body').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 text-xs">
+                        <tr>
+                            <th style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-medium uppercase">Slot</th>
+                            ${data.days.map(d => `
+                                <th class="px-3 py-2 font-medium whitespace-nowrap">
+                                    <div class="text-gray-200">${esc(fmt(d.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</div>
+                                    <div class="${d.nhlGames && d.nhlGames <= 8 ? 'text-emerald-400' : ''}">${esc(d.nhlGames)} games</div>
+                                </th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${seats.map((seat, index) => `
+                            <tr>
+                                <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(seat.slot)}</td>
+                                ${data.days.map(d => `<td class="px-3 py-2 align-top">${seatCell(d.slots[index].player)}</td>`).join('')}
+                            </tr>`).join('')}
+                        <tr class="bg-gray-900/50">
+                            <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-amber-400">Bench</td>
+                            ${data.days.map(d => `
+                                <td class="px-3 py-2 align-top text-xs text-amber-300">
+                                    ${d.bench.length ? d.bench.map(p => `<div class="whitespace-nowrap">${esc(p.fullName)}</div>`).join('') : '<span class="text-gray-600">&mdash;</span>'}
+                                </td>`).join('')}
+                        </tr>
+                    </tbody>
+                </table>`;
+
+            // jsonify sorts keys, so put them back in the league's own order
+            const totals = (data.categories || []).filter(c => c in (data.totals || {}))
+                .map(c => [c, data.totals[c]]);
+            $('totals-body').innerHTML = totals.length
+                ? `<div class="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-10 gap-2">
+                       ${totals.map(([cat, value]) => `
+                           <div class="bg-gray-900 rounded-md p-2 text-center">
+                               <div class="text-white font-semibold">${esc(round1(value))}</div>
+                               <div class="text-xs text-gray-400">${esc(cat)}</div>
+                           </div>`).join('')}
+                   </div>
+                   <p class="text-xs text-gray-500 mt-3">From the players started above, goalies weighted by their chance of starting.</p>`
+                : '&mdash;';
+        }
+
+        // --- Load ------------------------------------------------------------
+        async function getJSON(url) {
+            const response = await fetch(url);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message || 'Request failed.');
+            return data;
+        }
+
+        (async () => {
+            try {
+                const [setupData, weekData] = await Promise.all([
+                    getJSON('/standalone/api/setup'),
+                    getJSON('/schedules/api/weeks'),
+                ]);
+                setup = setupData;
+                playersById = new Map(setup.players.map(p => [String(p.playerId), p]));
+                weeks = weekData.weeks || [];
+
+                $('week-select').innerHTML = weeks.map(w => `
+                    <option value="${esc(w.start)}">Week ${esc(w.week)} &middot; ${esc(fmt(w.start, { month: 'short', day: 'numeric' }))} &ndash; ${esc(fmt(w.end, { month: 'short', day: 'numeric' }))}</option>`).join('');
+                const start = defaultWeek();
+                if (start) $('week-select').value = start;
+
+                renderLeague();
+                renderRoster();
+                // A first visit has nothing to plan against, so open the form
+                setLeagueOpen(!activeCategories().length);
+                plan();
+            } catch (error) {
+                $('roster-body').innerHTML = '';
+                showError(error.message);
+            }
+        })();
+    });
+    </script>
+</body>
+</html>
