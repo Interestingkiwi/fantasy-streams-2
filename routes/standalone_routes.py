@@ -130,7 +130,9 @@ def plan_week():
     Body: roster (playerIds), out (playerIds), league_mode ('categories' |
     'points'), categories (draft-prep column names or Yahoo codes), points
     ({column or code: points}), pim_positive, slots ({slot: count}), start,
-    end.
+    end. Optionally opponent and opponent_out (playerIds), which add the
+    matchup, and banked ({category: {mine, theirs}}), the score so far - keyed
+    by column name or Yahoo code, like the categories.
     """
     try:
         body = request.get_json(silent=True) or {}
@@ -176,11 +178,20 @@ def plan_week():
             return _error("No NHL schedule loaded. Run the preseason pipeline.", 404)
         team_stats = fetch_all('SELECT * FROM team_stats')
 
+        banked = {}
+        for name, entry in (body.get('banked') or {}).items():
+            mapped, _ = week_planner.categories_from_columns([name])
+            if mapped and isinstance(entry, dict):
+                banked[mapped[0]] = entry
+
         result = week_planner.plan_week(
             pool, roster, categories, slots, dates, schedule,
             team_stats=team_stats, peripheral=_peripheral_venue(),
             points=points, pim_positive=bool(body.get('pim_positive')),
-            out=body.get('out') or [])
+            out=body.get('out') or [],
+            opponent=list(body.get('opponent') or [])[:MAX_ROSTER],
+            opponent_out=body.get('opponent_out') or [],
+            banked=banked)
         result['unmappedCategories'] = unmapped
 
         return jsonify({"status": "success", **result})

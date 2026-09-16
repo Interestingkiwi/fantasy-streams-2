@@ -64,7 +64,7 @@ variance is not its to model. Conditioned on that, Poisson holds.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 9/16/2026
 """
 
 import math
@@ -100,9 +100,16 @@ def dispersion_for(category, dispersion=None):
 # vanishing σ sends the weight to infinity. Floor it.
 MIN_SIGMA = 1e-3
 
-# The smallest weight any category keeps, as a share of the largest. A written
+# The smallest share of its own worth-at-a-tie any category keeps. A written
 # off category should be cheap, not free: a 3σ projection can be wrong, and
 # holding a little weight back costs almost nothing.
+#
+# **Per category, not a share of the largest weight.** It read "5% of the
+# largest" until 9/16/2026, which is a comparison across units: one shutout is
+# a far bigger unit than one shot, so SHO's per-unit weight runs ~200x SOG's.
+# On a real 10-category matchup that floor lifted A, PPP, SOG, HIT, BLK and SV
+# to one identical weight - a category 9% to win and one 97% to win were worth
+# the same - and any league scoring SHO or W lost every skater distinction.
 WEIGHT_FLOOR = 0.05
 
 # Blend of new weights into old between passes. Undamped iteration can
@@ -181,9 +188,10 @@ def category_weights(mine, theirs, categories, polarity=None,
                          + banked_margin.get(category, 0.0))
         sigma = margin_sigma(remaining_mine, remaining_theirs,
                              dispersion_for(category, dispersion))
-        raw[category] = sign * marginal_worth(margin, sigma)
+        worth = max(marginal_worth(margin, sigma), floor * marginal_worth(0.0, sigma))
+        raw[category] = sign * worth
 
-    return _normalise(raw, floor)
+    return _normalise(raw)
 
 
 def project_totals(lineups, categories):
@@ -221,7 +229,8 @@ def optimise_week(days, roster_slots, categories, flat_weights,
     opponent throughout. `banked_margin` is the matchup's current score as
     `mine - theirs` per category.
 
-    Returns the chosen lineups by date, the weights they were chosen under,
+    Returns the chosen lineups by date (and the opponent's, set once on flat
+    weights), the weights they were chosen under,
     both sides' projected totals, the projected final margins, and the
     per-pass history - which is what makes a surprising lineup explainable
     rather than merely trusted.
@@ -266,6 +275,7 @@ def optimise_week(days, roster_slots, categories, flat_weights,
 
     return {
         'lineups': lineups,
+        'opponentLineups': dict(zip((day.get('date') for day in days), opponent_lineups)),
         'weights': weights,
         'projected': mine,
         'opponent': theirs,
@@ -284,31 +294,19 @@ def _valued(players, weights):
     return valued
 
 
-def _normalise(raw, floor):
+def _normalise(raw):
     """
-    Scale to a mean of one and lift anything below the floor.
+    Scale to a mean absolute weight of one.
 
-    The floor is applied before the scaling it affects, so normalise again
-    afterwards rather than leaving the mean drifting with the floor.
+    The floor is not applied here: it is a per-category share of that
+    category's own worth at a tie, applied in `category_weights`, because
+    weights in different categories are in different units.
     """
     magnitudes = [abs(value) for value in raw.values() if value]
     if not magnitudes:
         return {category: 0.0 for category in raw}
-
-    ceiling = max(magnitudes)
-    floored = {}
-    for category, value in raw.items():
-        if value == 0.0:
-            floored[category] = 0.0
-            continue
-        sign = 1.0 if value > 0 else -1.0
-        floored[category] = sign * max(abs(value), ceiling * floor)
-
-    scale = sum(abs(v) for v in floored.values()) / max(
-        1, sum(1 for v in floored.values() if v))
-    if scale <= 0:
-        return floored
-    return {category: value / scale for category, value in floored.items()}
+    scale = sum(magnitudes) / len(magnitudes)
+    return {category: value / scale for category, value in raw.items()}
 
 
 def _blend(current, target, damping):

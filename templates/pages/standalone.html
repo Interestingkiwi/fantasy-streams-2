@@ -13,7 +13,7 @@
     <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
         <div>
             <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wide">Lineups</h1>
-            <p class="text-gray-400 text-sm mt-1">Standalone mode &middot; your league and roster are saved in this browser</p>
+            <p class="text-gray-400 text-sm mt-1">Standalone mode &middot; your league and rosters are saved in this browser</p>
         </div>
         {% set active = 'standalone' %}{% include 'partials/page-nav.html' %}
     </header>
@@ -65,22 +65,34 @@
             </div>
         </section>
 
-        <!-- Roster -->
-        <section class="bg-gray-800 rounded-lg border border-gray-700">
-            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-center justify-between gap-2">
-                <h2 class="text-lg font-semibold text-white">Roster <span id="roster-count" class="text-sm font-normal text-gray-400"></span></h2>
-                <div class="relative w-full sm:w-80">
-                    <label for="player-search" class="sr-only">Add a player</label>
-                    <input id="player-search" type="search" autocomplete="off" placeholder="Add a player&hellip;"
-                           class="form-input w-full p-2 text-sm" aria-controls="search-results">
-                    <ul id="search-results" role="listbox"
-                        class="hidden absolute z-30 left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-xl max-h-[60dvh] overflow-y-auto"></ul>
+        <!-- Rosters: one template, two sides -->
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
+            {% for side, title, hint in [
+                ('mine', 'Your roster', 'Search to add your players.'),
+                ('theirs', 'Opponent', 'Optional. Add this week’s opponent to see who wins each category and set lineups to chase the close ones.'),
+            ] %}
+            <section class="bg-gray-800 rounded-lg border border-gray-700" data-side="{{ side }}">
+                <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-center justify-between gap-2">
+                    <h2 class="text-lg font-semibold text-white">{{ title }} <span class="roster-count text-sm font-normal text-gray-400"></span></h2>
+                    <div class="flex items-center gap-2 w-full sm:w-auto">
+                        <div class="relative flex-1 sm:w-72">
+                            <label for="search-{{ side }}" class="sr-only">Add a player to {{ title }}</label>
+                            <input id="search-{{ side }}" type="search" autocomplete="off" placeholder="Add a player&hellip;"
+                                   class="player-search form-input w-full p-2 text-sm" aria-controls="results-{{ side }}">
+                            <ul id="results-{{ side }}" role="listbox"
+                                class="search-results hidden absolute z-30 left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-xl max-h-[60dvh] overflow-y-auto"></ul>
+                        </div>
+                        {% if side == 'theirs' %}
+                        <button type="button" class="clear-btn hidden shrink-0 px-3 py-2 text-sm text-gray-400 hover:text-red-400 border border-gray-600 rounded-md">Clear</button>
+                        {% endif %}
+                    </div>
                 </div>
-            </div>
-            <div id="roster-body" class="overflow-x-auto">
-                <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
-            </div>
-        </section>
+                <div class="roster-body overflow-x-auto" data-hint="{{ hint }}">
+                    <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
+                </div>
+            </section>
+            {% endfor %}
+        </div>
 
         <!-- Week -->
         <section class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-3 sm:gap-4">
@@ -88,22 +100,47 @@
                 <label for="week-select" class="block mb-1 text-xs font-medium text-gray-400">Week</label>
                 <select id="week-select" class="form-select p-2 text-sm w-full sm:w-auto sm:min-w-[18rem]"></select>
             </div>
+            <label id="remaining-row" class="hidden flex items-center gap-2 text-sm text-gray-300 py-2">
+                <input id="remaining-only" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
+                Only nights still to play
+            </label>
             <p id="plan-status" class="text-xs text-gray-500 flex-1 min-w-[14rem]"></p>
+        </section>
+
+        <!-- Matchup -->
+        <section id="matchup" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex flex-wrap items-center justify-between gap-2 p-3 sm:p-4 border-b border-gray-700">
+                <div>
+                    <h2 class="text-lg font-semibold text-white">Matchup</h2>
+                    <p id="matchup-headline" class="text-sm text-gray-300 mt-0.5"></p>
+                </div>
+                <button id="banked-toggle" type="button" aria-pressed="false" class="column-toggle">Enter score so far</button>
+            </div>
+            <p id="banked-help" class="hidden px-3 sm:px-4 pt-3 text-xs text-gray-500">
+                Type in the matchup score as it stands (the boxes are at the end of each row). Pair it with <em>Only nights still to play</em>, or tonight is counted twice.
+            </p>
+            <div id="matchup-body" class="overflow-x-auto"></div>
         </section>
 
         <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
 
         <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-1 flex-wrap">
-                <h2 class="text-lg font-semibold text-white">Best lineup each night</h2>
-                <p class="text-xs text-gray-500">Goalies show their chance of starting</p>
+            <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-2 flex-wrap">
+                <div>
+                    <h2 class="text-lg font-semibold text-white">Best lineup each night</h2>
+                    <p class="text-xs text-gray-500">Goalies show their chance of starting</p>
+                </div>
+                <div id="grid-side" class="hidden inline-flex rounded-md overflow-hidden border border-gray-600" role="radiogroup" aria-label="Whose lineup">
+                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium" data-side="mine" role="radio">Yours</button>
+                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-side="theirs" role="radio">Opponent&rsquo;s</button>
+                </div>
             </div>
             <div id="grid-body" class="overflow-x-auto">
                 <p class="text-gray-400 text-sm p-4">Set up your league and add players to see lineups.</p>
             </div>
         </section>
 
-        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <section id="totals" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <h2 class="text-lg font-semibold text-white p-3 sm:p-4 border-b border-gray-700">Projected week</h2>
             <div id="totals-body" class="p-3 sm:p-4 text-sm text-gray-400">&mdash;</div>
         </section>
@@ -132,8 +169,11 @@
             mode: 'fs_leagueMode',
             pim: 'fs_pimPolarity',
             slots: 'fs_lineupSlots',
-            roster: 'fs_standaloneRoster',
+            mine: 'fs_standaloneRoster',
+            theirs: 'fs_standaloneOpponent',
             week: 'fs_standaloneWeek',
+            remaining: 'fs_standaloneRemaining',
+            banked: 'fs_standaloneBanked',
         };
 
         function read(key, fallback) {
@@ -166,26 +206,40 @@
             };
         }
 
+        const readRoster = key => (read(key, []) || []).filter(p => p && p.id != null);
+
         let setup = { players: [], categories: [] };
         let playersById = new Map();
         let leagueMode = localStorage.getItem(KEYS.mode) === 'points' ? 'points' : 'categories';
         let selected = read(KEYS.selected, []) || [];
         let pointWeights = read(KEYS.weights, {}) || {};
         let slots = Object.assign({}, seedSlots(), read(KEYS.slots, {}) || {});
-        let roster = (read(KEYS.roster, []) || []).filter(p => p && p.id != null);
+        const rosters = { mine: readRoster(KEYS.mine), theirs: readRoster(KEYS.theirs) };
+        // Keyed by week, so last week's score cannot leak into this one
+        let banked = read(KEYS.banked, {}) || {};
+        let bankedOpen = false;
+        let gridSide = 'mine';
         let weeks = [];
         let lastPlan = null;
 
         const pimNegative = () => parseInt(localStorage.getItem(KEYS.pim), 10) === -1;
 
+        // The browser's date, not UTC: toISOString() says tomorrow from 8pm on
+        // the east coast, which would skip tonight's games.
+        function localToday() {
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        }
+
         // --- League ----------------------------------------------------------
         const statName = column => column.replace('proj_', '')
             .replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())
-            .replace(/(Pp|Sh|Ot)/g, w => w.toUpperCase());
+            .replace(/\b(Pp|Sh|Ot)\b/g, w => w.toUpperCase());
 
-        function renderMode() {
-            document.querySelectorAll('.mode-btn').forEach(btn => {
-                const on = btn.dataset.mode === leagueMode;
+        function renderToggleGroup(selector, key, value) {
+            document.querySelectorAll(selector).forEach(btn => {
+                const on = btn.dataset[key] === value;
                 btn.classList.toggle('bg-blue-600', on);
                 btn.classList.toggle('text-white', on);
                 btn.classList.toggle('bg-gray-700', !on);
@@ -213,7 +267,7 @@
         }
 
         function renderLeague() {
-            renderMode();
+            renderToggleGroup('.mode-btn', 'mode', leagueMode);
             const cats = setup.categories;
             $('skater-cats').innerHTML = cats.filter(c => !c.goalie).map(categoryChip).join('');
             $('goalie-cats').innerHTML = cats.filter(c => c.goalie).map(categoryChip).join('');
@@ -233,11 +287,10 @@
         }
 
         function activeCategories() {
-            const known = new Set(setup.categories.map(c => c.column));
             if (leagueMode === 'points') {
-                return setup.categories.filter(c => parseFloat(pointWeights[c.column]) || 0);
+                return setup.categories.filter(c => !c.rate && (parseFloat(pointWeights[c.column]) || 0));
             }
-            return setup.categories.filter(c => selected.includes(c.column) && known.has(c.column));
+            return setup.categories.filter(c => selected.includes(c.column));
         }
 
         function renderLeagueSummary() {
@@ -299,27 +352,39 @@
             schedulePlan();
         });
 
-        // --- Roster ----------------------------------------------------------
-        function saveRoster() {
-            write(KEYS.roster, roster);
-            renderRoster();
+        // --- Rosters ---------------------------------------------------------
+        const sideEl = side => document.querySelector(`section[data-side="${side}"]`);
+
+        function saveRoster(side) {
+            write(KEYS[side], rosters[side]);
+            renderRoster(side);
             schedulePlan();
         }
 
-        function renderRoster() {
-            $('roster-count').textContent = roster.length ? `(${roster.length})` : '';
+        function plannedFor(side) {
+            const players = side === 'mine' ? lastPlan?.players : lastPlan?.opponent?.players;
+            return new Map((players || []).map(p => [String(p.playerId), p]));
+        }
+
+        function renderRoster(side) {
+            const roster = rosters[side];
+            const section = sideEl(side);
+            const body = section.querySelector('.roster-body');
+            section.querySelector('.roster-count').textContent = roster.length ? `(${roster.length})` : '';
+            section.querySelector('.clear-btn')?.classList.toggle('hidden', !roster.length);
+
             if (!roster.length) {
-                $('roster-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Search above to add your players.</p>';
+                body.innerHTML = `<p class="text-gray-400 text-sm p-4">${body.dataset.hint}</p>`;
                 return;
             }
 
-            const planned = new Map((lastPlan?.players || []).map(p => [String(p.playerId), p]));
+            const planned = plannedFor(side);
             const order = { C: 0, L: 1, R: 2, D: 3, G: 4 };
             const rows = roster.map(entry => ({ entry, player: playersById.get(String(entry.id)) }))
                 .sort((a, b) => (order[a.player?.positionCode] ?? 9) - (order[b.player?.positionCode] ?? 9)
                     || String(a.player?.fullName).localeCompare(String(b.player?.fullName)));
 
-            $('roster-body').innerHTML = `
+            body.innerHTML = `
                 <table class="data-table w-full text-left text-sm">
                     <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
                         <tr>
@@ -336,7 +401,7 @@
                     <tbody class="divide-y divide-gray-700">
                         ${rows.map(({ entry, player }) => {
                             const plan = planned.get(String(entry.id));
-                            const starts = plan ? (Math.round(plan.starts * 10) / 10) : '';
+                            const starts = plan ? round1(plan.starts) : '';
                             const wasted = plan?.benchedGames || 0;
                             return `
                             <tr class="table-row-hover ${entry.out ? 'opacity-60' : ''}">
@@ -361,30 +426,18 @@
                 </table>`;
         }
 
-        $('roster-body').addEventListener('click', event => {
-            const remove = event.target.closest('.remove-btn');
-            if (!remove) return;
-            roster = roster.filter(p => String(p.id) !== remove.dataset.id);
-            saveRoster();
-        });
+        const fold = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-        $('roster-body').addEventListener('change', event => {
-            if (!event.target.classList.contains('out-toggle')) return;
-            const entry = roster.find(p => String(p.id) === event.target.dataset.id);
-            if (entry) entry.out = event.target.checked;
-            saveRoster();
-        });
-
-        const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-
-        function renderSearch() {
-            const query = fold($('player-search').value.trim());
-            const list = $('search-results');
+        function renderSearch(side) {
+            const section = sideEl(side);
+            const query = fold(section.querySelector('.player-search').value.trim());
+            const list = section.querySelector('.search-results');
             if (query.length < 2) {
                 list.classList.add('hidden');
                 return;
             }
-            const owned = new Set(roster.map(p => String(p.id)));
+            // A player can only be on one of the two rosters
+            const owned = new Set([...rosters.mine, ...rosters.theirs].map(p => String(p.id)));
             const matches = setup.players
                 .filter(p => !owned.has(String(p.playerId)) && fold(p.fullName).includes(query))
                 .slice(0, 12);
@@ -402,21 +455,51 @@
             list.classList.remove('hidden');
         }
 
-        $('player-search').addEventListener('input', renderSearch);
-        $('player-search').addEventListener('focus', renderSearch);
-        $('search-results').addEventListener('click', event => {
-            const add = event.target.closest('.add-btn');
-            if (!add) return;
-            roster.push({ id: /^\d+$/.test(add.dataset.id) ? Number(add.dataset.id) : add.dataset.id, out: false });
-            $('player-search').value = '';
-            $('search-results').classList.add('hidden');
-            saveRoster();
-            $('player-search').focus();
+        ['mine', 'theirs'].forEach(side => {
+            const section = sideEl(side);
+            const search = section.querySelector('.player-search');
+            const results = section.querySelector('.search-results');
+
+            search.addEventListener('input', () => renderSearch(side));
+            search.addEventListener('focus', () => renderSearch(side));
+
+            results.addEventListener('click', event => {
+                const add = event.target.closest('.add-btn');
+                if (!add) return;
+                rosters[side].push({ id: /^\d+$/.test(add.dataset.id) ? Number(add.dataset.id) : add.dataset.id, out: false });
+                search.value = '';
+                results.classList.add('hidden');
+                saveRoster(side);
+                search.focus();
+            });
+
+            section.querySelector('.roster-body').addEventListener('click', event => {
+                const remove = event.target.closest('.remove-btn');
+                if (!remove) return;
+                rosters[side] = rosters[side].filter(p => String(p.id) !== remove.dataset.id);
+                saveRoster(side);
+            });
+
+            section.querySelector('.roster-body').addEventListener('change', event => {
+                if (!event.target.classList.contains('out-toggle')) return;
+                const entry = rosters[side].find(p => String(p.id) === event.target.dataset.id);
+                if (entry) entry.out = event.target.checked;
+                saveRoster(side);
+            });
+
+            // Opponents change every week; clearing one should be one tap
+            section.querySelector('.clear-btn')?.addEventListener('click', () => {
+                rosters[side] = [];
+                saveRoster(side);
+            });
         });
+
         document.addEventListener('click', event => {
-            if (!event.target.closest('#player-search, #search-results')) {
-                $('search-results').classList.add('hidden');
-            }
+            document.querySelectorAll('section[data-side]').forEach(section => {
+                if (!section.querySelector('.relative').contains(event.target)) {
+                    section.querySelector('.search-results').classList.add('hidden');
+                }
+            });
         });
 
         // --- Week ------------------------------------------------------------
@@ -426,18 +509,67 @@
                 Object.assign({ timeZone: 'UTC' }, opts));
         };
 
+        const selectedWeek = () => weeks.find(w => w.start === $('week-select').value);
+
         function defaultWeek() {
             const saved = localStorage.getItem(KEYS.week);
             if (weeks.some(w => w.start === saved)) return saved;
-            const today = new Date().toISOString().slice(0, 10);
+            const today = localToday();
             const current = weeks.find(w => w.start <= today && today <= w.end)
                 || weeks.find(w => w.start >= today)
                 || weeks[weeks.length - 1];
             return current?.start;
         }
 
+        // Only offered for a week under way - before it starts every night is
+        // still to play, and after it ends none are.
+        function renderRemaining() {
+            const week = selectedWeek();
+            const today = localToday();
+            const underWay = week && week.start < today && today <= week.end;
+            $('remaining-row').classList.toggle('hidden', !underWay);
+            $('remaining-only').checked = localStorage.getItem(KEYS.remaining) !== '0';
+        }
+
+        function planWindow() {
+            const week = selectedWeek();
+            if (!week) return null;
+            const today = localToday();
+            const underWay = week.start < today && today <= week.end;
+            const start = underWay && $('remaining-only').checked ? today : week.start;
+            return { start, end: week.end };
+        }
+
         $('week-select').addEventListener('change', event => {
             write(KEYS.week, event.target.value);
+            renderRemaining();
+            renderMatchup();
+            schedulePlan();
+        });
+
+        $('remaining-only').addEventListener('change', event => {
+            write(KEYS.remaining, event.target.checked ? '1' : '0');
+            schedulePlan();
+        });
+
+        // --- Score so far ----------------------------------------------------
+        const weekBanked = () => banked[$('week-select').value] || {};
+
+        $('banked-toggle').addEventListener('click', () => {
+            bankedOpen = !bankedOpen;
+            $('banked-toggle').setAttribute('aria-pressed', bankedOpen ? 'true' : 'false');
+            $('banked-help').classList.toggle('hidden', !bankedOpen);
+            renderMatchup();
+        });
+
+        $('matchup-body').addEventListener('input', event => {
+            const el = event.target;
+            if (!el.classList.contains('banked-input')) return;
+            const week = $('week-select').value;
+            const entry = Object.assign({ mine: '', theirs: '' }, (banked[week] || {})[el.dataset.column]);
+            entry[el.dataset.who] = el.value;
+            banked[week] = Object.assign({}, banked[week], { [el.dataset.column]: entry });
+            write(KEYS.banked, banked);
             schedulePlan();
         });
 
@@ -451,13 +583,13 @@
         }
 
         async function plan() {
-            const week = weeks.find(w => w.start === $('week-select').value);
+            const span = planWindow();
             const cats = activeCategories();
             const needs = [];
-            if (!roster.some(p => playersById.has(String(p.id)))) needs.push('add players');
+            if (!rosters.mine.some(p => playersById.has(String(p.id)))) needs.push('add your players');
             if (!cats.length) needs.push(leagueMode === 'points' ? 'give stats a points value' : 'choose categories');
             if (!SLOT_KEYS.some(s => slots[s] > 0)) needs.push('set starting slots');
-            if (!week) needs.push('pick a week');
+            if (!span) needs.push('pick a week');
             if (needs.length) {
                 $('plan-status').textContent = `To see lineups: ${needs.join(', ')}.`;
                 return;
@@ -470,26 +602,31 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        roster: roster.map(p => p.id),
-                        out: roster.filter(p => p.out).map(p => p.id),
+                        roster: rosters.mine.map(p => p.id),
+                        out: rosters.mine.filter(p => p.out).map(p => p.id),
+                        opponent: rosters.theirs.map(p => p.id),
+                        opponent_out: rosters.theirs.filter(p => p.out).map(p => p.id),
                         league_mode: leagueMode,
                         categories: cats.map(c => c.column),
                         points: Object.fromEntries(cats.map(c => [c.column, pointWeights[c.column]])),
                         pim_positive: !pimNegative(),
                         slots,
-                        start: week.start,
-                        end: week.end,
+                        banked: weekBanked(),
+                        start: span.start,
+                        end: span.end,
                     }),
                 });
                 const data = await response.json();
-                // Typing a points value fires several plans; only the newest may draw
+                // Typing a value fires several plans; only the newest may draw
                 if (requestId !== planRequest) return;
                 if (!response.ok) throw new Error(data.message || 'Planning failed.');
 
                 showError('');
                 lastPlan = data;
+                if (!data.matchup) gridSide = 'mine';
                 renderPlan(data);
-                renderRoster();
+                renderRoster('mine');
+                renderRoster('theirs');
             } catch (error) {
                 if (requestId !== planRequest) return;
                 $('plan-status').textContent = '';
@@ -504,15 +641,162 @@
             </div>`;
 
         const round1 = n => Math.round(n * 10) / 10;
+        const pct = p => `${Math.round(p * 100)}%`;
+
+        function oddsTone(p) {
+            if (p >= 0.65) return 'text-emerald-400';
+            if (p <= 0.35) return 'text-red-400';
+            return 'text-amber-300';
+        }
 
         function seatCell(player) {
             if (!player) return '<span class="text-gray-600">&mdash;</span>';
             const where = `${player.home ? 'vs' : '@'} ${esc(player.opponent)}`;
             const odds = player.startProbability != null
-                ? ` <span class="${player.startProbability >= 0.5 ? 'text-emerald-400' : 'text-amber-400'}">${Math.round(player.startProbability * 100)}%</span>`
+                ? ` <span class="${player.startProbability >= 0.5 ? 'text-emerald-400' : 'text-amber-400'}">${pct(player.startProbability)}</span>`
                 : '';
             return `<div class="text-white whitespace-nowrap">${esc(player.fullName)}</div>
                     <div class="text-xs text-gray-400 whitespace-nowrap">${where}${odds}</div>`;
+        }
+
+        function renderGrid(days) {
+            if (!days?.length) {
+                $('grid-body').innerHTML = '<p class="text-gray-400 text-sm p-4">No nights left in this week.</p>';
+                return;
+            }
+            // Rows are seats, columns are nights: the slot label freezes on a
+            // phone so a name three nights over still says where it sits. Inline
+            // min-width, because the shared .col-sticky floor is sized for names.
+            const seats = days[0].slots;
+            $('grid-body').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 text-xs">
+                        <tr>
+                            <th style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-medium uppercase">Slot</th>
+                            ${days.map(d => `
+                                <th class="px-3 py-2 font-medium whitespace-nowrap">
+                                    <div class="text-gray-200">${esc(fmt(d.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</div>
+                                    <div class="${d.nhlGames && d.nhlGames <= 8 ? 'text-emerald-400' : ''}">${esc(d.nhlGames)} games</div>
+                                </th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${seats.map((seat, index) => `
+                            <tr>
+                                <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(seat.slot)}</td>
+                                ${days.map(d => `<td class="px-3 py-2 align-top">${seatCell(d.slots[index].player)}</td>`).join('')}
+                            </tr>`).join('')}
+                        <tr class="bg-gray-900/50">
+                            <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-amber-400">Bench</td>
+                            ${days.map(d => `
+                                <td class="px-3 py-2 align-top text-xs text-amber-300">
+                                    ${d.bench.length ? d.bench.map(p => `<div class="whitespace-nowrap">${esc(p.fullName)}</div>`).join('') : '<span class="text-gray-600">&mdash;</span>'}
+                                </td>`).join('')}
+                        </tr>
+                    </tbody>
+                </table>`;
+        }
+
+        function renderGridSide() {
+            const hasOpponent = Boolean(lastPlan?.matchup);
+            $('grid-side').classList.toggle('hidden', !hasOpponent);
+            renderToggleGroup('.side-btn', 'side', gridSide);
+            renderGrid(gridSide === 'theirs' && hasOpponent ? lastPlan.opponent.days : lastPlan?.days);
+        }
+
+        document.querySelectorAll('.side-btn').forEach(btn => btn.addEventListener('click', () => {
+            gridSide = btn.dataset.side;
+            renderGridSide();
+        }));
+
+        // Rendered from the league's categories, not from the last plan, so the
+        // score-so-far boxes are there to type into before a plan comes back.
+        function renderMatchup() {
+            const match = lastPlan?.matchup;
+            const hasOpponent = rosters.theirs.length > 0;
+            $('matchup').classList.toggle('hidden', !hasOpponent);
+            $('totals').classList.toggle('hidden', Boolean(match));
+            if (!hasOpponent) return;
+
+            if (!match) {
+                $('matchup-headline').textContent = 'Add opponent players with games this week to see the matchup.';
+            } else if (match.mode === 'points') {
+                $('matchup-headline').innerHTML = `Projected <span class="text-white font-semibold">${esc(round1(match.minePoints))}</span>
+                    to <span class="text-white font-semibold">${esc(round1(match.theirsPoints))}</span> &middot;
+                    <span class="${oddsTone(match.winProbability)} font-semibold">${pct(match.winProbability)}</span> to win`;
+            } else {
+                $('matchup-headline').innerHTML = `Expected to win <span class="${oddsTone(match.expectedWins / Math.max(1, match.scoredCategories))} font-semibold">${esc(match.expectedWins)}</span>
+                    of ${esc(match.scoredCategories)} categories`;
+            }
+
+            const byCode = new Map((match?.categories || []).map(r => [r.category, r]));
+            const saved = weekBanked();
+            const points = leagueMode === 'points';
+            const input = (column, who) => `
+                <input type="text" inputmode="decimal" autocomplete="off" value="${esc(saved[column]?.[who] ?? '')}"
+                       class="banked-input form-input w-20 p-1.5 text-center text-sm" placeholder="0"
+                       data-column="${esc(column)}" data-who="${who}" aria-label="${who === 'mine' ? 'Your' : 'Opponent'} ${esc(column)} so far">`;
+
+            // Every plan redraws this table, including the box being typed in, so
+            // put the cursor back where it was. Text rather than number inputs:
+            // a number input will not report or accept a caret position.
+            const typing = document.activeElement?.classList.contains('banked-input')
+                ? { column: document.activeElement.dataset.column, who: document.activeElement.dataset.who,
+                    caret: document.activeElement.selectionStart }
+                : null;
+
+            $('matchup-body').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-medium">Cat</th>
+                            <th class="px-3 py-2 font-medium text-right">You</th>
+                            <th class="px-3 py-2 font-medium text-right">Opp</th>
+                            ${points ? '<th class="px-3 py-2 font-medium text-right">Pts each</th>'
+                                     : '<th class="px-3 py-2 font-medium text-right">Win</th><th class="px-3 py-2 font-medium">In play</th>'}
+                            ${bankedOpen ? '<th class="px-3 py-2 font-medium text-center">You so far</th><th class="px-3 py-2 font-medium text-center">Opp so far</th>' : ''}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${activeCategories().map(cat => {
+                            const row = byCode.get(cat.code);
+                            const inputs = bankedOpen
+                                ? (cat.rate ? '<td></td><td></td>' : `<td class="px-3 py-1.5 text-center">${input(cat.column, 'mine')}</td><td class="px-3 py-1.5 text-center">${input(cat.column, 'theirs')}</td>`)
+                                : '';
+                            if (!row || row.rate) {
+                                return `<tr><td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(cat.code)}</td>
+                                    <td colspan="${points ? 3 : 4}" class="px-3 py-2 text-xs text-gray-500">${row?.rate ? 'Rate stat — not projected' : '&mdash;'}</td>${inputs}</tr>`;
+                            }
+                            const mineWins = row.winProbability != null ? row.winProbability >= 0.5 : row.mine >= row.theirs;
+                            return `
+                            <tr>
+                                <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(cat.code)}</td>
+                                <td class="px-3 py-2 text-right ${mineWins ? 'text-white font-semibold' : 'text-gray-400'}">${esc(round1(row.mine))}</td>
+                                <td class="px-3 py-2 text-right ${mineWins ? 'text-gray-400' : 'text-white font-semibold'}">${esc(round1(row.theirs))}</td>
+                                ${points
+                                    ? `<td class="px-3 py-2 text-right text-gray-400">${esc(row.points)}</td>`
+                                    : `<td class="px-3 py-2 text-right font-semibold ${oddsTone(row.winProbability)}">${pct(row.winProbability)}</td>
+                                       <td class="px-3 py-2">
+                                           <div class="w-20 sm:w-28 h-2 rounded bg-gray-700 overflow-hidden" role="img"
+                                                aria-label="${pct(row.contested)} in play">
+                                               <div class="h-full bg-blue-500" style="width: ${Math.round(row.contested * 100)}%"></div>
+                                           </div>
+                                       </td>`}
+                                ${inputs}
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+                ${points ? '' : '<p class="text-xs text-gray-500 p-3 sm:px-4">The longer the bar, the closer the race. Your lineups lean toward those categories, since a lopsided one is won or lost whoever you start.</p>'}`;
+
+            if (typing) {
+                const box = document.querySelector(
+                    `.banked-input[data-column="${typing.column}"][data-who="${typing.who}"]`);
+                if (box) {
+                    box.focus();
+                    box.setSelectionRange(typing.caret, typing.caret);
+                }
+            }
         }
 
         function renderPlan(data) {
@@ -533,40 +817,12 @@
             notes.push(data.adjusted ? 'Adjusted for each opponent and home ice.' : 'Opponent strength not loaded - unadjusted projections.');
             if (data.rateCategories?.length) notes.push(`${data.rateCategories.join(', ')} not used to set lineups (rate stats).`);
             if (data.missingCategories?.length) notes.push(`No projection for ${data.missingCategories.join(', ')}.`);
-            if (data.unknownPlayers?.length) notes.push(`${data.unknownPlayers.length} roster player(s) no longer projected.`);
+            const unknown = (data.unknownPlayers?.length || 0) + (data.opponent?.unknownPlayers?.length || 0);
+            if (unknown) notes.push(`${unknown} rostered player(s) no longer projected.`);
             $('plan-status').textContent = notes.join(' ');
 
-            // Rows are seats, columns are nights: the slot label freezes on a
-            // phone so a name three nights over still says where it sits. Inline
-            // min-width, because the shared .col-sticky floor is sized for names.
-            const seats = data.days[0]?.slots || [];
-            $('grid-body').innerHTML = `
-                <table class="data-table w-full text-left text-sm">
-                    <thead class="bg-gray-900 text-gray-400 text-xs">
-                        <tr>
-                            <th style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-medium uppercase">Slot</th>
-                            ${data.days.map(d => `
-                                <th class="px-3 py-2 font-medium whitespace-nowrap">
-                                    <div class="text-gray-200">${esc(fmt(d.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</div>
-                                    <div class="${d.nhlGames && d.nhlGames <= 8 ? 'text-emerald-400' : ''}">${esc(d.nhlGames)} games</div>
-                                </th>`).join('')}
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-700">
-                        ${seats.map((seat, index) => `
-                            <tr>
-                                <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(seat.slot)}</td>
-                                ${data.days.map(d => `<td class="px-3 py-2 align-top">${seatCell(d.slots[index].player)}</td>`).join('')}
-                            </tr>`).join('')}
-                        <tr class="bg-gray-900/50">
-                            <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-amber-400">Bench</td>
-                            ${data.days.map(d => `
-                                <td class="px-3 py-2 align-top text-xs text-amber-300">
-                                    ${d.bench.length ? d.bench.map(p => `<div class="whitespace-nowrap">${esc(p.fullName)}</div>`).join('') : '<span class="text-gray-600">&mdash;</span>'}
-                                </td>`).join('')}
-                        </tr>
-                    </tbody>
-                </table>`;
+            renderGridSide();
+            renderMatchup();
 
             // jsonify sorts keys, so put them back in the league's own order
             const totals = (data.categories || []).filter(c => c in (data.totals || {}))
@@ -607,12 +863,15 @@
                 if (start) $('week-select').value = start;
 
                 renderLeague();
-                renderRoster();
+                renderRoster('mine');
+                renderRoster('theirs');
+                renderRemaining();
+                renderMatchup();
                 // A first visit has nothing to plan against, so open the form
                 setLeagueOpen(!activeCategories().length);
                 plan();
             } catch (error) {
-                $('roster-body').innerHTML = '';
+                document.querySelectorAll('.roster-body').forEach(el => { el.innerHTML = ''; });
                 showError(error.message);
             }
         })();

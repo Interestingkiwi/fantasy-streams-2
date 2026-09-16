@@ -151,7 +151,68 @@ check("value is fantasy points per game", abs(star["value"] - 3.0 * 50 / 80) < 1
 
 
 # --------------------------------------------------------------------------
-print("\n=== 6. routes on real data ===")
+print("\n=== 6. against an opponent ===")
+
+check("no opponent, no matchup", plan["matchup"] is None and plan["opponent"] is None)
+
+versus = wp.plan_week(POOL, [1], ["G", "SOG"], SLOTS, WEEK, SEASON, opponent=[2])
+rows = {r["category"]: r for r in versus["matchup"]["categories"]}
+check("the stronger side is favoured", rows["G"]["winProbability"] > 0.5, rows["G"])
+check("expected wins is the sum of the category odds",
+      abs(versus["matchup"]["expectedWins"]
+          - sum(r["winProbability"] for r in rows.values())) < 0.01, versus["matchup"])
+check("the opponent's lineups hold the opponent's players",
+      versus["opponent"]["days"][0]["slots"][0]["player"]["fullName"] == "Depth")
+check("contested is 1 at a dead heat and falls away from it",
+      0 < rows["G"]["contested"] < 1, rows["G"])
+
+swamped = wp.plan_week(POOL, [1], ["G"], SLOTS, WEEK, SEASON, opponent=[2],
+                       banked={"G": {"mine": 0, "theirs": 40}})
+check("a banked deficit is counted in the final margin",
+      swamped["matchup"]["categories"][0]["winProbability"] < 0.01
+      and swamped["matchup"]["categories"][0]["theirs"] > 40, swamped["matchup"])
+
+inverse = wp.plan_week(POOL, [5], ["GA"], SLOTS, WEEK, SEASON, opponent=[7],
+                       banked={"GA": {"mine": 0, "theirs": 30}})
+check("an inverse category is won by having less of it",
+      inverse["matchup"]["categories"][0]["winProbability"] > 0.99, inverse["matchup"])
+
+benched_opp = wp.plan_week(POOL, [1], ["G"], SLOTS, WEEK, SEASON, opponent=[2], opponent_out=[2])
+check("an opponent marked out projects nothing",
+      benched_opp["opponent"]["totals"]["G"] == 0, benched_opp["opponent"]["totals"])
+
+rate = wp.plan_week(POOL, [5], ["W", "SVpct"], SLOTS, WEEK, SEASON, opponent=[7])
+check("a rate category is listed but not given odds",
+      {"category": "SVpct", "rate": True} in rate["matchup"]["categories"],
+      rate["matchup"]["categories"])
+
+points_vs = wp.plan_week(POOL, [1], ["G"], SLOTS, WEEK, SEASON, opponent=[2],
+                         points={"G": 3.0})
+check("a points league reports points, and the better side is favoured",
+      points_vs["matchup"]["mode"] == "points"
+      and points_vs["matchup"]["minePoints"] > points_vs["matchup"]["theirsPoints"]
+      and points_vs["matchup"]["winProbability"] > 0.5, points_vs["matchup"])
+
+# The point of the opponent: with goals already lost and hits in reach, the
+# one C slot should go to the grinder rather than the sniper, even though the
+# sniper is the better player on flat weights.
+sniper = {**skater(50, "Sniper", "C", "TOR", 40), "proj_hits": 20}
+grinder = {**skater(51, "Grinder", "C", "TOR", 12), "proj_hits": 80}
+rival = {**skater(52, "Rival", "C", "MTL", 12), "proj_hits": 75}
+hitters = [{**p, "proj_hits": p.get("proj_goals", 0) * 3} for p in POOL if p["positionCode"] != "G"] + [sniper, grinder, rival]
+flat = wp.plan_week(hitters, [50, 51], ["G", "HIT"], {"C": 1}, WEEK, SEASON)
+chasing = wp.plan_week(hitters, [50, 51], ["G", "HIT"], {"C": 1}, WEEK, SEASON,
+                       opponent=[52], banked={"G": {"mine": 0, "theirs": 30}})
+check("on flat weights the better player starts",
+      flat["days"][0]["slots"][0]["player"]["fullName"] == "Sniper",
+      flat["days"][0]["slots"][0])
+check("against a lost category, the lineup chases the live one",
+      chasing["days"][0]["slots"][0]["player"]["fullName"] == "Grinder",
+      (chasing["days"][0]["slots"][0], chasing["weights"]))
+
+
+# --------------------------------------------------------------------------
+print("\n=== 7. routes on real data ===")
 
 try:
     import app as app_module

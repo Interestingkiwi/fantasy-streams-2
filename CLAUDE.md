@@ -505,6 +505,17 @@ and assuming otherwise makes you exploitable.
 replacing it with something measured. A `WEIGHT_FLOOR` keeps a written-off
 category from reaching exactly zero, since a 3σ projection can be wrong.
 
+**The floor is per category — a share of that category's own worth at a tie —
+never a share of the largest weight.** Weights are per unit of each stat, and
+one shutout is a far bigger unit than one shot, so SHO's weight runs ~200x
+SOG's. The floor read "5% of the largest" until 9/16/2026; on a real
+ten-category matchup that lifted A, PPP, SOG, HIT, BLK and SV to one identical
+weight, so hits at 9% to win counted exactly what shots at 97% did, in any
+league scoring SHO or W. It went unnoticed because the unit tests only mixed P
+and SOG, which are near the same scale; `test_matchup_weights.py` now carries
+the real matchup. Same lesson for anything *shown*: a per-unit weight means
+nothing to a reader, so the page shows `contested` (`φ(z)/φ(0)`, 0–1) instead.
+
 Weights are relative — they normalise to a mean absolute value of one, so a
 single-category league always returns 1.0 and says nothing.
 
@@ -596,10 +607,33 @@ start odds, then `optimal_lineup`. ~20ms for a week; the one slow read,
 `peripheral_venue` over `player_game_stats` (~200ms), is cached in-process for an
 hour since it only moves nightly.
 
-**No matchup weighting yet**, deliberately: `matchup_weights` needs an opponent
-projection to know which categories are in doubt, and there is no opponent
-roster. Flat weights are the honest answer until there is; `plan_week` takes the
-weights where §5 would plug in.
+**An opponent roster turns on the matchup.** Optional — without one the week
+is set on flat weights, which is the honest answer with nothing to be in doubt
+against. With one, a categories league goes through `optimise_week`: your
+lineups chase the categories whose projected final margin is close, the
+opponent plays his best team on flat weights, and `week_planner.matchup()`
+reports win odds per category, `contested`, and expected categories won. A
+points league is never re-weighted (every point is worth a point) but gets both
+sides' projected points and a win probability, with σ² = Σ points² × dispersion
+× volume across its categories.
+
+Flat weights are normalised to a mean absolute value of one before they reach
+`optimise_week`, because it blends them with matchup weights normalised that
+way; raw z weights run several times larger and would swamp the blend.
+
+**Score so far** (`banked`, keyed by week in `fs_standaloneBanked`) moves the
+final margin but adds no variance — σ comes from the remaining nights alone.
+It only makes sense with *Only nights still to play* ticked, or tonight is
+counted twice; the page says so. That checkbox appears only for a week already
+under way, so it could not be exercised in a browser before opening night
+(2026-09-29) — worth a look the first week of the season.
+
+Rate categories (GAA, SVpct) are listed in the matchup but get no odds: their
+final value depends on volume that is not projected as a ratio.
+
+`optimise_week` re-values players into new dicts, so benches are found by
+`playerId`, not `lineup_utils.benched` — which matches object identity and
+would report nobody seated.
 
 **Goalie odds are balanced over the whole NHL team, not the roster.** Owning
 only the backup does not make him the starter, so `_goalie_probabilities` runs
@@ -612,7 +646,8 @@ PIM polarity are draft prep's own keys (`fs_selectedStats`, `fs_statWeights`,
 Starting slots are **not** shared: draft prep's roster settings have no `Util`
 or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_standaloneRoster`
-(`[{id, out}]`) and `fs_standaloneWeek`. Toggling a chip changes only that
+(`[{id, out}]`), `fs_standaloneOpponent` (same shape), `fs_standaloneWeek`,
+`fs_standaloneRemaining` and `fs_standaloneBanked`. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
 
@@ -625,9 +660,13 @@ be chosen here yet.
 there is a feed for them. Weeks come from `/schedules/api/weeks`, so they are
 derived Mon–Sun weeks unless a synced league supplies its own.
 
-Next slices, in the order they build on each other: an opponent roster and
-`optimise_week` (win odds per category), then free agents / streaming against
-the same saved league.
+Next slice: free agents / streaming against the same saved league — which
+players, added on which nights, move the matchup the most.
+
+**Editing the page's JS through a shell heredoc mangles backslashes** — a regex
+word boundary (backslash-b) became a literal backspace byte and shipped. Use the
+Edit tool, or build the string with `chr(92)`, and check the file has no control
+bytes with `grep -c $'\b'`.
 
 ## Draft prep page
 
@@ -1041,7 +1080,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
-| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values, then the routes on real data including every 400 |
+| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; then the routes on real data including every 400 |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
 

@@ -9,7 +9,7 @@ an inverse category like GA quietly goes wrong.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 9/16/2026
 """
 
 import math
@@ -126,6 +126,23 @@ check("...by roughly the square root of its dispersion",
 
 check("rate categories get no weight at all",
       mw.category_weights({"SVpct": 0.91}, {"SVpct": 0.90}, ["SVpct"])["SVpct"] == 0.0)
+
+# The floor once took 5% of the *largest* weight - a comparison across units.
+# One shutout is a far bigger unit than one shot, so in a real ten-category
+# matchup it lifted six skater categories to one identical weight: hits at 9%
+# to win were worth exactly what shots at 97% were.
+MIXED_MINE = {"G": 15.1, "A": 30.3, "PPP": 15.0, "SOG": 113.5, "HIT": 18.2,
+              "BLK": 26.9, "W": 1.03, "GA": 6.43, "SV": 53.9, "SHO": 0.064}
+MIXED_THEIRS = {"G": 10.4, "A": 17.5, "PPP": 8.4, "SOG": 84.7, "HIT": 28.5,
+                "BLK": 29.9, "W": 1.35, "GA": 9.0, "SV": 78.3, "SHO": 0.109}
+mixed = mw.category_weights(MIXED_MINE, MIXED_THEIRS, list(MIXED_MINE))
+skater_weights = [round(mixed[c], 6) for c in ("A", "PPP", "SOG", "HIT", "BLK", "SV")]
+check("a big-unit category (SHO) does not flatten the skater weights",
+      len(set(skater_weights)) == len(skater_weights), skater_weights)
+check("a live category outweighs a settled one in the same league",
+      mixed["HIT"] > 3 * mixed["SOG"], mixed)
+check("the floor is per category: a written-off one keeps its share of its own tie worth",
+      mw.category_weights({"P": 0, "SOG": 10}, {"P": 500, "SOG": 10}, ["P", "SOG"])["P"] > 0)
 
 
 # --------------------------------------------------------------------------
