@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/16/2026
+Updated - 9/21/2026
 """
 
 import logging
@@ -26,6 +26,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 import daily_value as dv
 import opponent_strength as ops
 import week_planner
+import yahoo_matchup
 import yahoo_rosters
 from db import engine, fetch_all
 from lineup_utils import GENERIC_SLOTS, NON_STARTING_SLOTS
@@ -106,6 +107,7 @@ def page():
         roster_scrape_test=test,
         roster_test_league=yahoo_rosters.TEST_LEAGUE_ID,
         roster_test_url=yahoo_rosters.TEST_ROSTERS_URL,
+        matchup_test_url=yahoo_matchup.TEST_MATCHUP_URL,
     )
 
 
@@ -194,6 +196,85 @@ def parse_rosters():
         return _roster_error(exc)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Roster parse failed.")
+        return _error(str(exc), 500)
+
+
+def _is_yahoo_url(url):
+    host = urlparse(str(url or '')).hostname or ''
+    return host == 'yahoo.com' or host.endswith('.yahoo.com')
+
+
+def _matchup_columns(parsed):
+    """
+    The parsed matchup with each team's stats also keyed by projection column,
+    which is how the page keys the score so far. Only categories the lineup
+    engine knows get a column; rates are marked so the page can show them
+    without banking them, since a ratio cannot be added to.
+    """
+    for team in parsed["teams"]:
+        team["columns"] = {}
+        for code, value in team["stats"].items():
+            column = dv.COUNTING_COLUMNS.get(code) or dv.RATE_COLUMNS.get(code)
+            if column:
+                team["columns"][column] = value
+    parsed["rateColumns"] = sorted(dv.RATE_COLUMNS.values())
+    return parsed
+
+
+@standalone_bp.route('/api/matchup/scrape', methods=['POST'])
+def scrape_matchup():
+    """
+    The score so far from a league's Matchup page, fetched here.
+
+    Body: league_id, week (Yahoo's week number) and team (the Yahoo team
+    number the roster scrape recorded). Without a team Yahoo answers with team
+    1's matchup, so the page checks the names it gets back. Public leagues
+    only; a private one answers 403 `private` with the `yahooUrl` to open for
+    the bookmarklet, as the roster scrape does.
+    """
+    test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
+    url = None
+    try:
+        body = request.get_json(silent=True) or {}
+        week = body.get('week')
+        team = body.get('team')
+        if week not in (None, '') and not str(week).isdigit():
+            return _error("week must be a number.", 400)
+        if team not in (None, '') and not str(team).isdigit():
+            return _error("team must be a Yahoo team number.", 400)
+        url = yahoo_matchup.matchup_url(body.get('league_id'), week=week or None,
+                                        team=team or None, test=test)
+        result = _matchup_columns(yahoo_matchup.parse(yahoo_matchup.fetch(url)))
+        return jsonify({"status": "success", "source": "server", "test": test,
+                        "url": url, **result})
+    except yahoo_rosters.RosterPageError as exc:
+        return _roster_error(exc, yahoo_url=url)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Matchup scrape failed.")
+        return _error(str(exc), 500)
+
+
+@standalone_bp.route('/api/matchup/parse', methods=['POST'])
+def parse_matchup():
+    """
+    The same, for a Matchup page the bookmarklet read in the user's browser.
+    Body: html, url. Parsed for team names and category totals, and discarded.
+    """
+    try:
+        if (request.content_length or 0) > MAX_ROSTER_HTML_BYTES:
+            raise yahoo_rosters.RosterPageError(
+                "unrecognised", "That page is far too large to be a Yahoo matchup page.")
+        body = request.get_json(silent=True) or {}
+        if not _is_yahoo_url(body.get('url')):
+            raise yahoo_rosters.RosterPageError(
+                "unrecognised", "A matchup can only be read from a Yahoo Fantasy page.")
+        result = _matchup_columns(yahoo_matchup.parse(str(body.get('html') or '')))
+        return jsonify({"status": "success", "source": "browser",
+                        "url": body.get('url'), **result})
+    except yahoo_rosters.RosterPageError as exc:
+        return _roster_error(exc)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Matchup parse failed.")
         return _error(str(exc), 500)
 
 

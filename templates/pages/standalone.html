@@ -202,6 +202,15 @@
                 <select id="opponent-select" class="form-select p-2 text-sm w-full sm:w-56"></select>
             </div>
             <p id="opponent-help" class="text-xs text-gray-500 flex-1 min-w-[14rem] sm:pb-2"></p>
+            <!-- Reads this week's score so far - and who it is against - off
+                 Yahoo's Matchup page. Typing it in stays, under the table. -->
+            <button id="matchup-scrape" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2 w-full sm:w-auto">Scrape score from Yahoo</button>
+            <div id="matchup-import" class="hidden w-full rounded-md border border-gray-600 bg-gray-900 p-3 text-sm"></div>
+            {% if roster_scrape_test %}
+            <p class="w-full text-xs text-amber-300">
+                Local test mode: the score comes from week 2 of the completed 2025-26 league {{ roster_test_league }}, whatever week is picked.
+            </p>
+            {% endif %}
         </div>
 
         <section id="matchup" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -390,7 +399,8 @@
             if (saved && Array.isArray(saved.teams) && saved.teams.length) {
                 const teams = saved.teams
                     .filter(t => t && t.id)
-                    .map(t => ({ id: String(t.id), name: String(t.name || 'Team'), players: cleanRoster(t.players) }));
+                    .map(t => ({ id: String(t.id), name: String(t.name || 'Team'), players: cleanRoster(t.players),
+                        ...(t.yahooTeamId ? { yahooTeamId: String(t.yahooTeamId) } : {}) }));
                 const has = id => teams.some(t => t.id === id);
                 return {
                     teams,
@@ -820,18 +830,23 @@
         const APP_ORIGIN = window.location.origin;
         const ROSTER_TEST_MODE = {{ 'true' if roster_scrape_test else 'false' }};
         const ROSTER_TEST_URL = {{ roster_test_url | tojson }};
+        const MATCHUP_TEST_URL = {{ matchup_test_url | tojson }};
         const YAHOO_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*yahoo\.com$/;
         let pendingImport = null;
 
         // Runs on Yahoo's page, not this one: turned into the bookmarklet's
         // source below, so it must stand alone and name nothing from here.
-        function sendRostersToFantasyStreams(appOrigin) {
+        // One bookmark serves both scrapes - the Starting Rosters page and the
+        // Matchup page - and this page tells them apart by the URL sent.
+        function sendToFantasyStreams(appOrigin) {
             var onYahoo = /(^|\.)yahoo\.com$/.test(location.hostname);
-            if (!onYahoo || !document.querySelector('table[id^="Tst-team-"]')) {
-                alert('Open your league Starting Rosters page on Yahoo, signed in, then select this bookmark again.');
+            var rosters = document.querySelector('table[id^="Tst-team-"]');
+            var matchup = /\/matchup/.test(location.pathname) && document.querySelector('table.Datatable');
+            if (!onYahoo || !(rosters || matchup)) {
+                alert('Open your league Starting Rosters or Matchup page on Yahoo, signed in, then select this bookmark again.');
                 return;
             }
-            var message = { type: 'fs-rosters', url: location.href, html: document.documentElement.outerHTML };
+            var message = { type: 'fs-yahoo-page', url: location.href, html: document.documentElement.outerHTML };
 
             // Opened from Fantasy Streams: send it straight back, and wait to hear
             // it arrived - a posted message to a window that has moved on is
@@ -842,7 +857,7 @@
                     if (event.origin === appOrigin && event.data && event.data.type === 'fs-received') {
                         acked = true;
                         window.removeEventListener('message', onAck);
-                        alert('Rosters sent to Fantasy Streams. You can close this tab.');
+                        alert('Sent to Fantasy Streams. You can close this tab.');
                     }
                 });
                 window.opener.postMessage(message, appOrigin);
@@ -869,7 +884,7 @@
         }
 
         const BOOKMARKLET_HREF = 'javascript:' + encodeURIComponent(
-            `(${sendRostersToFantasyStreams.toString()})(${JSON.stringify(APP_ORIGIN)})`);
+            `(${sendToFantasyStreams.toString()})(${JSON.stringify(APP_ORIGIN)})`);
 
         function yahooRostersUrl() {
             if (ROSTER_TEST_MODE) return ROSTER_TEST_URL;
@@ -891,37 +906,51 @@
             if (html) $('roster-import').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
 
-        function privateLeagueSteps(message) {
-            const url = yahooRostersUrl();
-            showImportPanel(`
+        // The private-league steps, shared by the roster and matchup scrapes:
+        // `what` names the page ("rosters", "matchup"), `openId` is the button
+        // that opens it on Yahoo, and `url` is null until a League ID is known.
+        function bookmarkletSteps(message, { what, openId, openLabel, url, cancelClass }) {
+            return `
                 ${message ? `<p class="text-amber-300 font-medium mb-2">${esc(message)}</p>` : ''}
                 <p class="text-gray-300 mb-2">
-                    Yahoo only shows a private league&rsquo;s rosters to someone signed in, so they have to be read in your own browser.
-                    Signing in to Yahoo on its own won&rsquo;t let Fantasy Streams see them.
+                    Yahoo only shows a private league&rsquo;s ${what} to someone signed in, so it has to be read in your own browser.
+                    Signing in to Yahoo on its own won&rsquo;t let Fantasy Streams see it.
                 </p>
                 <ol class="list-decimal pl-5 space-y-2 text-gray-300">
                     <li>
-                        Drag this button to your bookmarks bar (you only do this once):
-                        <a id="bookmarklet" href="#" draggable="true"
-                           class="inline-block mt-1 px-3 py-2 rounded-md bg-emerald-700 text-white font-medium no-underline cursor-grab">Send rosters to Fantasy Streams</a>
+                        Drag this button to your bookmarks bar (you only do this once &mdash; the same bookmark reads rosters and matchups):
+                        <a href="#" draggable="true"
+                           class="fs-bookmarklet inline-block mt-1 px-3 py-2 rounded-md bg-emerald-700 text-white font-medium no-underline cursor-grab">Send to Fantasy Streams</a>
                     </li>
                     <li>
                         ${url
-                            ? `<button type="button" id="open-yahoo-rosters" class="text-blue-400 hover:text-blue-300 underline py-1">Open your league&rsquo;s rosters on Yahoo</button> and sign in if Yahoo asks.`
-                            : 'Enter your League ID above, then come back to this step.'}
+                            ? `<button type="button" id="${openId}" class="text-blue-400 hover:text-blue-300 underline py-1">${openLabel}</button> and sign in if Yahoo asks.`
+                            : 'Enter your League ID on the League tab, then come back to this step.'}
                     </li>
-                    <li>On that Yahoo page, select the bookmark. The rosters come back to this page to review.</li>
+                    <li>On that Yahoo page, select the bookmark. The ${what} come${what === 'rosters' ? '' : 's'} back to this page.</li>
                 </ol>
                 <p class="text-xs text-gray-500 mt-2">Needs a desktop browser with a bookmarks bar.</p>
-                <button type="button" class="import-cancel mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>`);
-            // Set from script: a javascript: URL written into the markup would
-            // be one more thing to escape, and this keeps the source readable.
-            const link = $('bookmarklet');
-            link.setAttribute('href', BOOKMARKLET_HREF);
-            link.addEventListener('click', event => {
-                event.preventDefault();
-                alert('Drag this button to your bookmarks bar rather than selecting it here. Then use it on the Yahoo rosters page.');
+                <button type="button" class="${cancelClass} mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>`;
+        }
+
+        // Set from script: a javascript: URL written into the markup would
+        // be one more thing to escape, and this keeps the source readable.
+        function wireBookmarklet(container) {
+            container.querySelectorAll('.fs-bookmarklet').forEach(link => {
+                link.setAttribute('href', BOOKMARKLET_HREF);
+                link.addEventListener('click', event => {
+                    event.preventDefault();
+                    alert('Drag this button to your bookmarks bar rather than selecting it here. Then use it on the Yahoo page.');
+                });
             });
+        }
+
+        function privateLeagueSteps(message) {
+            showImportPanel(bookmarkletSteps(message, {
+                what: 'rosters', openId: 'open-yahoo-rosters', url: yahooRostersUrl(),
+                openLabel: 'Open your league&rsquo;s rosters on Yahoo', cancelClass: 'import-cancel',
+            }));
+            wireBookmarklet($('roster-import'));
         }
 
         function importError(code, message) {
@@ -991,6 +1020,8 @@
                 return {
                     id: same ? same.id : newTeamId(),
                     name: scraped.name,
+                    // Which team Yahoo means by mid1= on its Matchup page
+                    ...(scraped.yahooTeamId ? { yahooTeamId: String(scraped.yahooTeamId) } : {}),
                     players: scraped.players
                         .filter(p => p.playerId != null && !seen.has(String(p.playerId)) && seen.add(String(p.playerId)))
                         .map(p => ({ id: p.playerId, out: Boolean(p.out) })),
@@ -1048,6 +1079,9 @@
             }
         });
 
+        // Saved as soon as it is typed, not only on a scrape: the Matchup tab reads it too
+        $('league-id').addEventListener('change', event => write(KEYS.yahooLeagueId, event.target.value.trim()));
+
         $('private-help').addEventListener('click', () => privateLeagueSteps(''));
 
         $('roster-import').addEventListener('click', event => {
@@ -1067,13 +1101,21 @@
             if (event.target.id === 'import-mine') $('import-apply').disabled = event.target.value === '';
         });
 
-        // Rosters posted back by the bookmarklet. Only Yahoo may send them, and
-        // only HTML is taken - it goes to the server to be parsed, never run.
+        // A Yahoo page posted back by the bookmarklet. Only Yahoo may send one,
+        // and only HTML is taken - it goes to the server to be parsed, never
+        // run. 'fs-rosters' is what the bookmark sent before it read matchups.
         window.addEventListener('message', event => {
             if (!YAHOO_ORIGIN.test(event.origin)) return;
             const data = event.data;
-            if (!data || data.type !== 'fs-rosters' || typeof data.html !== 'string') return;
+            if (!data || !['fs-yahoo-page', 'fs-rosters'].includes(data.type) || typeof data.html !== 'string') return;
             if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
+            let path = '';
+            try { path = new URL(String(data.url || '')).pathname; } catch (error) { /* checked by the server */ }
+            if (/\/matchup/.test(path)) {
+                selectTab('matchup');
+                matchupFromHtml(data.html, String(data.url || ''));
+                return;
+            }
             selectTab('league');
             document.getElementById('teams').scrollIntoView({ block: 'start' });
             importFromHtml(data.html, String(data.url || ''));
@@ -1566,6 +1608,184 @@
             write(KEYS.banked, banked);
             schedulePlan();
         });
+
+        // --- Score so far from Yahoo -----------------------------------------
+        // Uses the League ID entered on the League tab (fs_yahooLeagueId), so
+        // it is typed once for every scrape. The team number is the one the
+        // roster scrape recorded - signed out, Yahoo shows team 1's matchup
+        // unless told whose to show.
+        const savedLeagueId = () =>
+            leagueIdFrom(localStorage.getItem(KEYS.yahooLeagueId) || $('league-id').value);
+        const nameKey = s => String(s || '').trim().toLowerCase();
+
+        function yahooMatchupUrl() {
+            if (ROSTER_TEST_MODE) return MATCHUP_TEST_URL;
+            const id = savedLeagueId();
+            if (!id) return null;
+            const params = new URLSearchParams();
+            const week = selectedWeek();
+            if (week) params.set('week', week.week);
+            const team = teamById(league.mine)?.yahooTeamId;
+            if (team) params.set('mid1', team);
+            params.set('module', 'matchup');
+            return `https://hockey.fantasysports.yahoo.com/hockey/${id}/matchup?${params}`;
+        }
+
+        const MATCHUP_CLOSE = '<button type="button" class="matchup-import-close mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>';
+
+        function showMatchupPanel(html) {
+            $('matchup-import').innerHTML = html;
+            $('matchup-import').classList.toggle('hidden', !html);
+            if (html) $('matchup-import').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        function matchupError(code, message) {
+            if (code === 'private') {
+                showMatchupPanel(bookmarkletSteps(message, {
+                    what: 'matchup', openId: 'open-yahoo-matchup', url: yahooMatchupUrl(),
+                    openLabel: 'Open your matchup on Yahoo', cancelClass: 'matchup-import-close',
+                }));
+                wireBookmarklet($('matchup-import'));
+                return;
+            }
+            showMatchupPanel(`<p class="text-red-400 font-medium">${esc(message)}</p>${MATCHUP_CLOSE}`);
+        }
+
+        $('matchup-import').addEventListener('click', event => {
+            if (event.target.closest('.matchup-import-close')) {
+                showMatchupPanel('');
+            } else if (event.target.closest('#open-yahoo-matchup')) {
+                // window.open without noopener, so the Yahoo tab can post back
+                const url = yahooMatchupUrl();
+                if (url) window.open(url, 'fs-yahoo-matchup');
+            } else if (event.target.closest('.goto-league')) {
+                selectTab('league');
+                $('league-id').focus();
+            }
+        });
+
+        // The league's team for a scraped one: by Yahoo team number, then name
+        function leagueTeamFor(scraped) {
+            return (scraped.yahooTeamId && league.teams.find(t => t.yahooTeamId === String(scraped.yahooTeamId)))
+                || league.teams.find(t => nameKey(t.name) === nameKey(scraped.name))
+                || null;
+        }
+
+        function applyMatchupScrape(data) {
+            const [a, b] = data.teams || [];
+            if (!a || !b) return matchupError('', 'Yahoo’s page did not show a matchup.');
+            const myTeam = teamById(league.mine);
+            const mine = leagueTeamFor(a)?.id === league.mine ? a
+                : leagueTeamFor(b)?.id === league.mine ? b : null;
+            if (!mine) {
+                return matchupError('', `Yahoo sent ${a.name} against ${b.name}, and neither is your team, ${myTeam?.name}. `
+                    + (myTeam?.yahooTeamId ? 'Check Your Team at the top of the page.'
+                        : 'Scrape rosters on the League tab first, so Fantasy Streams knows which Yahoo team is yours.'));
+            }
+            const theirs = mine === a ? b : a;
+
+            // Scores belong to one week; never file one week's under another
+            const week = selectedWeek();
+            if (!data.test && data.week != null && week && Number(data.week) !== Number(week.week)) {
+                return matchupError('', `Yahoo sent week ${data.week}, not week ${week.week}. `
+                    + 'If your league numbers its weeks differently, edit them on the League tab.');
+            }
+
+            const notes = [];
+            // Learn the team numbers of a league entered by hand, for next time
+            if (!myTeam.yahooTeamId && mine.yahooTeamId) myTeam.yahooTeamId = String(mine.yahooTeamId);
+            const opponent = leagueTeamFor(theirs);
+            if (opponent) {
+                if (!opponent.yahooTeamId && theirs.yahooTeamId) opponent.yahooTeamId = String(theirs.yahooTeamId);
+                if (league.opponent !== opponent.id) {
+                    league.opponent = opponent.id;
+                    notes.push(`Opponent set to ${opponent.name}.`);
+                }
+            } else {
+                notes.push(`${theirs.name} is not one of the teams entered here, so the opponent was left as it was. Scrape rosters on the League tab to add it.`);
+            }
+
+            // Counting categories only: a rate cannot be banked and added to
+            const key = $('week-select').value;
+            const entry = Object.assign({}, banked[key]);
+            const counted = activeCategories().filter(c => !c.rate);
+            const found = counted.filter(c => c.column in (mine.columns || {}));
+            found.forEach(c => {
+                entry[c.column] = {
+                    mine: String(mine.columns[c.column] ?? 0),
+                    theirs: String(theirs.columns?.[c.column] ?? 0),
+                };
+            });
+            const missing = counted.filter(c => !found.includes(c)).map(c => c.code);
+            if (missing.length) notes.push(`Yahoo’s page has no ${missing.join(', ')}, so ${missing.length === 1 ? 'it was' : 'those were'} left as they were.`);
+            banked[key] = entry;
+            write(KEYS.banked, banked);
+
+            const today = localToday();
+            if (week && week.start < today && today <= week.end && !$('remaining-only').checked) {
+                notes.push('Tick Only nights still to play at the top of the page, or tonight’s games are counted twice.');
+            }
+
+            // Show the boxes, so what was filled in can be checked and edited
+            bankedOpen = true;
+            $('banked-toggle').setAttribute('aria-pressed', 'true');
+            $('banked-help').classList.remove('hidden');
+
+            const won = t => (t.won == null ? '–' : esc(t.won));
+            showMatchupPanel(`
+                <p class="text-white">
+                    ${data.test ? '<span class="text-amber-300">(test league)</span> ' : ''}Week ${esc(data.week ?? week?.week ?? '')} from Yahoo:
+                    <span class="font-semibold">${esc(mine.name)}</span> ${won(mine)} &ndash; ${won(theirs)}
+                    <span class="font-semibold">${esc(theirs.name)}</span>
+                </p>
+                <p class="text-gray-400 text-xs mt-1">
+                    Score so far filled in for ${found.length} ${found.length === 1 ? 'category' : 'categories'} &mdash; edit any of them under the table.
+                </p>
+                ${notes.length ? `<ul class="list-disc pl-5 mt-1 text-xs text-amber-300 space-y-0.5">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+                ${MATCHUP_CLOSE}`);
+            saveLeague();
+        }
+
+        async function postMatchup(url, body) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await response.json();
+                if (!response.ok) matchupError(data.code, data.message || 'The matchup could not be read.');
+                else applyMatchupScrape(data);
+            } catch (error) {
+                matchupError('unreachable', error.message);
+            }
+        }
+
+        $('matchup-scrape').addEventListener('click', async () => {
+            const leagueId = savedLeagueId();
+            if (!ROSTER_TEST_MODE && !leagueId) {
+                return showMatchupPanel(`
+                    <p class="text-gray-300">Enter your League ID on the League tab first. It is saved, and every scrape uses it.</p>
+                    <button type="button" class="goto-league mt-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 underline">Go to the League tab</button>
+                    ${MATCHUP_CLOSE}`);
+            }
+            $('matchup-scrape').disabled = true;
+            $('matchup-scrape').textContent = 'Scraping…';
+            showMatchupPanel('<p class="text-gray-300">Reading the matchup from Yahoo&hellip;</p>');
+            await postMatchup('/standalone/api/matchup/scrape', {
+                league_id: leagueId,
+                week: selectedWeek()?.week,
+                team: teamById(league.mine)?.yahooTeamId,
+            });
+            $('matchup-scrape').disabled = false;
+            $('matchup-scrape').textContent = 'Scrape score from Yahoo';
+        });
+
+        // A private league's Matchup page, read in the user's browser by the bookmarklet
+        function matchupFromHtml(html, url) {
+            showMatchupPanel('<p class="text-gray-300">Reading the matchup from Yahoo&hellip;</p>');
+            return postMatchup('/standalone/api/matchup/parse', { html, url });
+        }
 
         // --- Plan ------------------------------------------------------------
         let planTimer = null;

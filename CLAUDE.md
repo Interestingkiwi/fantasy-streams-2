@@ -39,6 +39,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
 | `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups, matchup, planned moves and free agents from a hand-entered league; no session, no Yahoo. See *Standalone mode* below |
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
+| `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
 | `static/fantasy-weeks.js` | The weeks every page numbers by: standard weeks plus a league's edits (`fs_fantasyWeeks`), and the edit operations. See *Fantasy weeks* |
@@ -723,8 +724,9 @@ checkboxes would otherwise have none.
 ### League rosters, planned moves and free agents
 
 **Every team's roster is entered**, because a free agent is anyone on none of
-them. `fs_leagueTeams` is `{teams: [{id, name, players: [{id, out}]}], mine,
-opponent}` — mine and opponent are team ids, and the opponent is simply whichever
+them. `fs_leagueTeams` is `{teams: [{id, name, yahooTeamId?, players: [{id, out}]}],
+mine, opponent}` — mine and opponent are team ids, `yahooTeamId` is Yahoo's team
+number (from the roster scrape, or learned from a matchup scrape by name), and the opponent is simply whichever
 team is marked for this week. **That shape is the target for the planned
 sign-in roster scan**: a scan the user starts while signed in to their league,
 reading each team's roster page, should write exactly this and nothing else
@@ -797,12 +799,13 @@ On Yahoo, the bookmarklet posts `document.documentElement.outerHTML` to its
 opener and waits for an `fs-received` acknowledgement — a message to a window
 that has navigated away is dropped silently, so without the ack a failure would
 look like success. With no opener it opens `/standalone/?rosters=receive`,
-which announces `fs-ready`, and sends then. The page accepts `fs-rosters` only
-from a `*.yahoo.com` origin, and the HTML only goes to `/api/rosters/parse` to
-be parsed — never run, never stored. `APP_ORIGIN` is `location.origin`, not
+which announces `fs-ready`, and sends then. The page accepts `fs-yahoo-page`
+(and the older `fs-rosters`) only from a `*.yahoo.com` origin, and the HTML only
+goes to `/api/rosters/parse` — or `/api/matchup/parse` when the URL is a Matchup
+page — to be parsed — never run, never stored. `APP_ORIGIN` is `location.origin`, not
 built on the server: behind Render's TLS proxy Flask sees `http`, and a message
 aimed at the wrong scheme is dropped. The bookmarklet's source is the
-`sendRostersToFantasyStreams` function in the page, serialised — it must name
+`sendToFantasyStreams` function in the page, serialised — it must name
 nothing outside itself.
 
 **One parser for both.** The live page the bookmarklet sends is ~2.2 MB against
@@ -856,6 +859,45 @@ before relying on it.
 word boundary (backslash-b) became a literal backspace byte and shipped. Use the
 Edit tool, or build the string with `chr(92)`, and check the file has no control
 bytes with `grep -c $'\b'`.
+
+### Scraping the score so far (`yahoo_matchup.py`)
+
+**Scrape score from Yahoo**, on the Matchup tab beside the Opponent picker,
+fills the score-so-far boxes from `/hockey/<league id>/matchup`. Typing them in
+still works: the scrape opens the same boxes filled in, to check and edit.
+
+**The League ID is entered once**, on the League tab, and kept in
+`fs_yahooLeagueId` (saved as it is typed, not only on a roster scrape). Every
+scrape reads it; a scrape with none sends the user to the League tab.
+
+**Signed out, Yahoo shows team 1's matchup**, whatever league. A server fetch is
+always signed out, so the request carries `mid1=<yahooTeamId>`, which the roster
+scrape records per team — verified against a live league, where `mid1=3`
+returned team 3's matchup with no sign-in. `week=` is the selected week's
+number, and the parsed week is checked against it so one week's score is never
+filed under another. A hand-entered league has no team numbers. It still
+scrapes, but it gets team 1's matchup and is told so unless that happens to
+include a team of the same name. A match by name records the numbers for next
+time.
+
+**The scrape also sets the opponent**, to whichever league team (by number,
+then name) Yahoo shows opposite yours, and says so.
+
+**What the page carries.** The score is the page's one `table.Datatable`: a
+header of codes, one row per team (name linked to its team number), then the
+categories won. A code ending `*` (GA*, SV*, SA*) is shown but not scored; Yahoo's
+`SV%` is the engine's `SVpct`; a dash is nothing recorded yet, not zero. The
+route adds each team's stats keyed by projection column, which is how
+`fs_standaloneBanked` keys them. Only counting categories are banked — a rate
+cannot be added to — and a category the page lacks is left as it was, with a
+note. The live page (~3 MB after Yahoo's scripts) gives the same table as the
+served one, checked in the browser.
+
+Private leagues use the same bookmarklet as the rosters. It now accepts either
+page and posts `fs-yahoo-page`, and the receiving page routes on the URL's path.
+**A bookmark dragged before this still sends `fs-rosters` and still works for
+rosters, but refuses a Matchup page, so drag it again.** Test mode reads week 2
+of league 22705 from team 6's side (`TEST_MATCHUP_URL`), whatever week is picked.
 
 ## Draft prep page
 
@@ -1271,6 +1313,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; then the routes on real data including every 400 |
+| `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |

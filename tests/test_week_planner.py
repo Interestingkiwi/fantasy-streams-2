@@ -10,7 +10,7 @@ tests must not rewrite either table.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/16/2026
+Updated - 9/21/2026
 """
 
 import os
@@ -329,7 +329,16 @@ try:
 
     page = client.get("/standalone/")
     check("the page renders signed out", page.status_code == 200
-          and b"Lineups" in page.data, page.status_code)
+          and b"League Home" in page.data, page.status_code)
+    # One unclosed <div> nests every later tab inside a hidden one, and the
+    # page still renders - the tab is simply blank. It happened once.
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(page.data, "html.parser")
+    panels = soup.select(".tab-panel")
+    check("every League Home tab panel sits directly in <main>, none inside another",
+          [p.get("id") for p in panels] == ["tab-league", "tab-matchup", "tab-lineups", "tab-free-agents"]
+          and all(p.parent.name == "main" for p in panels),
+          [(p.get("id"), p.parent.name) for p in panels])
     check("the old stub URL still lands there",
           client.get("/standalone").status_code in (301, 308))
 
