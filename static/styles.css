@@ -192,6 +192,30 @@ input.terminal {
     border-color: var(--fs-accent-hover);
 }
 
+/* --- Page tabs --------------------------------------------------------------- */
+/* The sub-page row under a page's settings bar, as the old site's League Home
+   had it: filled blue when selected, grey otherwise. Styled here rather than
+   by swapping Tailwind classes from script - see the phone-layout traps. */
+
+.page-tab {
+    flex-shrink: 0;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #D1D5DB;
+    background-color: var(--fs-surface-hover);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.page-tab:hover { background-color: #4B5563; }
+
+.page-tab[aria-selected="true"] {
+    color: var(--fs-text-strong);
+    background-color: #2563EB;
+}
+
 /* --- Sticky table header --------------------------------------------------- */
 /* A draft board is read by scrolling, and a category column means nothing
    without its heading. The header cells carry the background themselves rather

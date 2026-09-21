@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lineups - Fantasy Streams</title>
+    <title>League Home - Fantasy Streams</title>
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
@@ -11,19 +11,60 @@
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
 
-    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
-        <div>
-            <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wide">Lineups</h1>
-            <p class="text-gray-400 text-sm mt-1">Standalone mode &middot; your league and rosters are saved in this browser</p>
+    <!-- The old site's League Home: the settings every sub-page reads sit up
+         top, the sub-pages are a row of tabs beneath them, and the one chosen
+         fills the panel below. The site-wide nav keeps the corner the old
+         Logout button had. -->
+    <header class="bg-gray-800 shadow-md p-4 border-b border-gray-700 flex flex-wrap justify-between items-start gap-x-6 gap-y-3">
+        <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+            <div>
+                <h1 class="text-xl sm:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">League Home</h1>
+                <p class="text-gray-400 text-xs mt-1">Standalone mode &middot; saved in this browser</p>
+            </div>
+
+            <div class="w-full sm:w-auto grid grid-cols-1 sm:grid-cols-[auto_auto] lg:grid-cols-[auto_auto_auto_auto] items-center gap-x-3 gap-y-2 bg-gray-900/50 border border-gray-700 rounded-lg p-3">
+                <label for="my-team-select" class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Your Team</label>
+                <select id="my-team-select" class="form-select p-2 text-sm w-full sm:w-56"></select>
+
+                <label for="week-select" class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Fantasy Week</label>
+                <div>
+                    <select id="week-select" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                    <label id="remaining-row" class="hidden flex items-center gap-2 text-xs text-gray-300 pt-1.5">
+                        <input id="remaining-only" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
+                        Only nights still to play
+                    </label>
+                </div>
+
+                <label for="stat-source" class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Stat Sourcing</label>
+                <!-- Only the preseason projections exist until games are played;
+                     the other two follow the old site and open with the season. -->
+                <select id="stat-source" class="form-select p-2 text-sm w-full sm:w-56"
+                        aria-describedby="stat-source-help">
+                    <option value="projected" selected>Projected</option>
+                    <option value="todate" disabled>Season to date (from opening night)</option>
+                    <option value="combined" disabled>Combined (from opening night)</option>
+                </select>
+                <p id="stat-source-help" class="text-xs text-gray-500 sm:col-start-2 lg:col-start-auto lg:col-span-2">Preseason projections, adjusted for age and injury.</p>
+            </div>
         </div>
         {% set active = 'standalone' %}{% include 'partials/page-nav.html' %}
     </header>
 
-    <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-4 sm:gap-6">
+    <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-3 sm:gap-4">
 
         <div id="page-error" class="hidden error-message"></div>
 
-        <!-- League -->
+        <!-- Sub-pages: one sideways-scrolling row on a phone -->
+        <div class="flex gap-2 overflow-x-auto whitespace-nowrap pb-1" role="tablist" aria-label="League Home">
+            <button type="button" role="tab" class="page-tab" data-tab="league" aria-controls="tab-league" aria-selected="false">League</button>
+            <button type="button" role="tab" class="page-tab" data-tab="matchup" aria-controls="tab-matchup" aria-selected="false">Matchup</button>
+            <button type="button" role="tab" class="page-tab" data-tab="lineups" aria-controls="tab-lineups" aria-selected="false">Lineups</button>
+            <button type="button" role="tab" class="page-tab" data-tab="free-agents" aria-controls="tab-free-agents" aria-selected="false">Free Agents</button>
+        </div>
+        <p id="plan-status" class="text-xs text-gray-500 -mt-1"></p>
+
+        <!-- League: scoring, slots, weeks, and every team's roster -->
+        <div id="tab-league" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
         <section class="bg-gray-800 rounded-lg border border-gray-700">
             <button id="league-toggle" type="button" aria-expanded="false" aria-controls="league-body"
                     class="w-full flex items-center justify-between gap-3 p-3 sm:p-4 text-left">
@@ -136,10 +177,6 @@
                         <label for="team-name" class="block mb-1 text-xs font-medium text-gray-400">Team name</label>
                         <input id="team-name" type="text" autocomplete="off" maxlength="40" class="form-input w-full p-2 text-sm">
                     </div>
-                    <div class="inline-flex rounded-md overflow-hidden border border-gray-600" role="group" aria-label="This team is">
-                        <button id="role-mine" type="button" aria-pressed="false" class="role-btn px-3 py-2 text-sm font-medium" data-role="mine">My team</button>
-                        <button id="role-opponent" type="button" aria-pressed="false" class="role-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-role="opponent">This week&rsquo;s opponent</button>
-                    </div>
                     <button id="team-delete" type="button" class="px-3 py-2 text-sm text-gray-400 hover:text-red-400 border border-gray-600 rounded-md">Delete team</button>
                 </div>
                 <div class="relative w-full sm:w-80">
@@ -155,21 +192,18 @@
                 <p class="text-gray-400 text-sm p-4">Loading&hellip;</p>
             </div>
         </section>
+        </div>
 
-        <!-- Week -->
-        <section class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-3 sm:gap-4">
+        <!-- Matchup: the opponent is chosen here, as on the old site -->
+        <div id="tab-matchup" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
+        <div class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-x-4 gap-y-2">
             <div class="w-full sm:w-auto">
-                <label for="week-select" class="block mb-1 text-xs font-medium text-gray-400">Week</label>
-                <select id="week-select" class="form-select p-2 text-sm w-full sm:w-auto sm:min-w-[18rem]"></select>
+                <label for="opponent-select" class="block mb-1 text-xs font-medium text-gray-400">Opponent</label>
+                <select id="opponent-select" class="form-select p-2 text-sm w-full sm:w-56"></select>
             </div>
-            <label id="remaining-row" class="hidden flex items-center gap-2 text-sm text-gray-300 py-2">
-                <input id="remaining-only" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
-                Only nights still to play
-            </label>
-            <p id="plan-status" class="text-xs text-gray-500 flex-1 min-w-[14rem]"></p>
-        </section>
+            <p id="opponent-help" class="text-xs text-gray-500 flex-1 min-w-[14rem] sm:pb-2"></p>
+        </div>
 
-        <!-- Matchup -->
         <section id="matchup" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <div class="flex flex-wrap items-center justify-between gap-2 p-3 sm:p-4 border-b border-gray-700">
                 <div>
@@ -184,16 +218,37 @@
             <div id="matchup-body" class="overflow-x-auto"></div>
         </section>
 
-        <!-- Planned moves: add/drops that feed the lineups and matchup above -->
-        <section id="moves" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <div class="p-3 sm:p-4 border-b border-gray-700">
-                <h2 class="text-lg font-semibold text-white">Planned moves</h2>
-                <p class="text-xs text-gray-500 mt-0.5">An add counts from its night; the player dropped plays until the night before. Change a night to move the transaction.</p>
-            </div>
-            <ul id="moves-body" class="divide-y divide-gray-700"></ul>
-        </section>
+        <p id="moves-note" class="hidden text-xs text-gray-400"></p>
 
-        <!-- Free agents -->
+        <section id="totals" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <h2 class="text-lg font-semibold text-white p-3 sm:p-4 border-b border-gray-700">Projected week</h2>
+            <div id="totals-body" class="p-3 sm:p-4 text-sm text-gray-400">&mdash;</div>
+        </section>
+        </div>
+
+        <!-- Lineups: the best lineup each night -->
+        <div id="tab-lineups" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
+        <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
+
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-2 flex-wrap">
+                <div>
+                    <h2 class="text-lg font-semibold text-white">Best lineup each night</h2>
+                    <p class="text-xs text-gray-500">Goalies show their chance of starting</p>
+                </div>
+                <div id="grid-side" class="hidden inline-flex rounded-md overflow-hidden border border-gray-600" role="radiogroup" aria-label="Whose lineup">
+                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium" data-side="mine" role="radio">Yours</button>
+                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-side="theirs" role="radio">Opponent&rsquo;s</button>
+                </div>
+            </div>
+            <div id="grid-body" class="overflow-x-auto">
+                <p class="text-gray-400 text-sm p-4">Set up your league and add players to see lineups.</p>
+            </div>
+        </section>
+        </div>
+
+        <!-- Free agents, and the moves planned from them -->
+        <div id="tab-free-agents" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
         <section id="free-agents" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-col gap-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
@@ -216,28 +271,15 @@
             </div>
         </section>
 
-        <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
-
-        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-2 flex-wrap">
-                <div>
-                    <h2 class="text-lg font-semibold text-white">Best lineup each night</h2>
-                    <p class="text-xs text-gray-500">Goalies show their chance of starting</p>
-                </div>
-                <div id="grid-side" class="hidden inline-flex rounded-md overflow-hidden border border-gray-600" role="radiogroup" aria-label="Whose lineup">
-                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium" data-side="mine" role="radio">Yours</button>
-                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-side="theirs" role="radio">Opponent&rsquo;s</button>
-                </div>
+        <!-- Planned moves: add/drops that feed the matchup and lineups -->
+        <section id="moves" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white">Planned moves</h2>
+                <p class="text-xs text-gray-500 mt-0.5">An add counts from its night; the player dropped plays until the night before. Change a night to move the transaction.</p>
             </div>
-            <div id="grid-body" class="overflow-x-auto">
-                <p class="text-gray-400 text-sm p-4">Set up your league and add players to see lineups.</p>
-            </div>
+            <ul id="moves-body" class="divide-y divide-gray-700"></ul>
         </section>
-
-        <section id="totals" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <h2 class="text-lg font-semibold text-white p-3 sm:p-4 border-b border-gray-700">Projected week</h2>
-            <div id="totals-body" class="p-3 sm:p-4 text-sm text-gray-400">&mdash;</div>
-        </section>
+        </div>
 
     </main>
 
@@ -273,6 +315,7 @@
             remaining: 'fs_standaloneRemaining',
             banked: 'fs_standaloneBanked',
             yahooLeagueId: 'fs_yahooLeagueId',
+            tab: 'fs_standaloneTab',
         };
 
         function read(key, fallback) {
@@ -291,6 +334,30 @@
                 showError('Could not save to this browser - changes will be lost on reload.');
             }
         }
+
+        // --- Tabs ------------------------------------------------------------
+        // Every panel is in the page and kept current whichever is showing, so
+        // switching is only visibility: nothing re-plans or re-fetches. A hash
+        // (#matchup) opens a tab directly; otherwise the last one comes back.
+        const TABS = ['league', 'matchup', 'lineups', 'free-agents'];
+
+        function selectTab(name) {
+            if (!TABS.includes(name)) name = 'league';
+            document.querySelectorAll('.page-tab').forEach(tab =>
+                tab.setAttribute('aria-selected', tab.dataset.tab === name ? 'true' : 'false'));
+            document.querySelectorAll('.tab-panel').forEach(panel =>
+                panel.classList.toggle('hidden', panel.id !== `tab-${name}`));
+            write(KEYS.tab, name);
+        }
+
+        document.querySelectorAll('.page-tab').forEach(tab =>
+            tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
+        window.addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
+
+        const initialTab = new URLSearchParams(location.search).get('rosters') === 'receive' ? 'league'
+            : TABS.includes(location.hash.slice(1)) ? location.hash.slice(1)
+            : localStorage.getItem(KEYS.tab);
+        selectTab(initialTab);
 
         const SLOT_KEYS = ['C', 'LW', 'RW', 'F', 'W', 'D', 'Util', 'G'];
 
@@ -544,20 +611,38 @@
 
             const team = activeTeam();
             if (document.activeElement !== $('team-name')) $('team-name').value = team.name;
-            const roles = { mine: league.mine === team.id, opponent: league.opponent === team.id };
-            document.querySelectorAll('.role-btn').forEach(btn => {
-                const on = roles[btn.dataset.role];
-                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-                btn.classList.toggle('bg-blue-600', on);
-                btn.classList.toggle('text-white', on);
-                btn.classList.toggle('bg-gray-700', !on);
-                btn.classList.toggle('text-gray-300', !on);
-            });
             $('team-delete').disabled = league.teams.length <= 2;
             $('team-delete').classList.toggle('opacity-50', league.teams.length <= 2);
 
+            renderTeamSelects();
             renderRoster();
         }
+
+        // Your team sits in the header and the opponent on the Matchup tab, as
+        // on the old site; both write the same league.mine / league.opponent.
+        function renderTeamSelects() {
+            const option = (t, on) => `<option value="${esc(t.id)}" ${on ? 'selected' : ''}>${esc(t.name)}</option>`;
+            $('my-team-select').innerHTML = league.teams.map(t => option(t, t.id === league.mine)).join('');
+            $('opponent-select').innerHTML = '<option value="">No opponent</option>'
+                + league.teams.filter(t => t.id !== league.mine)
+                    .map(t => option(t, t.id === league.opponent)).join('');
+            const opponent = teamById(league.opponent);
+            $('opponent-help').textContent = !opponent
+                ? 'Pick this week’s opponent to see who wins each category, and set lineups to chase the close ones.'
+                : opponent.players.length ? ''
+                    : `${opponent.name} has no players yet — add them on the League tab.`;
+        }
+
+        $('my-team-select').addEventListener('change', event => {
+            league.mine = event.target.value;
+            if (league.opponent === league.mine) league.opponent = null;
+            saveLeague();
+        });
+
+        $('opponent-select').addEventListener('change', event => {
+            league.opponent = event.target.value || null;
+            saveLeague();
+        });
 
         function renderRoster() {
             const team = activeTeam();
@@ -691,18 +776,6 @@
         });
         $('team-name').addEventListener('change', renderTeams);
 
-        document.querySelectorAll('.role-btn').forEach(btn => btn.addEventListener('click', () => {
-            const team = activeTeam();
-            if (btn.dataset.role === 'mine') {
-                if (league.mine === team.id) return;     // there is always a team that is yours
-                if (league.opponent === team.id) league.opponent = null;
-                league.mine = team.id;
-            } else {
-                league.opponent = league.opponent === team.id || league.mine === team.id ? null : team.id;
-            }
-            saveLeague();
-        }));
-
         $('team-delete').addEventListener('click', () => {
             const team = activeTeam();
             if (league.teams.length <= 2) return;
@@ -775,7 +848,7 @@
                 window.opener.postMessage(message, appOrigin);
                 setTimeout(function () {
                     if (!acked) {
-                        alert('Fantasy Streams did not answer. Go back to its Lineups page and open Yahoo from there, then try again.');
+                        alert('Fantasy Streams did not answer. Go back to its League Home page and open Yahoo from there, then try again.');
                     }
                 }, 5000);
                 return;
@@ -1001,6 +1074,7 @@
             const data = event.data;
             if (!data || data.type !== 'fs-rosters' || typeof data.html !== 'string') return;
             if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
+            selectTab('league');
             document.getElementById('teams').scrollIntoView({ block: 'start' });
             importFromHtml(data.html, String(data.url || ''));
         });
@@ -1051,6 +1125,11 @@
         function renderMoves() {
             const list = weekMoves();
             $('moves').classList.toggle('hidden', !list.length);
+            // The matchup counts these, so say so where it is read
+            $('moves-note').classList.toggle('hidden', !list.length);
+            $('moves-note').textContent = list.length
+                ? `Projections assume the ${list.length === 1 ? 'move' : `${list.length} moves`} planned on the Free Agents tab.`
+                : '';
             $('moves-body').innerHTML = list.map((move, index) => `
                 <li class="p-3 sm:px-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                     <div class="flex-1 min-w-[14rem] text-sm">

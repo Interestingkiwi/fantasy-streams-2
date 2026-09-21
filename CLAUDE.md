@@ -62,7 +62,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone Lineups — league settings and weeks, every team's roster, matchup, planned moves, best adds, nightly lineup grid |
+| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents tabs |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -599,7 +599,29 @@ score it, so `value_players` logs a warning rather than dropping it silently.
 Lineups for anyone who has not linked Yahoo — which, while the Fantasy API is
 gated, is everyone. The league and roster are typed in and live in
 `localStorage`; each request posts them, so the routes read no session and no
-per-league table. Nav label: **Lineups**.
+per-league table. Nav label: **League Home**.
+
+**Laid out like the old site's League Home**, which is the design to follow
+(`Interestingkiwi/fantasy-streams`, `templates/home.html`). A settings bar up
+top holds what every sub-page reads — **Your Team**, **Fantasy Week** (with
+*Only nights still to play*) and **Stat Sourcing**. Below it is a row of
+sub-page tabs, **League · Matchup · Lineups · Free Agents**, and the chosen one
+fills the panel under it. The site-wide nav keeps the corner the old Logout
+button had. The old site's Goalie Planning, Trade Helper, Season History and
+Tools tabs are still to come, each as another tab.
+
+- Tabs only toggle visibility. Every panel stays in the page and is kept
+  current whichever one is showing, so switching tabs never re-plans. The last
+  tab is kept in `fs_standaloneTab`, and `#matchup` etc. open one directly.
+- **The opponent is picked on the Matchup tab**, as it was on the old site.
+  Both dropdowns write `league.mine` / `league.opponent`; the team editor no
+  longer has role buttons.
+- **Stat Sourcing offers only Projected for now.** *Season to date* and
+  *Combined* are listed but disabled until games have been played. Each needs
+  per-player rates built from `player_game_stats`, and the old site's *Show Raw
+  Data* toggle waits on the rank display it switched.
+- Planned moves live on the Free Agents tab, and the Matchup tab notes when its
+  projections count them, like the old Simulated Moves Log.
 
 **First slice: a week of best lineups for one roster.** `week_planner.plan_week`
 runs the *Lineups* chain one night at a time — `daily_value` against the whole
@@ -649,7 +671,7 @@ Starting slots are **not** shared: draft prep's roster settings have no `Util`
 or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
 (below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
-`fs_standaloneBanked` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
+`fs_standaloneBanked`, `fs_standaloneTab` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
 `fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
@@ -679,7 +701,7 @@ This fixed a disagreement that had gone unnoticed: draft prep's hardcoded playof
 weeks already assumed the merge (Week 23 = Mar 8–14) while `/schedules/api/weeks`
 did not, so every week from February on was numbered one apart between the two.
 
-**Leagues that differ edit their weeks** on the Lineups League panel: move a
+**Leagues that differ edit their weeks** on League Home's League tab: move a
 week's last night (the next week starts the day after; weeks swallowed whole are
 absorbed), Merge with next, Split a week over seven days at its first Sunday, or
 Reset. Edits live in `fs_fantasyWeeks` as `{season, weeks}`; a different season

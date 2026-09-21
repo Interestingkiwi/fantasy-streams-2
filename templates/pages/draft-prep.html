@@ -766,7 +766,7 @@
                 });
             }
 
-            // The season's last weeks, from the same weeks the Lineups page edits
+            // The season's last weeks, from the same weeks the League Home page edits
             // (fantasy-weeks.js), so merging or moving a week there moves the
             // playoff weeks here. The markup's hardcoded weeks stand if the load
             // fails. A stored pick that no longer names one of these weeks is
@@ -803,8 +803,8 @@
                     </label>`).join('');
 
                 document.getElementById('playoff-weeks-note').textContent = loaded.customised
-                    ? 'Week numbers follow the weeks edited for your league on the Lineups page.'
-                    : "Week numbers are based on Yahoo's schedule. Edit them on the Lineups page.";
+                    ? 'Week numbers follow the weeks edited for your league on the League Home page.'
+                    : "Week numbers are based on Yahoo's schedule. Edit them on the League Home page.";
                 updateSettingsSummary();
             }
 

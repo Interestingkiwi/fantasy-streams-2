@@ -191,7 +191,7 @@
 
         (async () => {
             try {
-                // Through fantasy-weeks.js, so weeks edited on the Lineups page
+                // Through fantasy-weeks.js, so weeks edited on the League Home page
                 // number the same here.
                 const data = await FantasyWeeks.load();
                 $('subtitle').textContent =
@@ -199,8 +199,8 @@
                 $('week-source').textContent = data.source === 'league'
                     ? 'Weeks come from your synced league.'
                     : data.customised
-                        ? 'Weeks as edited for your league on the Lineups page.'
-                        : 'Weeks are Monday–Sunday, with a week broken up by a league-wide break combined into one, as Yahoo does. Edit them on the Lineups page.';
+                        ? 'Weeks as edited for your league on the League Home page.'
+                        : 'Weeks are Monday–Sunday, with a week broken up by a league-wide break combined into one, as Yahoo does. Edit them on the League Home page.';
 
                 $('window-select').innerHTML =
                     `<option value="${data.season.start}|${data.season.end}">Full season</option>` +
