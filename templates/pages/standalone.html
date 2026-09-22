@@ -60,6 +60,7 @@
             <button type="button" role="tab" class="page-tab" data-tab="matchup" aria-controls="tab-matchup" aria-selected="false">Matchup</button>
             <button type="button" role="tab" class="page-tab" data-tab="lineups" aria-controls="tab-lineups" aria-selected="false">Lineups</button>
             <button type="button" role="tab" class="page-tab" data-tab="free-agents" aria-controls="tab-free-agents" aria-selected="false">Free Agents</button>
+            <button type="button" role="tab" class="page-tab" data-tab="goalies" aria-controls="tab-goalies" aria-selected="false">Goalie Planning</button>
         </div>
         <p id="plan-status" class="text-xs text-gray-500 -mt-1"></p>
 
@@ -285,11 +286,145 @@
 
         <!-- Free agents, and the moves planned from them -->
         <div id="tab-free-agents" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
-        <section id="free-agents" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-white">Free agents</h2>
+                    <p id="pool-summary" class="text-xs text-gray-500 mt-0.5"></p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button id="pool-refresh" type="button" class="column-toggle">Refresh</button>
+                    <button id="fa-recommend" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2">See recommendations</button>
+                </div>
+            </div>
+
+            <!-- Filters, as the old site had them: name, position, the nights
+                 he has to play, and the injured hidden -->
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-col gap-3">
+                <div class="flex flex-wrap items-end gap-3">
+                    <div class="flex-1 min-w-[12rem] sm:max-w-sm">
+                        <label for="pool-search" class="block mb-1 text-xs font-medium text-gray-400">Search</label>
+                        <input id="pool-search" type="search" autocomplete="off" placeholder="Player name&hellip;"
+                               class="form-input w-full p-2 text-sm">
+                    </div>
+                    <div>
+                        <span class="block mb-1 text-xs font-medium text-gray-400">Position</span>
+                        <div id="pool-positions" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+                <div>
+                    <span class="block mb-1 text-xs font-medium text-gray-400">Plays every night selected</span>
+                    <div id="pool-days" class="flex flex-wrap gap-2"></div>
+                </div>
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <label class="flex items-center gap-2 text-sm text-gray-300 py-1">
+                        <input id="pool-games-only" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700" checked>
+                        Only players with a game this week
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 py-1">
+                        <input id="pool-hide-injured" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
+                        Hide injured
+                    </label>
+                    <button id="pool-clear" type="button" class="column-toggle">Clear filters</button>
+                </div>
+            </div>
+
+            <div id="pool-body" class="flex flex-col gap-4">
+                <p class="text-gray-400 text-sm p-4">Enter the league&rsquo;s rosters to see who is free.</p>
+            </div>
+        </section>
+
+        <!-- Where the holes are: seats no one can fill, by night -->
+        <section id="open-spots" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white">Open roster spots</h2>
+                <p class="text-xs text-gray-500 mt-0.5">Seats your roster cannot fill on each night &mdash; the games an add would actually add.</p>
+            </div>
+            <div id="open-spots-body" class="overflow-x-auto"></div>
+        </section>
+
+        <!-- Planned moves: add/drops that feed the matchup and lineups -->
+        <section id="moves" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white">Planned moves</h2>
+                <p class="text-xs text-gray-500 mt-0.5">An add counts from its night; the player dropped plays until the night before. Change a night to move the transaction.</p>
+            </div>
+            <ul id="moves-body" class="divide-y divide-gray-700"></ul>
+        </section>
+        </div>
+
+        <!-- Goalie planning: is one more start worth the risk? -->
+        <div id="tab-goalies" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-white">Goaltending this week</h2>
+                    <p id="goalie-note" class="text-xs text-gray-500 mt-0.5"></p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button id="goalie-edit" type="button" aria-pressed="false" class="column-toggle">Enter stats so far</button>
+                    <button id="goalie-refresh" type="button" class="column-toggle">Refresh</button>
+                </div>
+            </div>
+            <div id="goalie-entry" class="hidden p-3 sm:p-4 border-b border-gray-700">
+                <p class="text-xs text-gray-500 mb-2">
+                    Goals against, shots against and saves come off Yahoo&rsquo;s matchup page even when your league does not score them
+                    &mdash; scrape the score on the Matchup tab and these fill themselves in. GAA is used to work out the minutes played.
+                </p>
+                <div id="goalie-inputs" class="overflow-x-auto"></div>
+            </div>
+            <div id="goalie-week" class="overflow-x-auto">
+                <p class="text-gray-400 text-sm p-4">Set up your league and pick an opponent to see the goalie matchup.</p>
+            </div>
+        </section>
+
+        <section id="goalie-starts" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white">Starts still to come</h2>
+                <p class="text-xs text-gray-500 mt-0.5">From the lineups already set, with the shots each goalie is projected to face that night.</p>
+            </div>
+            <div id="goalie-starts-body" class="overflow-x-auto"></div>
+        </section>
+
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-white">One more start</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">What an extra start would risk, outcome by outcome.</p>
+                </div>
+                <div class="w-full sm:w-auto sm:ml-auto">
+                    <label for="goalie-pick" class="block mb-1 text-xs font-medium text-gray-400">Goalie</label>
+                    <select id="goalie-pick" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="goalie-night" class="block mb-1 text-xs font-medium text-gray-400">Night</label>
+                    <select id="goalie-night" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+            </div>
+            <p id="goalie-verdict" class="px-3 sm:px-4 pt-3 text-sm text-gray-300"></p>
+            <div id="goalie-outcomes" class="overflow-x-auto"></div>
+        </section>
+        </div>
+
+    </main>
+
+    <!-- The recommendations this page already made, now behind a button:
+         the table is what the Free Agents list ranks against. -->
+    <div id="fa-modal" class="hidden fixed inset-0 z-40 bg-gray-900/80 p-0 sm:p-4 flex items-center justify-center">
+        <div class="bg-gray-800 border border-gray-700 w-full sm:max-w-4xl h-full sm:h-auto sm:max-h-[90vh] sm:rounded-lg flex flex-col shadow-xl"
+             role="dialog" aria-modal="true" aria-labelledby="fa-modal-title">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex items-center justify-between gap-3">
+                <div>
+                    <h2 id="fa-modal-title" class="text-lg font-semibold text-white">Best adds this week</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">Ranked by what each pair does to this week&rsquo;s matchup.</p>
+                </div>
+                <button type="button" class="fa-modal-close px-3 py-2 text-gray-400 hover:text-white text-xl leading-none" aria-label="Close">&times;</button>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+<section id="free-agents" class="">
             <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-col gap-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                        <h2 class="text-lg font-semibold text-white">Best adds this week</h2>
                         <p id="fa-summary" class="text-xs text-gray-500 mt-0.5"></p>
                     </div>
                     <button id="fa-find" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2">Find adds</button>
@@ -306,18 +441,43 @@
                 <p class="text-gray-400 text-sm p-4">Enter the league&rsquo;s rosters, then select Find adds.</p>
             </div>
         </section>
-
-        <!-- Planned moves: add/drops that feed the matchup and lineups -->
-        <section id="moves" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <div class="p-3 sm:p-4 border-b border-gray-700">
-                <h2 class="text-lg font-semibold text-white">Planned moves</h2>
-                <p class="text-xs text-gray-500 mt-0.5">An add counts from its night; the player dropped plays until the night before. Change a night to move the transaction.</p>
             </div>
-            <ul id="moves-body" class="divide-y divide-gray-700"></ul>
-        </section>
+            <div class="p-3 sm:p-4 border-t border-gray-700 text-right">
+                <button type="button" class="fa-modal-close px-4 py-2 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">Close</button>
+            </div>
         </div>
+    </div>
 
-    </main>
+    <!-- Plan one add/drop, from a row of the free agent table -->
+    <div id="move-modal" class="hidden fixed inset-0 z-40 bg-gray-900/80 p-0 sm:p-4 flex items-center justify-center">
+        <div class="bg-gray-800 border border-gray-700 w-full sm:max-w-lg h-full sm:h-auto sm:max-h-[90vh] sm:rounded-lg flex flex-col shadow-xl"
+             role="dialog" aria-modal="true" aria-labelledby="move-modal-title">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex items-start justify-between gap-3">
+                <div>
+                    <h2 id="move-modal-title" class="text-lg font-semibold text-white">Plan a move</h2>
+                    <p id="move-player" class="text-sm text-gray-300 mt-0.5"></p>
+                </div>
+                <button type="button" class="move-modal-close px-3 py-2 text-gray-400 hover:text-white text-xl leading-none" aria-label="Close">&times;</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 sm:p-4 flex flex-col gap-3">
+                <div>
+                    <label for="move-drop" class="block mb-1 text-xs font-medium text-gray-400">Drop</label>
+                    <select id="move-drop" class="form-select w-full p-2 text-sm"></select>
+                    <p class="text-xs text-gray-500 mt-1">Season ranks are the draft board&rsquo;s, so a one-week gain cannot talk you into cutting a keeper.</p>
+                </div>
+                <div>
+                    <label for="move-date" class="block mb-1 text-xs font-medium text-gray-400">Night</label>
+                    <select id="move-date" class="form-select w-full p-2 text-sm"></select>
+                </div>
+                <button id="move-score" type="button" class="column-toggle self-start">Score this move</button>
+                <p id="move-gain" class="text-sm text-gray-400"></p>
+            </div>
+            <div class="p-3 sm:p-4 border-t border-gray-700 flex flex-wrap gap-2 justify-end">
+                <button type="button" class="move-modal-close px-4 py-2 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">Cancel</button>
+                <button id="move-plan" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2">Plan move</button>
+            </div>
+        </div>
+    </div>
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
@@ -353,6 +513,7 @@
             yahooLeagueId: 'fs_yahooLeagueId',
             tab: 'fs_standaloneTab',
             lineupEdits: 'fs_lineupEdits',
+            goalieStats: 'fs_standaloneGoalieStats',
         };
 
         function read(key, fallback) {
@@ -376,7 +537,7 @@
         // Every panel is in the page and kept current whichever is showing, so
         // switching is only visibility: nothing re-plans or re-fetches. A hash
         // (#matchup) opens a tab directly; otherwise the last one comes back.
-        const TABS = ['league', 'matchup', 'lineups', 'free-agents'];
+        const TABS = ['league', 'matchup', 'lineups', 'free-agents', 'goalies'];
 
         function selectTab(name) {
             if (!TABS.includes(name)) name = 'league';
@@ -388,7 +549,13 @@
         }
 
         document.querySelectorAll('.page-tab').forEach(tab =>
-            tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
+            tab.addEventListener('click', () => {
+                selectTab(tab.dataset.tab);
+                // The free agent list is a second request, so it is fetched
+                // when the tab is first opened rather than on every plan.
+                if (tab.dataset.tab === 'free-agents') ensurePool();
+                if (tab.dataset.tab === 'goalies') loadGoalies();
+            }));
         window.addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
 
         const initialTab = new URLSearchParams(location.search).get('rosters') === 'receive' ? 'league'
@@ -467,6 +634,11 @@
         // Planned add/drops, keyed by week like the score so far
         let moves = read(KEYS.moves, {}) || {};
         let faResults = null;     // the last free-agent search, and what it was run against
+        // What a gain is measured in (categories, points or lineup value). Kept
+        // apart from faResults so scoring one pair from the Add modal cannot
+        // pass itself off as the recommendations - it did, and the modal then
+        // showed that single pair as the whole list.
+        let faMetric = null;
         let faStale = false;
         // Keyed by week, so last week's score cannot leak into this one
         let banked = read(KEYS.banked, {}) || {};
@@ -1233,7 +1405,7 @@
 
         // --- Free agents -----------------------------------------------------
         function formatGain(value) {
-            const metric = faResults?.metric;
+            const metric = faMetric || faResults?.metric;
             const n = Number(value) || 0;
             const sign = n > 0 ? '+' : n < 0 ? '−' : '±';
             const abs = Math.abs(n);
@@ -1245,6 +1417,7 @@
         const gainTone = n => (n > 0.005 ? 'text-emerald-400' : n < -0.005 ? 'text-red-400' : 'text-gray-400');
 
         function markFreeAgentsStale() {
+            markPoolStale();
             if (!faResults) return;
             faStale = true;
             renderFreeAgents();
@@ -1373,6 +1546,7 @@
             $('fa-find').textContent = 'Searching…';
             try {
                 faResults = await postFreeAgents({});
+                faMetric = faResults.metric;
                 faStale = false;
                 showError('');
                 renderFreeAgents();
@@ -1394,6 +1568,7 @@
             }
             try {
                 const data = await postFreeAgents({ evaluate: { add: asId(add), drop: drop === '' || drop == null ? null : asId(drop) } });
+                faMetric = data.metric;
                 if (!faResults) {
                     faResults = { ...data, candidates: [] };
                     faStale = false;
@@ -1749,6 +1924,13 @@
             if (missing.length) notes.push(`Yahoo’s page has no ${missing.join(', ')}, so ${missing.length === 1 ? 'it was' : 'those were'} left as they were.`);
             banked[key] = entry;
             write(KEYS.banked, banked);
+
+            // Goalie planning needs GA, SA and SV whether or not the league
+            // scores them, and GAA to recover the minutes played
+            const goalieSide = team => Object.fromEntries(
+                ['W', 'GA', 'SA', 'SV', 'SHO', 'GAA'].map(code => [code, team.stats?.[code] ?? '']));
+            goalieStats[key] = { mine: goalieSide(mine), theirs: goalieSide(theirs) };
+            write(KEYS.goalieStats, goalieStats);
 
             const today = localToday();
             if (week && week.start < today && today <= week.end && !$('remaining-only').checked) {
@@ -2162,13 +2344,36 @@
             }).join(', ');
         }
 
-        function rosterTable(players, categories, goalies) {
+        // One player line, used by both the roster view and the free agent
+        // table: same columns, same shading, so a free agent can be read
+        // against the player he would replace.
+        //   add     - an Add column that plans a move
+        //   starts  - expected starts and the nights coloured by start/bench
+        //   sortable- headers that sort the table
+        // The feed's wording is too long for a name column
+        const INJURY_CODES = { 'Out': 'OUT', 'Injured Reserve': 'IR', 'Suspension': 'SUSP', 'Day-To-Day': 'DTD' };
+
+        function rosterTable(players, categories, goalies, opts = {}) {
             if (!players.length) return '';
-            const head = label => `<th class="px-3 py-2 font-medium whitespace-nowrap">${label}</th>`;
+            const sortable = Boolean(opts.sortable);
+            const head = (label, key, extra = '') => {
+                const on = sortable && poolSort.key === key;
+                const arrow = on ? (poolSort.dir === 1 ? ' &uarr;' : ' &darr;') : '';
+                const inner = sortable && key
+                    ? `<button type="button" class="pool-sort hover:text-white ${on ? 'text-white' : ''}" data-key="${esc(key)}">${label}${arrow}</button>`
+                    : label;
+                return `<th class="px-3 py-2 font-medium whitespace-nowrap ${extra}" ${on ? `aria-sort="${poolSort.dir === 1 ? 'ascending' : 'descending'}"` : ''}>${inner}</th>`;
+            };
             const rows = players.map(p => {
                 const pp = p.form?.pp;
                 const trends = p.form?.trends || {};
-                const startShare = goalies && p.games ? ` <span class="text-[10px] font-semibold px-1 rounded bg-blue-800 text-white">${pct(p.starts / p.games)}</span>` : '';
+                const share = goalies
+                    ? (p.startShare != null ? p.startShare : (p.games ? p.starts / p.games : null))
+                    : null;
+                const badge = share != null
+                    ? ` <span class="text-[10px] font-semibold px-1 rounded bg-blue-800 text-white">${pct(share)}</span>` : '';
+                const injured = p.injury
+                    ? ` <span class="text-[10px] font-semibold uppercase px-1 rounded bg-amber-800 text-white" title="${esc([p.injury.status, p.injury.type, p.injury.returnDate && `back ${p.injury.returnDate}`].filter(Boolean).join(' · '))}">${esc(INJURY_CODES[p.injury.status] || 'INJ')}</span>` : '';
                 const tags = [
                     p.out ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-red-800 text-white">Out</span>' : '',
                     p.added ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-emerald-700 text-white">Add</span>' : '',
@@ -2176,13 +2381,14 @@
                 ].join(' ');
                 return `
                 <tr class="table-row-hover ${p.out ? 'opacity-70' : ''}">
-                    <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${esc(p.fullName)}${startShare} ${tags}</td>
+                    ${opts.add ? `<td class="px-2 py-2"><button type="button" class="pool-add btn-primary rounded-md text-xs font-medium px-3 py-2" data-id="${esc(p.playerId)}">Add</button></td>` : ''}
+                    <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${esc(p.fullName)}${badge}${injured} ${tags}</td>
                     <td class="px-3 py-2 text-gray-300">${esc(p.teamAbbrevs || '')}</td>
                     <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${esc(p.eligiblePositions || p.positionCode || '')}</td>
                     <td class="px-3 py-2 whitespace-nowrap">${weekNights(p)}</td>
                     <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${(p.nights || []).map(n => `${n.home ? '' : '@'}${esc(n.opponent)}`).join(', ') || '&mdash;'}</td>
                     <td class="px-3 py-2 text-right text-gray-300">${esc(p.games)}</td>
-                    <td class="px-3 py-2 text-right text-white font-semibold">${esc(round1(p.starts))}</td>
+                    ${opts.starts ? `<td class="px-3 py-2 text-right text-white font-semibold">${esc(round1(p.starts))}</td>` : ''}
                     <td class="px-3 py-2 text-gray-400 whitespace-nowrap">${(p.nextWeek || []).map(g => esc(weekday(g.date))).join(', ') || '&mdash;'}</td>
                     ${goalies ? '' : `<td class="px-3 py-2 text-right whitespace-nowrap">${pp && pp.recent != null
                         ? `<span class="text-gray-200">${pct(pp.recent)}</span>${pp.last != null ? ` <span class="text-xs text-gray-500">last ${pct(pp.last)}</span>` : ''}`
@@ -2194,23 +2400,323 @@
             }).join('');
             return `
                 <div>
-                    <h3 class="px-3 sm:px-4 pt-3 pb-2 text-sm font-semibold text-gray-300">${goalies ? 'Goalies' : 'Skaters'}</h3>
+                    <div class="px-3 sm:px-4 pt-3 pb-2 flex items-baseline justify-between gap-3">
+                        <h3 class="text-sm font-semibold text-gray-300">${goalies ? 'Goalies' : 'Skaters'}</h3>
+                        ${opts.count ? `<span class="text-xs text-gray-500">${esc(opts.count)}</span>` : ''}
+                    </div>
                     <div class="overflow-x-auto">
                         <table class="data-table w-full text-left text-sm">
                             <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
                                 <tr>
-                                    <th class="col-sticky px-3 py-2 font-medium">Player</th>
-                                    ${head('Team')}${head('Pos')}${head('This week')}${head('Opponents')}
-                                    ${head('#')}${head('Starts')}${head('Next wk')}${goalies ? '' : head('PP%')}
+                                    ${opts.add ? '<th class="px-2 py-2 font-medium">Add</th>' : ''}
+                                    <th class="col-sticky px-3 py-2 font-medium">${sortable ? '<button type="button" class="pool-sort hover:text-white" data-key="name">Player</button>' : 'Player'}</th>
+                                    ${head('Team', 'team')}${head('Pos', 'pos')}${head('This week', '')}${head('Opponents', '')}
+                                    ${head('#', 'games', 'text-right')}${opts.starts ? head('Starts', '') : ''}${head('Next wk', 'nextWeek')}
+                                    ${goalies ? '' : head('PP%', 'pp', 'text-right')}
                                     <th class="px-3 py-2 font-medium whitespace-nowrap text-center" title="Last 20, 10 and 5 games against his season; then his next game's venue">L20 L10 L5 H/A</th>
-                                    ${head('Rank')}
-                                    ${categories.map(code => `<th class="px-3 py-2 font-medium text-right">${esc(code)}</th>`).join('')}
+                                    ${head('Rank', 'rank', 'text-right')}
+                                    ${categories.map(code => head(esc(code), `cat:${code}`, 'text-right')).join('')}
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-700">${rows}</tbody>
                         </table>
                     </div>
                 </div>`;
+        }
+
+        // --- Free agents -----------------------------------------------------
+        // The whole pool, as a table to read and filter - the recommendations
+        // are one button away rather than the only thing on offer.
+        let pool = null;            // {players, categories, formSeason, injuryDate}
+        let poolLoading = false;
+        let poolStale = false;
+        let poolSort = { key: 'rank', dir: 1 };
+        const POOL_LIMIT = 150;     // rows drawn; filters and sorting narrow to them
+        const poolFilters = { search: '', positions: new Set(), days: new Set(), gamesOnly: true, hideInjured: false };
+
+        const POSITIONS = ['C', 'LW', 'RW', 'D', 'G'];
+
+        function renderPoolFilters() {
+            $('pool-positions').innerHTML = POSITIONS.map(code => `
+                <button type="button" class="pool-position column-toggle" data-code="${code}"
+                        aria-pressed="${poolFilters.positions.has(code)}">${code}</button>`).join('');
+            const nights = lastPlan?.days?.map(d => d.date) || [];
+            $('pool-days').innerHTML = nights.length
+                ? nights.map(date => `
+                    <button type="button" class="pool-day column-toggle" data-date="${esc(date)}"
+                            aria-pressed="${poolFilters.days.has(date)}">${esc(weekday(date))} ${esc(Number(date.slice(8)))}</button>`).join('')
+                : '<span class="text-xs text-gray-500">Pick a week to filter by night.</span>';
+            $('pool-games-only').checked = poolFilters.gamesOnly;
+            $('pool-hide-injured').checked = poolFilters.hideInjured;
+        }
+
+        function poolValue(player, key) {
+            if (key === 'name') return String(player.fullName || '').toLowerCase();
+            if (key === 'team') return String(player.teamAbbrevs || '');
+            if (key === 'pos') return String(player.eligiblePositions || '');
+            if (key === 'games') return player.games || 0;
+            if (key === 'nextWeek') return (player.nextWeek || []).length;
+            if (key === 'pp') return player.form?.pp?.recent ?? -1;
+            // An unranked player sorts last whichever way the table is pointing
+            if (key === 'rank') return player.seasonRank ?? Number.MAX_SAFE_INTEGER;
+            if (key.startsWith('cat:')) return player.perGame?.[key.slice(4)] ?? -Infinity;
+            return 0;
+        }
+
+        function filteredPool() {
+            const query = fold(poolFilters.search.trim());
+            return (pool?.players || []).filter(p => {
+                if (query && !fold(p.fullName).includes(query)) return false;
+                if (poolFilters.positions.size
+                    && !String(p.eligiblePositions || p.positionCode || '').split(',')
+                        .some(code => poolFilters.positions.has(code.trim()))) return false;
+                if (poolFilters.gamesOnly && !p.games) return false;
+                if (poolFilters.hideInjured && p.injury) return false;
+                // Every night ticked, not any: the point is filling a hole
+                if (poolFilters.days.size) {
+                    const plays = new Set((p.nights || []).map(n => n.date));
+                    for (const date of poolFilters.days) if (!plays.has(date)) return false;
+                }
+                return true;
+            });
+        }
+
+        function renderPool() {
+            if (!pool) {
+                $('pool-summary').textContent = '';
+                return;
+            }
+            const matches = filteredPool();
+            const dir = poolSort.dir;
+            const key = poolSort.key;
+            matches.sort((a, b) => {
+                const left = poolValue(a, key);
+                const right = poolValue(b, key);
+                if (left === right) return (a.seasonRank ?? 1e9) - (b.seasonRank ?? 1e9);
+                return left > right ? dir : -dir;
+            });
+
+            const goalieCodes = new Set(setup.categories.filter(c => c.goalie).map(c => c.code));
+            const codes = pool.categories || [];
+            const skaterCats = codes.filter(c => !goalieCodes.has(c));
+            const goalieCats = codes.filter(c => goalieCodes.has(c));
+            const isGoalie = p => String(p.positionCode) === 'G';
+            const skaters = matches.filter(p => !isGoalie(p)).slice(0, POOL_LIMIT);
+            const goalies = matches.filter(isGoalie).slice(0, POOL_LIMIT);
+
+            const opts = { add: true, starts: false, sortable: true };
+            $('pool-body').innerHTML =
+                (matches.length
+                    ? rosterTable(skaters, skaterCats, false,
+                                  { ...opts, count: `${skaters.length} of ${matches.filter(p => !isGoalie(p)).length}` })
+                      + rosterTable(goalies, goalieCats, true,
+                                    { ...opts, count: `${goalies.length} of ${matches.filter(isGoalie).length}` })
+                    : '<p class="text-gray-400 text-sm p-4">No free agent matches these filters.</p>');
+
+            const parts = [`${pool.players.length} free agents`, `${matches.length} shown`];
+            if (matches.length > POOL_LIMIT) parts.push(`top ${POOL_LIMIT} of each table drawn — sort or filter to see others`);
+            if (pool.formSeason) parts.push(`form from ${pool.formSeason}`);
+            if (pool.injuryDate) parts.push(`injuries as of ${fmt(pool.injuryDate, { month: 'short', day: 'numeric' })}`);
+            if (poolStale) parts.push('rosters or settings have changed — select Refresh');
+            $('pool-summary').textContent = parts.join(' · ');
+        }
+
+        async function loadPool() {
+            const body = planBody();
+            if (!body) {
+                $('pool-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Add your players, choose categories and set starting slots first.</p>';
+                return;
+            }
+            poolLoading = true;
+            $('pool-refresh').disabled = true;
+            $('pool-refresh').textContent = 'Loading…';
+            try {
+                const response = await fetch('/standalone/api/free-agents/pool', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...body, rostered: [...rosteredIds()].map(asId) }),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || 'The free agent list could not be loaded.');
+                pool = data;
+                poolStale = false;
+                renderPoolFilters();
+                renderPool();
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                poolLoading = false;
+                $('pool-refresh').disabled = false;
+                $('pool-refresh').textContent = 'Refresh';
+            }
+        }
+
+        $('pool-refresh').addEventListener('click', loadPool);
+        $('pool-search').addEventListener('input', event => {
+            poolFilters.search = event.target.value;
+            renderPool();
+        });
+        $('pool-positions').addEventListener('click', event => {
+            const button = event.target.closest('.pool-position');
+            if (!button) return;
+            const code = button.dataset.code;
+            poolFilters.positions.has(code) ? poolFilters.positions.delete(code) : poolFilters.positions.add(code);
+            renderPoolFilters();
+            renderPool();
+        });
+        $('pool-days').addEventListener('click', event => {
+            const button = event.target.closest('.pool-day');
+            if (!button) return;
+            const date = button.dataset.date;
+            poolFilters.days.has(date) ? poolFilters.days.delete(date) : poolFilters.days.add(date);
+            renderPoolFilters();
+            renderPool();
+        });
+        ['pool-games-only', 'pool-hide-injured'].forEach(id => $(id).addEventListener('change', () => {
+            poolFilters.gamesOnly = $('pool-games-only').checked;
+            poolFilters.hideInjured = $('pool-hide-injured').checked;
+            renderPool();
+        }));
+        $('pool-clear').addEventListener('click', () => {
+            poolFilters.search = '';
+            poolFilters.positions.clear();
+            poolFilters.days.clear();
+            poolFilters.gamesOnly = true;
+            poolFilters.hideInjured = false;
+            $('pool-search').value = '';
+            renderPoolFilters();
+            renderPool();
+        });
+        $('pool-body').addEventListener('click', event => {
+            const sort = event.target.closest('.pool-sort');
+            if (sort) {
+                const key = sort.dataset.key;
+                // A new column starts the way that column is usually read:
+                // best first for a number, A-Z for a name.
+                poolSort = poolSort.key === key
+                    ? { key, dir: -poolSort.dir }
+                    : { key, dir: ['name', 'team', 'pos', 'rank'].includes(key) ? 1 : -1 };
+                renderPool();
+                return;
+            }
+            const add = event.target.closest('.pool-add');
+            if (add) openMoveModal(add.dataset.id);
+        });
+
+        // --- Open roster spots ------------------------------------------------
+        function renderOpenSpots() {
+            const days = lastPlan?.days || [];
+            const empty = days.map(day => {
+                const counts = {};
+                day.slots.filter(s => !s.player).forEach(s => { counts[s.slot] = (counts[s.slot] || 0) + 1; });
+                return counts;
+            });
+            const slots = [...new Set(days.flatMap((_d, i) => Object.keys(empty[i])))];
+            $('open-spots').classList.toggle('hidden', !slots.length);
+            if (!slots.length) return;
+            $('open-spots-body').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-medium">Slot</th>
+                            ${days.map(d => `<th class="px-3 py-2 font-medium whitespace-nowrap">${esc(weekday(d.date))} ${esc(Number(d.date.slice(8)))}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${slots.map(slot => `
+                            <tr>
+                                <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(slot)}</td>
+                                ${days.map((_d, i) => `<td class="px-3 py-2 ${empty[i][slot] ? 'text-amber-300 font-semibold' : 'text-gray-600'}">${empty[i][slot] || '&mdash;'}</td>`).join('')}
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        // --- Plan a move from a row ------------------------------------------
+        let movePlayer = null;
+
+        function openMoveModal(playerId) {
+            movePlayer = (pool?.players || []).find(p => String(p.playerId) === String(playerId));
+            if (!movePlayer) return;
+            const rank = movePlayer.seasonRank ? ` · season #${movePlayer.seasonRank}` : '';
+            $('move-player').innerHTML = `<span class="text-white font-semibold">${esc(movePlayer.fullName)}</span>
+                <span class="text-gray-400">${esc(movePlayer.eligiblePositions || movePlayer.positionCode)} · ${esc(movePlayer.teamAbbrevs)}${rank}</span>`;
+            const myIds = rosterOnLastNight();
+            const suggested = new Set(faResults?.dropCandidates || []);
+            $('move-drop').innerHTML = '<option value="">No drop (an open spot)</option>'
+                + myIds.map(id => {
+                    const p = playersById.get(id);
+                    const seasonRank = lastPlan?.players?.find(x => String(x.playerId) === id)?.seasonRank;
+                    return p ? `<option value="${esc(id)}">${esc(p.fullName)}${seasonRank ? ` — season #${seasonRank}` : ''}${suggested.has(id) ? ' (suggested)' : ''}</option>` : '';
+                }).join('');
+            $('move-date').innerHTML = nightOptions(planWindow()?.start);
+            $('move-gain').textContent = '';
+            $('move-modal').classList.remove('hidden');
+            $('move-drop').focus();
+        }
+
+        function closeModal(id) {
+            $(id).classList.add('hidden');
+        }
+
+        document.querySelectorAll('.move-modal-close').forEach(b => b.addEventListener('click', () => closeModal('move-modal')));
+        document.querySelectorAll('.fa-modal-close').forEach(b => b.addEventListener('click', () => closeModal('fa-modal')));
+        [['move-modal'], ['fa-modal']].forEach(([id]) => $(id).addEventListener('click', event => {
+            if (event.target === $(id)) closeModal(id);
+        }));
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') { closeModal('move-modal'); closeModal('fa-modal'); }
+        });
+
+        $('fa-recommend').addEventListener('click', () => {
+            $('fa-modal').classList.remove('hidden');
+            if (!faResults) $('fa-find').click();
+        });
+
+        // The same exact scoring the recommendations use, for the pair chosen here
+        $('move-score').addEventListener('click', async () => {
+            if (!movePlayer) return;
+            const drop = $('move-drop').value;
+            $('move-score').disabled = true;
+            $('move-gain').textContent = 'Scoring…';
+            try {
+                const data = await postFreeAgents({ evaluate: { add: movePlayer.playerId, drop: drop || null } });
+                const candidate = data.candidates?.[0];
+                if (!candidate) throw new Error('That move could not be scored.');
+                faMetric = data.metric;
+                const chosen = $('move-date').value;
+                $('move-date').innerHTML = nightOptions(chosen, candidate.gains);
+                $('move-gain').innerHTML = `Best on ${esc(fmt(candidate.recommendedDate, { weekday: 'long', month: 'short', day: 'numeric' }))}:
+                    <span class="font-semibold ${gainTone(candidate.gain)}">${esc(formatGain(candidate.gain))}</span>.
+                    Every night is listed above with what it would gain.`;
+            } catch (error) {
+                $('move-gain').textContent = error.message;
+            } finally {
+                $('move-score').disabled = false;
+            }
+        });
+
+        $('move-plan').addEventListener('click', () => {
+            if (!movePlayer) return;
+            const drop = $('move-drop').value;
+            saveMoves([...weekMoves(), {
+                add: asId(movePlayer.playerId),
+                drop: drop === '' ? null : asId(drop),
+                date: $('move-date').value,
+            }]);
+            closeModal('move-modal');
+            markPoolStale();
+        });
+
+        // First visit to the tab loads the list; later visits keep what is there
+        function ensurePool() {
+            if (!pool && !poolLoading) loadPool();
+        }
+
+        function markPoolStale() {
+            if (!pool) return;
+            poolStale = true;
+            renderPool();
         }
 
         function renderRosterView() {
@@ -2234,8 +2740,9 @@
             const order = (a, b) => (POSITION_ORDER[a.positionCode] ?? 9) - (POSITION_ORDER[b.positionCode] ?? 9)
                 || (a.seasonRank ?? 1e9) - (b.seasonRank ?? 1e9);
             const players = side.players.slice().sort(order);
-            $('roster-view').innerHTML = rosterTable(players.filter(p => !isGoalie(p)), skaterCats, false)
-                + rosterTable(players.filter(isGoalie), goalieCats, true);
+            $('roster-view').innerHTML =
+                rosterTable(players.filter(p => !isGoalie(p)), skaterCats, false, { starts: true })
+                + rosterTable(players.filter(isGoalie), goalieCats, true, { starts: true });
         }
 
         // Rendered from the league's categories, not from the last plan, so the
@@ -2341,6 +2848,8 @@
 
             renderGridSide();
             renderMatchup();
+            renderOpenSpots();
+            renderPoolFilters();
 
             // jsonify sorts keys, so put them back in the league's own order
             const totals = (data.categories || []).filter(c => c in (data.totals || {}))
@@ -2355,6 +2864,299 @@
                    </div>
                    <p class="text-xs text-gray-500 mt-3">From the players started above, goalies weighted by their chance of starting.</p>`
                 : '&mdash;';
+        }
+
+        // --- Goalie planning --------------------------------------------------
+        // Wins and saves can only go up with another start; GAA and save
+        // percentage can go down. This says by how much, and how likely.
+        const GOALIE_ROWS = [
+            { code: 'W', label: 'Wins', better: 'high' },
+            { code: 'GA', label: 'Goals against', better: 'low' },
+            { code: 'GAA', label: 'GAA', better: 'low', rate: true },
+            { code: 'SA', label: 'Shots against', better: null },
+            { code: 'SV', label: 'Saves', better: 'high' },
+            { code: 'SVpct', label: 'Save %', better: 'high', rate: true },
+            { code: 'SHO', label: 'Shutouts', better: 'high' },
+        ];
+        const GOALIE_INPUTS = ['W', 'GA', 'SA', 'SV', 'SHO', 'GAA'];
+
+        let goalieData = null;
+        let goalieLoading = false;
+        let goalieStats = read(KEYS.goalieStats, {}) || {};
+
+        const weekGoalieStats = () => goalieStats[$('week-select').value] || {};
+
+        function saveGoalieStats(side, code, value) {
+            const week = $('week-select').value;
+            const entry = Object.assign({ mine: {}, theirs: {} }, goalieStats[week]);
+            entry[side] = Object.assign({}, entry[side], { [code]: value });
+            goalieStats[week] = entry;
+            write(KEYS.goalieStats, goalieStats);
+        }
+
+        // A save percentage is written .912; everything else keeps its zero
+        const goalieNumber = (value, places = 2) => {
+            if (value == null) return '<span class="text-gray-600">&mdash;</span>';
+            const text = Number(value).toFixed(places);
+            return esc(places === 3 && Math.abs(Number(value)) < 1 ? text.replace(/^0\./, '.') : text);
+        };
+
+        function goalieCell(row, value, otherValue) {
+            const places = row.code === 'SVpct' ? 3 : row.rate ? 2 : row.code === 'W' || row.code === 'SHO' ? 1 : 0;
+            const text = goalieNumber(value, places);
+            if (row.better === null || value == null || otherValue == null) return `<span class="text-gray-300">${text}</span>`;
+            const ahead = row.better === 'low' ? value <= otherValue : value >= otherValue;
+            return `<span class="${ahead ? 'text-emerald-400 font-semibold' : 'text-red-400'}">${text}</span>`;
+        }
+
+        function renderGoalieWeek() {
+            if (!goalieData) return;
+            const mine = goalieData.mine;
+            const theirs = goalieData.theirs;
+            $('goalie-week').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th style="min-width: 7rem" class="col-sticky px-3 py-2 font-medium">Category</th>
+                            <th class="px-3 py-2 font-medium text-right">You so far</th>
+                            <th class="px-3 py-2 font-medium text-right">You projected</th>
+                            <th class="px-3 py-2 font-medium text-right">Opp so far</th>
+                            <th class="px-3 py-2 font-medium text-right">Opp projected</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${GOALIE_ROWS.map(row => `
+                            <tr>
+                                <td style="min-width: 7rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(row.label)}</td>
+                                <td class="px-3 py-2 text-right">${goalieCell(row, mine.soFar[row.code], theirs.soFar[row.code])}</td>
+                                <td class="px-3 py-2 text-right">${goalieCell(row, mine.projected[row.code], theirs.projected[row.code])}</td>
+                                <td class="px-3 py-2 text-right">${goalieCell(row, theirs.soFar[row.code], mine.soFar[row.code])}</td>
+                                <td class="px-3 py-2 text-right">${goalieCell(row, theirs.projected[row.code], mine.projected[row.code])}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+
+            const source = { gaa: 'worked out from GA and GAA', starts: 'estimated from starts', none: 'nothing played yet' };
+            $('goalie-note').textContent = [
+                `${round1(mine.minutes)} minutes played, ${source[mine.minutesFrom]}`,
+                `${round1(mine.projectedMinutes - mine.minutes)} more projected`,
+                goalieData.adjusted ? 'shots adjusted for each opponent and venue' : 'opponent strength not loaded',
+            ].join(' · ') + '.';
+        }
+
+        function renderGoalieInputs() {
+            const saved = weekGoalieStats();
+            const cell = (side, code) => `
+                <td class="px-2 py-1.5">
+                    <input type="text" inputmode="decimal" autocomplete="off" class="goalie-input form-input w-20 p-1.5 text-center text-sm"
+                           value="${esc(saved[side]?.[code] ?? '')}" data-side="${side}" data-code="${code}"
+                           aria-label="${side === 'mine' ? 'Your' : 'Opponent'} ${code} so far" placeholder="0">
+                </td>`;
+            $('goalie-inputs').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr><th class="px-3 py-2 font-medium">Team</th>${GOALIE_INPUTS.map(c => `<th class="px-2 py-2 font-medium text-center">${c}</th>`).join('')}</tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        <tr><td class="px-3 py-2 text-gray-300">You</td>${GOALIE_INPUTS.map(c => cell('mine', c)).join('')}</tr>
+                        <tr><td class="px-3 py-2 text-gray-300">Opponent</td>${GOALIE_INPUTS.map(c => cell('theirs', c)).join('')}</tr>
+                    </tbody>
+                </table>`;
+        }
+
+        $('goalie-edit').addEventListener('click', () => {
+            const open = $('goalie-entry').classList.contains('hidden');
+            $('goalie-entry').classList.toggle('hidden', !open);
+            $('goalie-edit').setAttribute('aria-pressed', open ? 'true' : 'false');
+            if (open) renderGoalieInputs();
+        });
+
+        $('goalie-inputs').addEventListener('input', event => {
+            const box = event.target.closest('.goalie-input');
+            if (!box) return;
+            saveGoalieStats(box.dataset.side, box.dataset.code, box.value);
+            clearTimeout(goalieTimer);
+            goalieTimer = setTimeout(loadGoalies, 500);
+        });
+        let goalieTimer = null;
+
+        $('goalie-refresh').addEventListener('click', () => loadGoalies(true));
+
+        function renderGoalieStarts() {
+            const rows = [
+                ...(goalieData?.mine.starts || []).map(s => ({ ...s, side: 'You' })),
+                ...(goalieData?.theirs.starts || []).map(s => ({ ...s, side: 'Opponent' })),
+            ].sort((a, b) => a.date.localeCompare(b.date));
+            if (!rows.length) {
+                $('goalie-starts-body').innerHTML = '<p class="text-gray-400 text-sm p-4">No goalie starts left this week.</p>';
+                return;
+            }
+            $('goalie-starts-body').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th class="col-sticky px-3 py-2 font-medium">Goalie</th>
+                            <th class="px-3 py-2 font-medium">Side</th>
+                            <th class="px-3 py-2 font-medium">Night</th>
+                            <th class="px-3 py-2 font-medium">Against</th>
+                            <th class="px-3 py-2 font-medium text-right">Starts</th>
+                            <th class="px-3 py-2 font-medium text-right">Shots</th>
+                            <th class="px-3 py-2 font-medium text-right">Goals</th>
+                            <th class="px-3 py-2 font-medium text-right">Sv%</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${rows.map(start => {
+                            const shots = start.perStart?.SA || 0;
+                            const goals = start.perStart?.GA || 0;
+                            return `
+                            <tr class="table-row-hover">
+                                <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${esc(start.fullName)}</td>
+                                <td class="px-3 py-2 ${start.side === 'You' ? 'text-emerald-400' : 'text-gray-400'}">${start.side}</td>
+                                <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${esc(fmt(start.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</td>
+                                <td class="px-3 py-2 text-gray-300">${start.home ? 'vs' : '@'} ${esc(start.opponent)}</td>
+                                <td class="px-3 py-2 text-right ${start.startProbability >= 0.5 ? 'text-emerald-400' : 'text-amber-400'}">${pct(start.startProbability)}</td>
+                                <td class="px-3 py-2 text-right text-gray-200">${esc(round1(shots))}</td>
+                                <td class="px-3 py-2 text-right text-gray-200">${esc(Math.round(goals * 100) / 100)}</td>
+                                <td class="px-3 py-2 text-right text-gray-200">${shots ? goalieNumber((shots - goals) / shots, 3) : '&mdash;'}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        function renderGoaliePicker() {
+            const goalies = goalieData?.goalies || [];
+            const previous = $('goalie-pick').value;
+            $('goalie-pick').innerHTML = goalies.length
+                ? goalies.map(g => `<option value="${esc(g.playerId)}">${esc(g.fullName)} · ${esc(g.teamAbbrevs)}</option>`).join('')
+                : '<option value="">No goalie on your roster plays this week</option>';
+            if (goalies.some(g => String(g.playerId) === previous)) $('goalie-pick').value = previous;
+            renderGoalieNights();
+        }
+
+        function renderGoalieNights() {
+            const goalie = (goalieData?.goalies || []).find(g => String(g.playerId) === $('goalie-pick').value);
+            $('goalie-night').innerHTML = (goalie?.nights || []).map(night => `
+                <option value="${esc(night.date)}">
+                    ${esc(fmt(night.date, { weekday: 'short', month: 'short', day: 'numeric' }))} ·
+                    ${night.home ? 'vs' : '@'} ${esc(night.opponent)}${night.alreadyStarting ? ' · already starting' : ''}
+                </option>`).join('') || '<option value="">No game this week</option>';
+        }
+
+        ['goalie-pick', 'goalie-night'].forEach(id => $(id).addEventListener('change', () => {
+            if (id === 'goalie-pick') renderGoalieNights();
+            loadGoalies();
+        }));
+
+        function renderGoalieExtra() {
+            const extra = goalieData?.extra;
+            if (!extra) {
+                $('goalie-verdict').textContent = '';
+                $('goalie-outcomes').innerHTML = '';
+                return;
+            }
+            const limit = (entry, label, better) => {
+                if (entry.maxGoals == null) {
+                    return `<li class="text-red-400">${label}: ${esc(entry.reason)} &mdash; an extra start cannot cost you what you have already lost.</li>`;
+                }
+                return `<li><span class="text-white font-semibold">${label}</span>: he can allow
+                    <span class="text-white font-semibold">${entry.maxGoals}</span>
+                    ${entry.maxGoals === 1 ? 'goal' : 'goals'} and keep it
+                    (a ${goalieNumber(entry.savePct, 3)} save percentage or better) &mdash;
+                    <span class="${entry.chance >= 0.6 ? 'text-emerald-400' : entry.chance >= 0.35 ? 'text-amber-300' : 'text-red-400'}">${pct(entry.chance)}</span> likely.</li>`;
+            };
+            $('goalie-verdict').innerHTML = `
+                <span class="text-white font-semibold">${esc(extra.fullName)}</span>
+                ${extra.home ? 'vs' : '@'} ${esc(extra.opponent)} on ${esc(fmt(extra.date, { weekday: 'long', month: 'short', day: 'numeric' }))}:
+                about <span class="text-white font-semibold">${esc(round1(extra.expected.shots))}</span> shots,
+                a ${goalieNumber(extra.expected.savePct, 3)} projected save percentage,
+                ${pct(extra.startProbability)} to be the one who starts.
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-sm text-gray-300">
+                    ${limit(extra.limits.GAA, 'GAA')}
+                    ${limit(extra.limits.SVpct, 'Save %')}
+                </ul>
+                <p class="text-xs text-gray-500 mt-2">Against the opponent's projected
+                    ${goalieNumber(extra.target.GAA, 2)} GAA and ${goalieNumber(extra.target.SVpct, 3)} save percentage.
+                    Without this start you project ${goalieNumber(extra.without.GAA, 2)} and ${goalieNumber(extra.without.SVpct, 3)}.</p>`;
+
+            $('goalie-outcomes').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th class="col-sticky px-3 py-2 font-medium">Night</th>
+                            <th class="px-3 py-2 font-medium text-right">Odds</th>
+                            <th class="px-3 py-2 font-medium text-right">Shots</th>
+                            <th class="px-3 py-2 font-medium text-right">Mins</th>
+                            <th class="px-3 py-2 font-medium text-right">GAA after</th>
+                            <th class="px-3 py-2 font-medium text-right">Sv% after</th>
+                            <th class="px-3 py-2 font-medium">Keeps</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${extra.outcomes.map(row => {
+                            // A tick or a cross as well as the colour: the column
+                            // says nothing otherwise to anyone reading it aloud
+                            const mark = (on, label) => on === null ? ''
+                                : `<span class="${on ? 'text-emerald-400' : 'text-red-400'}">${on ? '&#10003;' : '&#10007;'} ${label}</span>`;
+                            const keeps = [mark(row.keepsGAA, 'GAA'), mark(row.keepsSVpct, 'Sv%')]
+                                .filter(Boolean).join(' · ');
+                            return `
+                            <tr class="${row.variant ? 'bg-gray-900/50' : ''}">
+                                <td class="col-sticky px-3 py-2 font-medium ${row.variant ? 'text-amber-300' : 'text-gray-200'} whitespace-nowrap">${esc(row.label)}</td>
+                                <td class="px-3 py-2 text-right text-gray-400">${pct(row.probability)}</td>
+                                <td class="px-3 py-2 text-right text-gray-400">${esc(row.shots)}</td>
+                                <td class="px-3 py-2 text-right text-gray-400">${esc(round1(row.minutes))}</td>
+                                <td class="px-3 py-2 text-right text-white">${goalieNumber(row.after.GAA, 2)}</td>
+                                <td class="px-3 py-2 text-right text-white">${goalieNumber(row.after.SVpct, 3)}</td>
+                                <td class="px-3 py-2 whitespace-nowrap">${keeps}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+                <p class="text-xs text-gray-500 p-3 sm:px-4">
+                    Goals against are binomial in the shots he is projected to face, and each night is divided by the minutes a night
+                    like that really lasts &mdash; measured at 58.6 on average, 30.3 when a goalie is pulled. A pull costs both ratios,
+                    but the GAA damage is several times larger, because the minutes halve while the shots do not. The pull is shown with how often a start ends that way at all,
+                    beside the outcomes rather than inside them.
+                </p>`;
+        }
+
+        async function loadGoalies(force = false) {
+            const body = planBody();
+            if (!body) {
+                $('goalie-week').innerHTML = '<p class="text-gray-400 text-sm p-4">Add your players, choose categories and set starting slots first.</p>';
+                return;
+            }
+            if (goalieLoading && !force) return;
+            goalieLoading = true;
+            try {
+                const saved = weekGoalieStats();
+                const extra = $('goalie-pick').value && $('goalie-night').value
+                    ? { playerId: $('goalie-pick').value, date: $('goalie-night').value } : null;
+                const response = await fetch('/standalone/api/goalies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...body, goalie_stats: saved, ...(extra ? { extra } : {}) }),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || 'Goalie planning failed.');
+                goalieData = data;
+                const hadPick = Boolean($('goalie-pick').value);
+                renderGoalieWeek();
+                renderGoalieStarts();
+                renderGoaliePicker();
+                renderGoalieExtra();
+                // The picker is filled from this answer, so the first load has
+                // no goalie to ask about; ask again now that it has one.
+                if (!hadPick && $('goalie-pick').value && $('goalie-night').value) {
+                    setTimeout(() => loadGoalies(true), 0);
+                }
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                goalieLoading = false;
+            }
         }
 
         // --- Load ------------------------------------------------------------

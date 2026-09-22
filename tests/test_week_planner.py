@@ -389,6 +389,29 @@ check("the free-agent search holds manual nights as the plan does",
 
 
 # --------------------------------------------------------------------------
+print("\n=== 8c. the free agent pool ===")
+
+pool = wp.available(week, rostered, next_games=wp.games_by_team(SEASON, ["2027-02-04"]))
+by_name = {p["fullName"]: p for p in pool}
+check("everyone on a roster in the league is left out",
+      not {"Star", "My Weak LW", "Depth", "Owned Winger"} & set(by_name), sorted(by_name))
+check("a free agent who plays this week carries his nights and opponents",
+      by_name["Hot Winger"]["games"] == 3
+      and by_name["Hot Winger"]["nights"][0]["opponent"] == "MTL", by_name["Hot Winger"]["nights"])
+check("one who does not is still listed, with no games",
+      by_name["Cold Winger"]["games"] == 0 and by_name["Cold Winger"]["nights"] == [])
+check("each carries his per-game line, its shading and next week's games",
+      set(by_name["Hot Winger"]["perGame"]) == {"G", "SOG"}
+      and 0 <= by_name["Hot Winger"]["heat"]["G"] <= 1
+      and by_name["Hot Winger"]["nextWeek"][0]["date"] == "2027-02-04",
+      by_name["Hot Winger"])
+goalie_pool = wp.available(wp.Week(FA_POOL, ["W"], SMALL, WEEK, SEASON), [])
+free_goalie = {p["fullName"]: p for p in goalie_pool}["Starter"]
+check("a goalie carries his share of his team's starts, so a per-start line reads honestly",
+      0 < free_goalie["startShare"] <= 1, free_goalie.get("startShare"))
+
+
+# --------------------------------------------------------------------------
 print("\n=== 9. routes on real data ===")
 
 try:
@@ -406,7 +429,8 @@ try:
     soup = BeautifulSoup(page.data, "html.parser")
     panels = soup.select(".tab-panel")
     check("every League Home tab panel sits directly in <main>, none inside another",
-          [p.get("id") for p in panels] == ["tab-league", "tab-matchup", "tab-lineups", "tab-free-agents"]
+          [p.get("id") for p in panels] == ["tab-league", "tab-matchup", "tab-lineups",
+                                            "tab-free-agents", "tab-goalies"]
           and all(p.parent.name == "main" for p in panels),
           [(p.get("id"), p.parent.name) for p in panels])
     check("the old stub URL still lands there",
@@ -448,6 +472,20 @@ try:
             check("a manual night comes back as set; malformed ones are dropped, not refused",
                   manual["status"] == "success" and manual["days"][0].get("manual")
                   and manual["days"][0]["slots"][0]["player"] is None, manual.get("message"))
+
+        pool_response = client.post("/standalone/api/free-agents/pool",
+                                    json={**body, "rostered": ids})
+        pool_data = pool_response.get_json()
+        check("the free agent pool comes back as player lines the table can show",
+              pool_response.status_code == 200 and pool_data["players"]
+              and all("seasonRank" in p and "form" in p and "heat" in p
+                      for p in pool_data["players"][:5]), pool_data.get("message"))
+        check("and nobody rostered is in it",
+              not ({str(i) for i in ids}
+                   & {str(p["playerId"]) for p in pool_data.get("players", [])}))
+        check("an empty roster is a 400 there too, not a 500",
+              client.post("/standalone/api/free-agents/pool",
+                          json={**body, "roster": []}).status_code == 400)
 
         bad = [
             ({**body, "roster": []}, "an empty roster"),

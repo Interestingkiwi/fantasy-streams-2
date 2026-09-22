@@ -249,6 +249,31 @@ class Week:
         self._rows[key] = row
         return row
 
+    def per_start(self, player, night):
+        """
+        A goalie's line for one night **per start**, not per scheduled game:
+        the adjusted projection before the start probability is applied, with
+        that probability alongside. None if his team is idle.
+
+        `row` returns the expected line, which is what a lineup is worth.
+        Goalie planning needs the other one - what happens *if* he starts.
+        """
+        team = gs.primary_team(player.get('teamAbbrevs'))
+        opponent = self.facing.get(night, {}).get(team)
+        if opponent is None:
+            return None
+
+        is_home = team in self.home_teams[night]
+        per_game = player.get('perGame') or {}
+        if self.splits:
+            per_game = ops.adjust(per_game, opponent,
+                                  ops.opponent_z_for(is_home, self.splits),
+                                  is_home=is_home, venue=self.venue)
+        probability = (self.probabilities([player]).get(str(player['playerId']), {})
+                       .get(date.fromisoformat(night))) if _is_goalie(player) else 1.0
+        return {'date': night, 'opponent': opponent, 'home': is_home,
+                'startProbability': probability or 0.0, 'perStart': per_game}
+
     def probabilities(self, players):
         """
         {playerId: {date: probability}} for the goalies among `players`.
@@ -510,6 +535,47 @@ def free_agents(week, roster, rostered, out=None, opponent=None, opponent_out=No
         'dropCandidates': drops,
         'freeAgents': sum(1 for p in week.valued if str(p['playerId']) not in rostered),
     }
+
+
+def available(week, rostered, next_games=None):
+    """
+    Every free agent, as a player line the page can show beside a roster's.
+
+    A free agent is anyone in the pool on no team in the league. Each carries
+    what the roster view carries - his games this week and whom against, his
+    games next week, his per-game line and where it sits in the pool - so one
+    table renders both. No ranking here: the route adds the draft board's,
+    and the page sorts.
+
+    Goalies also carry `startShare`, their projected starts over their team's
+    games, because a per-start line beside a skater's per-game one would
+    otherwise read as far better than it is.
+    """
+    rostered = {str(i) for i in (rostered or ())}
+    next_games = next_games or {}
+    rows = []
+    for player in week.valued:
+        if str(player['playerId']) in rostered:
+            continue
+        team = gs.primary_team(player.get('teamAbbrevs'))
+        nights = [{'date': night, 'opponent': week.facing[night][team],
+                   'home': team in week.home_teams[night]}
+                  for night in week.dates if team in week.facing.get(night, {})]
+        row = {
+            **_public(player),
+            'games': len(nights),
+            'nights': nights,
+            'nextWeek': next_games.get(team, []),
+            'perGame': _rounded({c: v for c, v in (player.get('perGame') or {}).items()
+                                 if c in week.categories}),
+            'heat': week.heat(player),
+        }
+        if _is_goalie(player):
+            games = _number(player.get('projectedGames'))
+            row['startShare'] = round(min(1.0, _number(player.get('proj_gamesStarted'))
+                                          / games), 3) if games else None
+        rows.append(row)
+    return rows
 
 
 def matchup(categories, mine, theirs, banked=None, polarity=None, points_per=None,

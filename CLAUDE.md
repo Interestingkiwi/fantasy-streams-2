@@ -41,6 +41,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
 | `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
+| `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
+| `goalie_planning.py` | Whether one more goalie start is worth the risk: outcomes, minutes and the limits. See *The Goalie Planning tab* |
 | `player_form.py` | PP share, L20/L10/L5 trends and home/road splits from `player_game_stats`, for the Lineups roster view. See *The Lineups tab* |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
 | `static/fantasy-weeks.js` | The weeks every page numbers by: standard weeks plus a league's edits (`fs_fantasyWeeks`), and the edit operations. See *Fantasy weeks* |
@@ -618,10 +620,10 @@ per-league table. Nav label: **League Home**.
 (`Interestingkiwi/fantasy-streams`, `templates/home.html`). A settings bar up
 top holds what every sub-page reads — **Your Team**, **Fantasy Week** (with
 *Only nights still to play*) and **Stat Sourcing**. Below it is a row of
-sub-page tabs, **League · Matchup · Lineups · Free Agents**, and the chosen one
+sub-page tabs, **League · Matchup · Lineups · Free Agents · Goalie Planning**, and the chosen one
 fills the panel under it. The site-wide nav keeps the corner the old Logout
-button had. The old site's Goalie Planning, Trade Helper, Season History and
-Tools tabs are still to come, each as another tab.
+button had. The old site's Trade Helper, Season History and Tools tabs are
+still to come, each as another tab.
 
 - Tabs only toggle visibility. Every panel stays in the page and is kept
   current whichever one is showing, so switching tabs never re-plans. The last
@@ -754,7 +756,8 @@ Starting slots are **not** shared: draft prep's roster settings have no `Util`
 or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
 (below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
-`fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
+`fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits`,
+`fs_standaloneGoalieStats` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
 `fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
@@ -823,6 +826,52 @@ applies moves in date order; moves feed the plan like any roster, so lineups,
 the matchup and the grid all show them. They are plans, not roster edits: the
 team's roster is not changed, and nothing is sent to Yahoo.
 
+### The Free Agents tab
+
+**The table comes first, the recommendation second.** The tab lists every free
+agent in the league (`week_planner.available`, `/api/free-agents/pool`) as the
+same player line the Lineups roster view shows — one `rosterTable` renders
+both, so an add can be read against the player he would replace. It was
+recommendations only, which decided for the user; the ranked list now sits
+behind **See recommendations** in a modal.
+
+Each row carries his nights this week and whom against, games, next week's
+nights, PP%, the trend arrows and H/A, his draft-board rank, and his per-game
+line shaded against the pool. Goalies are a separate table, with the share of
+his team's starts on the name: a per-start line beside a skater's per-game one
+otherwise reads as far better than it is.
+
+**Filters** follow the old site: name, position, *plays every night selected*
+(every ticked night, not any — the point is filling a hole), only players with
+a game this week, and hide injured. Any header sorts. **Only 150 rows of each
+table are drawn**; filters and sorting are how you reach the rest, and the
+summary says so.
+
+**Injuries come from `current_injuries`** (the preseason ESPN scrape), as a
+badge and a filter, never applied to a projection — `apply_injury_adjustments`
+has already done that. The page prints how old the feed is, because a stale
+feed fails silently and convincingly (see *The projection pipeline*).
+
+**Open roster spots** is the old site's unused-roster-spots table: seats your
+roster cannot fill on each night, from the plan already on the page. That is
+the games an add would actually add.
+
+**Add** on a row opens the plan-a-move modal: the drop (roster players, each
+with his season rank and any suggested drops marked) and the night, with
+**Score this move** running the same exact `evaluate` the recommendations use
+and filling every night's gain into the list. Planning it appends to
+`fs_standaloneMoves` like any other move.
+
+**The pool is loaded when the tab is first opened**, not on every plan — it is
+a second request (~1.3s, ~1MB for 664 players, most of it form and per-game
+lines). Anything that re-plans marks it stale and the summary says to Refresh.
+
+**`faMetric` is kept apart from `faResults`.** Scoring one pair from the Add
+modal returns a one-candidate response; assigning that to `faResults` made the
+recommendations modal show that single pair as the whole list. Only a real
+search may write `faResults`; the metric a gain is printed in has its own
+variable.
+
 **Best adds** (`free_agents`, `/api/free-agents`) ranks free agents by what
 they add to *this week's* metric — expected categories won against an opponent,
 projected points in a points league, flat lineup value with no opponent — each
@@ -857,6 +906,63 @@ have dropped him.
 
 Not modelled yet: waiver periods, weekly add limits, roster size (a move with
 "No drop" is allowed and assumes an open spot), and anything past this week.
+
+### The Goalie Planning tab (`goalie_planning.py`)
+
+The question it answers: with the goalie minimum already met, **another start
+can only add wins and saves, but it can lose GAA and save percentage.** How
+bad a game would that take, and how likely is one?
+
+- **Where both sides stand**: W, GA, GAA, SA, SV, SV% and SHO, so far and
+  projected, mine against theirs.
+- **Starts still to come**, from the lineups already set, each with the shots
+  that goalie is projected to face that night.
+- **One more start**: pick a goalie and a night, and every outcome from a
+  shutout to a pull, with what each does to your GAA and save percentage and
+  whether you still win them - plus the headline, the most goals he can
+  concede and keep each category, and how likely that is.
+
+**The whole thing runs off the projections**, not the generic numbers the old
+site used: shots come from his `proj_shotsAgainst` adjusted by
+`opponent_strength` for that opponent and venue, and goals against are
+binomial in those shots at his projected save percentage. A start against a
+shot-heavy opponent really is a riskier start, and this says so rather than
+offering one fixed "bad game".
+
+**Minutes are the part to be careful with, and none of it assumes 60.**
+
+- *So far*: Yahoo shows GA and GAA but not TOI, and `GAA = GA x 60 / TOI`
+  inverts exactly, so `minutes_played` recovers the real minutes - pulls,
+  empty nets and overtime included, because Yahoo computed its GAA from them.
+  With nothing conceded there is nothing to divide and it counts starts
+  instead, at the average below.
+- *Projected and per outcome*: measured over 2025-26's 2,624 starts in
+  `player_game_stats`, a start averages **58.6 minutes**, not 60 - 24% run
+  past 60 into overtime, 5.6% end before 55, and the shortest was two and a
+  half minutes. Minutes also move with the night: 59.8 on a one or two goal
+  game, 56.6 on a five, 57.6 on a shutout (nothing sends it to overtime, and
+  an injury-shortened start concedes nothing). `MINUTES_BY_GOALS` carries that
+  curve and every outcome divides by its own.
+- *A pull* is the average of the 147 starts under 55 minutes: 30.3 minutes,
+  4 goals, 15.7 shots. It is shown **beside** the distribution carrying the
+  measured 5.6% share rather than inside it, since a pulled night is one of
+  the bad rows and not an extra one.
+- **A pull is worse on both ratios, not just GAA** - same goals, fewer saves
+  underneath them - but the GAA damage is several times larger in relative
+  terms, because the minutes halve while the shots fall by a third. An earlier
+  claim here that save percentage "barely notices" was wrong;
+  `test_goalie_planning.py` pins the real relation.
+
+**`worst_start` walks the goals one by one** rather than solving in closed
+form, precisely because the minutes depend on the goals: a closed form would
+have to assume a fixed hour.
+
+The counting stats come from the Matchup tab's Yahoo scrape, which parses GA,
+SA and SV even though Yahoo marks them unscored, into `fs_standaloneGoalieStats`
+- the page needs them in a league that scores neither. They can also be typed
+in. `/api/goalies` builds a **second `Week` over the goalie counting stats**,
+because the league's own categories may not include GA or SA and a plan that
+never projected them cannot be read for them.
 
 ### Scraping rosters from Yahoo (`yahoo_rosters.py`)
 
@@ -1394,7 +1500,8 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
-| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped |
+| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
+| `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |

@@ -25,6 +25,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 import daily_value as dv
 import opponent_strength as ops
+import goalie_planning
 import player_form
 import week_planner
 import yahoo_matchup
@@ -501,6 +502,305 @@ def plan_week():
         return _error(str(exc), 400)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Standalone week plan failed.")
+        return _error(str(exc), 500)
+
+
+def _injuries():
+    """
+    {playerId: {status, detail, returnDate}} from the preseason injury scrape.
+
+    Shown as a badge and offered as a filter, never applied to a projection -
+    `apply_injury_adjustments` has already done that. The feed goes stale (see
+    *The projection pipeline*), so the page says how old it is rather than
+    presenting it as today's news.
+    """
+    try:
+        rows = fetch_all('SELECT "playerId", "injuryStatus", "injuryDetails", "injuryDate"'
+                         ' FROM current_injuries')
+    except Exception:                             # noqa: BLE001 - the table is optional
+        return {}, None
+    found, newest = {}, None
+    for row in rows:
+        player_id = row.get("playerId")
+        if player_id is None:
+            continue
+        details = str(row.get("injuryDetails") or "")
+        found[str(int(player_id))] = {
+            "status": row.get("injuryStatus"),
+            "type": _between(details, "'type': '", "'"),
+            "returnDate": _between(details, "'returnDate': '", "'"),
+        }
+        seen = str(row.get("injuryDate") or "")[:10]
+        newest = max(newest, seen) if newest else seen
+    return found, newest
+
+
+def _between(text_value, prefix, suffix):
+    start = text_value.find(prefix)
+    if start < 0:
+        return None
+    start += len(prefix)
+    end = text_value.find(suffix, start)
+    return text_value[start:end] if end > start else None
+
+
+# The counting stats a week of goaltending is judged on. GAA and SVpct are
+# worked out from them, never summed.
+GOALIE_STATS = ['W', 'GA', 'SA', 'SV', 'SHO']
+
+
+def _goalie_totals(days, per_start):
+    """
+    (totals, starts) still to come from a side's goalie seats.
+
+    Each seat carries the odds he starts, so a projected total is the
+    per-start line times those odds - the same arithmetic the lineups use.
+    """
+    totals, starts = {}, []
+    for day in days or []:
+        for seat in day.get('slots', []):
+            player = seat.get('player')
+            if seat.get('slot') != 'G' or not player:
+                continue
+            line = per_start(player['playerId'], day['date'])
+            if line is None:
+                continue
+            odds = line['startProbability']
+            starts.append({**line, 'playerId': player['playerId'],
+                           'fullName': player['fullName'],
+                           'teamAbbrevs': player.get('teamAbbrevs')})
+            totals = goalie_planning.add(totals, {c: _num(line['perStart'].get(c)) * odds
+                                                  for c in GOALIE_STATS})
+            # Minutes a start really lasts on average, not a flat hour
+            totals['minutes'] = totals.get('minutes', 0.0) + goalie_planning.projected_minutes(odds)
+    return totals, starts
+
+
+def _num(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _side_week(so_far, days, per_start):
+    """One side's goaltending: the week so far, what is left, and the rates."""
+    entered = {c: _num((so_far or {}).get(c)) for c in GOALIE_STATS}
+    minutes, source = goalie_planning.minutes_played(
+        entered.get('GA'), (so_far or {}).get('GAA'), (so_far or {}).get('starts'))
+    remaining, starts = _goalie_totals(days, per_start)
+    remaining_minutes = remaining.pop('minutes', 0.0)
+
+    projected = goalie_planning.add(entered, remaining)
+    return {
+        'soFar': {**entered, **goalie_planning.rates(entered, minutes)},
+        'remaining': {**remaining, **goalie_planning.rates(remaining, remaining_minutes)},
+        'projected': {**projected,
+                      **goalie_planning.rates(projected, minutes + remaining_minutes)},
+        'minutes': round(minutes, 1),
+        'minutesFrom': source,
+        'projectedMinutes': round(minutes + remaining_minutes, 1),
+        'starts': starts,
+    }
+
+
+@standalone_bp.route('/api/goalies', methods=['POST'])
+def goalie_planning_view():
+    """
+    Goalie planning: where both sides' goaltending stands, and what one more
+    start would risk.
+
+    Body as `_request_plan`, plus `goalie_stats` ({mine, theirs} each
+    {W, GA, SA, SV, SHO, GAA, starts} for the week so far - what the Matchup
+    scrape read off Yahoo, or what was typed in) and optionally `extra`
+    ({playerId, date}), the start being considered.
+
+    GA, SA and SV are asked for whether or not the league scores them: GAA and
+    save percentage are built from them, so the page needs them even in a
+    league that scores neither.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        week, rosters, _unmapped = _request_plan(body)
+        # Every goalie the week could start: the roster, plus anyone a planned
+        # move adds to it
+        roster_ids = list(rosters['roster']) + [m['add'] for m in rosters['moves']]
+        plan = week_planner.plan_week(None, rosters.pop('roster'), None, None, None, None,
+                                      week=week, lineups=_lineups(body.get('lineups')),
+                                      **rosters)
+
+        # A second Week over the goalie counting stats, because the league's
+        # own categories may not include GA or SA and this cannot be read off
+        # a plan that never projected them. Same pool, same adjustments.
+        goalie_week = week_planner.Week(
+            fetch_all('SELECT * FROM final_projections'), GOALIE_STATS, {'G': 2},
+            week.dates, week.schedule, team_stats=fetch_all('SELECT * FROM team_stats'),
+            peripheral=_peripheral_venue())
+
+        def per_start(player_id, day):
+            player = goalie_week.by_id.get(str(player_id))
+            return goalie_week.per_start(player, day) if player else None
+
+        entered = body.get('goalie_stats') or {}
+        mine = _side_week(entered.get('mine'), plan.get('days'), per_start)
+        theirs = _side_week(entered.get('theirs'), (plan.get('opponent') or {}).get('days'),
+                            per_start)
+
+        result = {"status": "success", "mine": mine, "theirs": theirs,
+                  "adjusted": week.adjusted, "dates": week.dates,
+                  "goalies": _roster_goalies(goalie_week, roster_ids, plan)}
+
+        extra = body.get('extra') or {}
+        if extra.get('playerId') and extra.get('date'):
+            result['extra'] = _extra_start(goalie_week, mine, theirs, extra)
+        return jsonify(result)
+    except BadRequest as exc:
+        return _error(str(exc), 400)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Standalone goalie planning failed.")
+        return _error(str(exc), 500)
+
+
+def _roster_goalies(goalie_week, roster_ids, plan):
+    """Your goalies and the nights each could start, for the picker."""
+    seated = {(str(s['player']['playerId']), day['date'])
+              for day in plan.get('days', []) for s in day['slots']
+              if s.get('slot') == 'G' and s.get('player')}
+    goalies = []
+    for player_id in roster_ids:
+        player = goalie_week.by_id.get(str(player_id))
+        if player is None or 'G' not in str(player.get('positionCode') or ''):
+            continue
+        nights = []
+        for day in goalie_week.dates:
+            line = goalie_week.per_start(player, day)
+            if line:
+                nights.append({'date': day, 'opponent': line['opponent'],
+                               'home': line['home'],
+                               'startProbability': round(line['startProbability'], 3),
+                               'alreadyStarting': (str(player_id), day) in seated})
+        if nights:
+            goalies.append({'playerId': player['playerId'], 'fullName': player['fullName'],
+                            'teamAbbrevs': player.get('teamAbbrevs'), 'nights': nights})
+    return goalies
+
+
+def _extra_start(goalie_week, mine, theirs, extra):
+    """
+    One more start, outcome by outcome: what it does to your ratios, how
+    likely each outcome is, and the line that would cost you each category.
+    """
+    player = goalie_week.by_id.get(str(extra['playerId']))
+    if player is None:
+        raise BadRequest("That goalie is not in the projections.")
+    line = goalie_week.per_start(player, str(extra['date']))
+    if line is None:
+        raise BadRequest("That goalie's team does not play that night.")
+
+    per_start = line['perStart']
+    shots = _num(per_start.get('SA'))
+    goals = _num(per_start.get('GA'))
+    save_pct = (shots - goals) / shots if shots > 0 else 0.9
+
+    # The start is judged on top of everything else already projected, so the
+    # question is the honest one: one more start than the plan already has.
+    base = {c: _num(mine['projected'].get(c)) for c in GOALIE_STATS}
+    minutes = mine['projectedMinutes']
+    target = {'GAA': theirs['projected'].get('GAA'), 'SVpct': theirs['projected'].get('SVpct')}
+
+    rows = []
+    for outcome in goalie_planning.outcomes(shots, save_pct):
+        after, after_minutes = goalie_planning.apply_start(
+            base, minutes, outcome, win=_num(per_start.get('W')),
+            shutout=_num(per_start.get('SHO')) if outcome['goals'] else 1.0)
+        after_rates = goalie_planning.rates(after, after_minutes)
+        rows.append({
+            **outcome,
+            'after': {**{c: round(_num(after.get(c)), 2) for c in GOALIE_STATS},
+                      'GAA': _round(after_rates['GAA']), 'SVpct': _round(after_rates['SVpct'], 4)},
+            'keepsGAA': _beats(after_rates['GAA'], target['GAA'], lower_is_better=True),
+            'keepsSVpct': _beats(after_rates['SVpct'], target['SVpct'], lower_is_better=False),
+        })
+
+    limits = goalie_planning.worst_start(base, minutes, shots, target)
+    for category, limit in limits.items():
+        limit['chance'] = round(goalie_planning.chance_of_at_most(
+            shots, save_pct, limit.get('maxGoals')), 4)
+
+    return {
+        'playerId': player['playerId'],
+        'fullName': player['fullName'],
+        'date': line['date'],
+        'opponent': line['opponent'],
+        'home': line['home'],
+        'startProbability': round(line['startProbability'], 3),
+        'expected': {'shots': round(shots, 1), 'goals': round(goals, 2),
+                     'savePct': round(save_pct, 4),
+                     'wins': _round(_num(per_start.get('W')), 3)},
+        'without': {'GAA': _round(mine['projected'].get('GAA')),
+                    'SVpct': _round(mine['projected'].get('SVpct'), 4)},
+        'target': {'GAA': _round(target['GAA']), 'SVpct': _round(target['SVpct'], 4)},
+        'outcomes': rows,
+        'limits': limits,
+    }
+
+
+def _beats(value, target, lower_is_better):
+    if value is None or target is None:
+        return None
+    return value <= target if lower_is_better else value >= target
+
+
+def _round(value, places=3):
+    return None if value is None else round(value, places)
+
+
+@standalone_bp.route('/api/free-agents/pool', methods=['POST'])
+def free_agent_pool():
+    """
+    Every free agent in the league, as player lines for the Free Agents table.
+
+    Body as `_request_plan`, plus rostered (every playerId on any team) and
+    optionally next_start / next_end. Each player comes back with his games
+    this week and next, his per-game line and its shading, the draft board's
+    rank, his form and any injury on file - the same line the Lineups roster
+    view shows, so one table renders both.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        week, rosters, _unmapped = _request_plan(body)
+        rostered = set(map(str, body.get('rostered') or []))
+        rostered |= set(map(str, rosters['roster'])) | set(map(str, rosters['opponent']))
+
+        next_games = {}
+        if body.get('next_start') and body.get('next_end'):
+            try:
+                next_games = week_planner.games_by_team(
+                    week.schedule, _dates_between(str(body['next_start']), str(body['next_end'])))
+            except ValueError:
+                next_games = {}
+
+        players = week_planner.available(week, rostered, next_games)
+        season = _season_values(week, body)
+        forms, form_season = player_form.forms([p['playerId'] for p in players],
+                                               week.points or week.flat)
+        injuries, injury_date = _injuries()
+        for player in players:
+            key = str(player['playerId'])
+            player['seasonRank'] = (season.get(key) or {}).get('rank')
+            player['form'] = forms.get(key)
+            if key in injuries:
+                player['injury'] = injuries[key]
+
+        return jsonify({"status": "success", "players": players,
+                        "formSeason": _season_label(form_season),
+                        "injuryDate": injury_date,
+                        "categories": week.categories,
+                        "dates": week.dates})
+    except BadRequest as exc:
+        return _error(str(exc), 400)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Standalone free agent pool failed.")
         return _error(str(exc), 500)
 
 
