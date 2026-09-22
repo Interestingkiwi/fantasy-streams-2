@@ -25,6 +25,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 import daily_value as dv
 import opponent_strength as ops
+import player_form
 import week_planner
 import yahoo_matchup
 import yahoo_rosters
@@ -366,6 +367,24 @@ def _moves(raw):
     return moves
 
 
+def _lineups(raw):
+    """
+    {date: [playerId or None per seat]} - manual nights, as the page stores
+    them. Anything malformed is dropped rather than refused: a stale browser
+    entry should cost that night its manual lineup, not the whole plan.
+    """
+    lineups = {}
+    for day, seats in (raw or {}).items() if isinstance(raw, dict) else []:
+        try:
+            day = date.fromisoformat(str(day)).isoformat()
+        except ValueError:
+            continue
+        if not isinstance(seats, list) or len(seats) > MAX_SLOT_COUNT * 8:
+            continue
+        lineups[day] = [None if s in (None, '') else str(s) for s in seats]
+    return lineups
+
+
 def _request_plan(body):
     """
     Everything the week plan and the free-agent search share: the prepared
@@ -437,14 +456,46 @@ def _request_plan(body):
     }, unmapped
 
 
+def _season_label(season):
+    return f"{season}-{str(season + 1)[-2:]}" if season else None
+
+
 @standalone_bp.route('/api/week', methods=['POST'])
 def plan_week():
-    """The best lineup for each night of a window. Body as `_request_plan`."""
+    """
+    The best lineup for each night of a window. Body as `_request_plan`, plus
+    optionally lineups ({date: [playerId or None per seat]}, nights set by
+    hand) and next_start / next_end (the following week, for each player's
+    games in it).
+
+    Every player on either side also gets `seasonRank` (the draft board's, as
+    the free-agent drops use) and `form` (`player_form`: PP share, trends,
+    home/road) - both for the roster view on League Home's Lineups tab.
+    """
     try:
-        week, rosters, unmapped = _request_plan(request.get_json(silent=True) or {})
+        body = request.get_json(silent=True) or {}
+        week, rosters, unmapped = _request_plan(body)
+        next_dates = []
+        if body.get('next_start') and body.get('next_end'):
+            try:
+                next_dates = _dates_between(str(body['next_start']), str(body['next_end']))
+            except ValueError:
+                next_dates = []
         result = week_planner.plan_week(None, rosters.pop('roster'), None, None, None, None,
-                                        week=week, **rosters)
+                                        week=week, lineups=_lineups(body.get('lineups')),
+                                        next_dates=next_dates, **rosters)
         result['unmappedCategories'] = unmapped
+
+        sides = [result] + ([result['opponent']] if result.get('opponent') else [])
+        ids = [p['playerId'] for side in sides for p in side.get('players', [])]
+        season = _season_values(week, body)
+        forms, form_season = player_form.forms(ids, week.points or week.flat)
+        for side in sides:
+            for player in side.get('players', []):
+                key = str(player['playerId'])
+                player['seasonRank'] = (season.get(key) or {}).get('rank')
+                player['form'] = forms.get(key)
+        result['formSeason'] = _season_label(form_season)
         return jsonify({"status": "success", **result})
     except BadRequest as exc:
         return _error(str(exc), 400)
@@ -474,7 +525,8 @@ def free_agents():
                 week, rosters['roster'], rostered, out=rosters['out'],
                 opponent=rosters['opponent'], opponent_out=rosters['opponent_out'],
                 banked=rosters['banked'], moves=rosters['moves'],
-                evaluate=body.get('evaluate'), season=season)
+                evaluate=body.get('evaluate'), season=season,
+                lineups=_lineups(body.get('lineups')))
         except ValueError as exc:
             raise BadRequest(str(exc)) from exc
         return jsonify({"status": "success", **result})

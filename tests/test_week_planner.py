@@ -319,6 +319,76 @@ check("a points league judges moves in points",
 
 
 # --------------------------------------------------------------------------
+print("\n=== 8b. manual lineups and the roster view ===")
+
+check("seats are listed specific positions first, goalies last",
+      wp.seat_order({"G": 1, "D": 1, "LW": 1, "C": 2}) == ["C", "C", "LW", "D", "G"])
+
+# Seat order for SLOTS is C, LW, D, G. Star is the better centre; set Depth instead.
+optimal = wp.plan_week(POOL, [1, 2, 3, 5], ["G", "SOG"], SLOTS, WEEK, SEASON)
+hand = wp.plan_week(POOL, [1, 2, 3, 5], ["G", "SOG"], SLOTS, WEEK, SEASON,
+                    lineups={WEEK[0]: [2, 3, None, 5]})
+night = hand["days"][0]
+check("a night set by hand keeps the player chosen, over the better one",
+      night["slots"][0]["player"]["fullName"] == "Depth"
+      and "Star" in [p["fullName"] for p in night["bench"]], night["slots"])
+check("and says it was set by hand, with nothing it could not keep",
+      night.get("manual") is True and night["problems"] == [], night)
+check("the other nights are still the optimiser's",
+      "manual" not in hand["days"][1] and hand["days"][1]["slots"][0]["player"]["fullName"] == "Star")
+check("the totals follow the lineup that was set",
+      hand["totals"]["G"] < optimal["totals"]["G"], (hand["totals"], optimal["totals"]))
+
+broken = wp.plan_week(POOL, [1, 2, 3, 4, 5], ["G"], SLOTS, WEEK, SEASON,
+                      lineups={WEEK[0]: [3, 2, 4, 999]})
+reasons = {p["seat"]: p["reason"] for p in broken["days"][0]["problems"]}
+check("a seat that cannot be kept is left empty and reported, never refilled",
+      reasons == {0: "ineligible", 1: "ineligible", 2: "unavailable", 3: "unavailable"}
+      and all(s["player"] is None for s in broken["days"][0]["slots"]), reasons)
+twice = wp.manual_lineup([{"playerId": 1, "eligiblePositions": "C"}], {"C": 1, "F": 1}, [1, 1])
+check("the same player in two seats keeps the first",
+      twice[1] == [{"seat": 1, "playerId": "1", "reason": "twice"}], twice)
+gap = wp.plan_week(POOL, [1, 2], ["G"], {"C": 2}, WEEK, SEASON, lineups={WEEK[0]: [None, 2]})
+check("an empty seat stays where it was set - the next one does not slide into it",
+      [s["player"] and s["player"]["fullName"] for s in gap["days"][0]["slots"]] == [None, "Depth"],
+      gap["days"][0]["slots"])
+
+against = wp.plan_week(POOL, [1, 2, 3, 5], ["G", "SOG"], SLOTS, WEEK, SEASON, opponent=[7],
+                       lineups={WEEK[0]: [2, 3, None, 5]})
+check("against an opponent the matchup weighting never re-seats a manual night",
+      against["days"][0]["slots"][0]["player"]["fullName"] == "Depth" and against["matchup"])
+
+star = {p["playerId"]: p for p in hand["players"]}[1]
+check("each player's nights say whether he starts or sits, and against whom",
+      [(n["date"], n["status"], n["opponent"], n["home"]) for n in star["nights"]]
+      == [(WEEK[0], "bench", "MTL", True), (WEEK[1], "start", "SEA", False),
+          (WEEK[2], "start", "MTL", True)], star["nights"])
+out_star = {p["playerId"]: p for p in out["players"]}[1]
+check("a player marked out shows as out on his nights", {n["status"] for n in out_star["nights"]} == {"out"})
+
+following = wp.plan_week(POOL, [1], ["G"], SLOTS, WEEK, SEASON,
+                         next_dates=["2027-02-04", "2027-02-05"])
+check("next week's games are listed per player",
+      [(g["date"], g["opponent"], g["home"]) for g in following["players"][0]["nextWeek"]]
+      == [("2027-02-04", "SEA", False), ("2027-02-05", "MTL", True)],
+      following["players"][0]["nextWeek"])
+
+heat = {p["playerId"]: p["heat"] for p in hand["players"]}
+check("the per-game line is shaded against the pool, better players hotter",
+      heat[1]["G"] > heat[2]["G"] and 0 <= heat[2]["G"] <= 1, heat)
+check("and each player carries his unadjusted per-game line for the league's categories",
+      set(star["perGame"]) == {"G", "SOG"}, star["perGame"])
+
+# Every night set by hand: a free agent nobody seats is worth nothing.
+all_hand = {night: [1, 63] for night in WEEK}
+fixed = wp.free_agents(week, mine, rostered, out=[64], opponent=theirs, season=season,
+                       evaluate={"add": 60, "drop": None}, lineups=all_hand)
+check("the free-agent search holds manual nights as the plan does",
+      all(abs(g) < 1e-9 for g in fixed["candidates"][0]["gains"].values()),
+      fixed["candidates"][0]["gains"])
+
+
+# --------------------------------------------------------------------------
 print("\n=== 9. routes on real data ===")
 
 try:
@@ -367,6 +437,17 @@ try:
                   len({p["playerId"] for p in seated}) == len(seated))
             check("every seated player has a game that night",
                   all(p.get("opponent") for p in seated), seated[:3])
+            check("every player carries a season rank and his form for the roster view",
+                  all("seasonRank" in p and "form" in p for p in data["players"])
+                  and any(p["seasonRank"] for p in data["players"]), data["players"][:1])
+
+            seats = [s["player"] and s["player"]["playerId"] for s in day["slots"]]
+            manual = client.post("/standalone/api/week", json={
+                **body, "lineups": {day["date"]: [None] + seats[1:], "not-a-date": [1], "2027-01-01": "x"},
+            }).get_json()
+            check("a manual night comes back as set; malformed ones are dropped, not refused",
+                  manual["status"] == "success" and manual["days"][0].get("manual")
+                  and manual["days"][0]["slots"][0]["player"] is None, manual.get("message"))
 
         bad = [
             ({**body, "roster": []}, "an empty roster"),

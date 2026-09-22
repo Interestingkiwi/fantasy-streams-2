@@ -237,19 +237,46 @@
 
         <!-- Lineups: the best lineup each night -->
         <div id="tab-lineups" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
+        <!-- Whose week is shown: the opponent is the same one the Matchup tab picks -->
+        <div class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-x-4 gap-y-3">
+            <div class="w-full sm:w-auto">
+                <label for="lineups-opponent-select" class="block mb-1 text-xs font-medium text-gray-400">Opponent</label>
+                <select id="lineups-opponent-select" class="form-select p-2 text-sm w-full sm:w-56"></select>
+            </div>
+            <div id="grid-side" class="hidden inline-flex rounded-md overflow-hidden border border-gray-600" role="radiogroup" aria-label="Whose lineup">
+                <button type="button" class="side-btn px-3 py-2 text-sm font-medium" data-side="mine" role="radio">Yours</button>
+                <button type="button" class="side-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-side="theirs" role="radio">Opponent&rsquo;s</button>
+            </div>
+        </div>
+
         <section id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></section>
+
+        <!-- The roster at a glance: the old site's Lineups roster view -->
+        <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 id="roster-view-title" class="text-lg font-semibold text-white">Roster</h2>
+                <p id="roster-view-note" class="text-xs text-gray-500 mt-0.5"></p>
+            </div>
+            <div id="roster-view" class="flex flex-col gap-4">
+                <p class="text-gray-400 text-sm p-4">Set up your league and add players to see your roster.</p>
+            </div>
+        </section>
 
         <section class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <div class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 gap-x-4 gap-y-2 flex-wrap">
                 <div>
-                    <h2 class="text-lg font-semibold text-white">Best lineup each night</h2>
-                    <p class="text-xs text-gray-500">Goalies show their chance of starting</p>
+                    <h2 class="text-lg font-semibold text-white">Lineup each night</h2>
+                    <p id="grid-note" class="text-xs text-gray-500">Goalies show their chance of starting</p>
                 </div>
-                <div id="grid-side" class="hidden inline-flex rounded-md overflow-hidden border border-gray-600" role="radiogroup" aria-label="Whose lineup">
-                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium" data-side="mine" role="radio">Yours</button>
-                    <button type="button" class="side-btn px-3 py-2 text-sm font-medium border-l border-gray-600" data-side="theirs" role="radio">Opponent&rsquo;s</button>
+                <div class="flex flex-wrap gap-2">
+                    <button id="lineup-reset-all" type="button" class="hidden px-3 py-1.5 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">Reset all to best</button>
+                    <button id="lineup-edit" type="button" aria-pressed="false" class="column-toggle">Edit lineups</button>
                 </div>
             </div>
+            <p id="lineup-edit-help" class="hidden px-3 sm:px-4 pt-3 text-xs text-gray-500">
+                Pick who plays each seat. A night you change is kept as you set it &mdash; the matchup, totals and
+                best adds all use it &mdash; until you reset it. Picking someone already in the lineup swaps the two.
+            </p>
             <div id="grid-body" class="overflow-x-auto">
                 <p class="text-gray-400 text-sm p-4">Set up your league and add players to see lineups.</p>
             </div>
@@ -325,6 +352,7 @@
             banked: 'fs_standaloneBanked',
             yahooLeagueId: 'fs_yahooLeagueId',
             tab: 'fs_standaloneTab',
+            lineupEdits: 'fs_lineupEdits',
         };
 
         function read(key, fallback) {
@@ -633,9 +661,12 @@
         function renderTeamSelects() {
             const option = (t, on) => `<option value="${esc(t.id)}" ${on ? 'selected' : ''}>${esc(t.name)}</option>`;
             $('my-team-select').innerHTML = league.teams.map(t => option(t, t.id === league.mine)).join('');
-            $('opponent-select').innerHTML = '<option value="">No opponent</option>'
+            // The Matchup and Lineups tabs each have one; they are the same setting
+            const opponents = '<option value="">No opponent</option>'
                 + league.teams.filter(t => t.id !== league.mine)
                     .map(t => option(t, t.id === league.opponent)).join('');
+            $('opponent-select').innerHTML = opponents;
+            $('lineups-opponent-select').innerHTML = opponents;
             const opponent = teamById(league.opponent);
             $('opponent-help').textContent = !opponent
                 ? 'Pick this week’s opponent to see who wins each category, and set lineups to chase the close ones.'
@@ -649,10 +680,11 @@
             saveLeague();
         });
 
-        $('opponent-select').addEventListener('change', event => {
-            league.opponent = event.target.value || null;
-            saveLeague();
-        });
+        ['opponent-select', 'lineups-opponent-select'].forEach(id =>
+            $(id).addEventListener('change', event => {
+                league.opponent = event.target.value || null;
+                saveLeague();
+            }));
 
         function renderRoster() {
             const team = activeTeam();
@@ -1328,9 +1360,6 @@
                 body: JSON.stringify({
                     ...body,
                     rostered: [...rosteredIds()].map(asId),
-                    num_teams: league.teams.length,
-                    draft_slots: read('fs_rosterSlots', null),
-                    roster_mode: localStorage.getItem('fs_rosterMode') || 'split',
                     ...extra,
                 }),
             });
@@ -1825,8 +1854,15 @@
                 slots,
                 banked: weekBanked(),
                 moves: weekMoves(),
+                lineups: activeLineupEdits(),
                 start: span.start,
                 end: span.end,
+                // The week after, for each player's games in it
+                ...(nextWeek() ? { next_start: nextWeek().start, next_end: nextWeek().end } : {}),
+                // The draft board's shape, so season ranks and suggested drops match it
+                num_teams: league.teams.length,
+                draft_slots: read('fs_rosterSlots', null),
+                roster_mode: localStorage.getItem('fs_rosterMode') || 'split',
             };
         }
 
@@ -1862,9 +1898,11 @@
             }
         }
 
-        const card = (label, value, tone = 'text-white') => `
+        // A summary card: yours, and the opponent's beneath it when there is one
+        const card = (label, value, tone = 'text-white', theirs = null) => `
             <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 text-center">
                 <div class="text-2xl font-bold ${tone}">${esc(value)}</div>
+                ${theirs != null ? `<div class="text-xs text-gray-400 mt-0.5">Opp <span class="text-gray-200 font-semibold">${esc(theirs)}</span></div>` : ''}
                 <div class="text-xs text-gray-400 uppercase tracking-wide mt-1">${esc(label)}</div>
             </div>`;
 
@@ -1877,6 +1915,114 @@
             return 'text-amber-300';
         }
 
+        // The four week numbers for one side of the plan
+        function sideSummary(side) {
+            const players = side?.players || [];
+            return {
+                starts: round1(players.reduce((sum, p) => sum + p.starts, 0)),
+                games: players.filter(p => !p.out).reduce((sum, p) => sum + p.games, 0),
+                benched: players.reduce((sum, p) => sum + p.benchedGames, 0),
+                empty: (side?.days || []).reduce((sum, d) => sum + d.slots.filter(s => !s.player).length, 0),
+            };
+        }
+
+        function renderSummary() {
+            if (!lastPlan) return;
+            const mine = sideSummary(lastPlan);
+            const theirs = lastPlan.matchup ? sideSummary(lastPlan.opponent) : null;
+            $('summary').innerHTML = [
+                card('Expected starts', mine.starts, 'text-white', theirs?.starts),
+                card('Roster games', mine.games, 'text-white', theirs?.games),
+                card('Benched games', mine.benched, mine.benched ? 'text-amber-400' : 'text-white', theirs?.benched),
+                card('Empty slots', mine.empty, mine.empty ? 'text-red-400' : 'text-white', theirs?.empty),
+            ].join('');
+        }
+
+        // --- Manual lineups --------------------------------------------------
+        // Nights set by hand, by date: {sig, seats}, one playerId (or null) per
+        // seat in the plan's seat order. `sig` is the starting slots they were
+        // set under - change the slots and the seats no longer mean the same
+        // thing, so such a night is ignored rather than misread.
+        let lineupEdits = read(KEYS.lineupEdits, {}) || {};
+        let editingLineups = false;
+        const slotSignature = () => SLOT_KEYS.map(s => `${s}${slots[s] || 0}`).join(',');
+
+        function activeLineupEdits() {
+            const span = planWindow();
+            if (!span) return {};
+            const sig = slotSignature();
+            const active = {};
+            Object.entries(lineupEdits).forEach(([day, entry]) => {
+                if (day >= span.start && day <= span.end && entry?.sig === sig && Array.isArray(entry.seats)) {
+                    active[day] = entry.seats;
+                }
+            });
+            return active;
+        }
+
+        function saveLineupEdits() {
+            write(KEYS.lineupEdits, lineupEdits);
+            schedulePlan();
+        }
+
+        const REASONS = {
+            unavailable: 'is no longer available that night',
+            twice: 'was seated twice',
+            ineligible: 'cannot play that slot',
+        };
+
+        function setEditing(on) {
+            editingLineups = on;
+            if (on) gridSide = 'mine';
+            $('lineup-edit').setAttribute('aria-pressed', on ? 'true' : 'false');
+            $('lineup-edit').textContent = on ? 'Done editing' : 'Edit lineups';
+            $('lineup-edit-help').classList.toggle('hidden', !on);
+            renderGridSide();
+        }
+
+        $('lineup-edit').addEventListener('click', () => setEditing(!editingLineups));
+
+        $('lineup-reset-all').addEventListener('click', () => {
+            Object.keys(activeLineupEdits()).forEach(day => { delete lineupEdits[day]; });
+            saveLineupEdits();
+        });
+
+        $('grid-body').addEventListener('click', event => {
+            const reset = event.target.closest('.lineup-reset');
+            if (!reset) return;
+            delete lineupEdits[reset.dataset.date];
+            saveLineupEdits();
+        });
+
+        // A seat changed by hand. Picking someone already seated swaps the two,
+        // when the one displaced can take the other seat; otherwise it empties.
+        $('grid-body').addEventListener('change', event => {
+            const select = event.target.closest('.seat-select');
+            if (!select) return;
+            const day = lastPlan?.days.find(d => d.date === select.dataset.date);
+            if (!day) return;
+            const index = Number(select.dataset.seat);
+            const seats = day.slots.map(s => (s.player ? String(s.player.playerId) : null));
+            const chosen = select.value || null;
+            const previous = seats[index];
+            const other = chosen ? seats.findIndex((id, i) => id === chosen && i !== index) : -1;
+            if (other >= 0) {
+                const displaced = day.playing.find(p => String(p.playerId) === previous);
+                seats[other] = displaced && displaced.slots.includes(day.slots[other].slot) ? previous : null;
+            }
+            seats[index] = chosen;
+            lineupEdits[day.date] = { sig: slotSignature(), seats };
+
+            // Show the change at once; the plan that follows fills in the rest
+            const byId = new Map(day.playing.map(p => [String(p.playerId), p]));
+            day.slots.forEach((seat, i) => { seat.player = seats[i] ? byId.get(seats[i]) || null : null; });
+            const seated = new Set(seats.filter(Boolean));
+            day.bench = day.playing.filter(p => !seated.has(String(p.playerId)));
+            day.manual = true;
+            renderGridSide();
+            saveLineupEdits();
+        });
+
         function seatCell(player) {
             if (!player) return '<span class="text-gray-600">&mdash;</span>';
             const where = `${player.home ? 'vs' : '@'} ${esc(player.opponent)}`;
@@ -1887,7 +2033,20 @@
                     <div class="text-xs text-gray-400 whitespace-nowrap">${where}${odds}</div>`;
         }
 
-        function renderGrid(days) {
+        function seatSelect(day, seat, index) {
+            const occupant = seat.player ? String(seat.player.playerId) : '';
+            const options = day.playing
+                .filter(p => p.slots.includes(seat.slot))
+                .sort((a, b) => (b.value || 0) - (a.value || 0))
+                .map(p => `<option value="${esc(p.playerId)}" ${String(p.playerId) === occupant ? 'selected' : ''}>${esc(p.fullName)}${p.startProbability != null ? ` (${pct(p.startProbability)})` : ''}</option>`)
+                .join('');
+            return `<select class="seat-select form-select p-1.5 text-sm w-40" data-date="${esc(day.date)}" data-seat="${index}"
+                            aria-label="${esc(seat.slot)} on ${esc(day.date)}">
+                        <option value="" ${occupant ? '' : 'selected'}>&mdash; Empty &mdash;</option>${options}
+                    </select>`;
+        }
+
+        function renderGrid(days, editable) {
             if (!days?.length) {
                 $('grid-body').innerHTML = '<p class="text-gray-400 text-sm p-4">No nights left in this week.</p>';
                 return;
@@ -1896,15 +2055,23 @@
             // phone so a name three nights over still says where it sits. Inline
             // min-width, because the shared .col-sticky floor is sized for names.
             const seats = days[0].slots;
+            const nameOf = id => (lastPlan?.players || []).find(p => String(p.playerId) === String(id))?.fullName || id;
             $('grid-body').innerHTML = `
                 <table class="data-table w-full text-left text-sm">
                     <thead class="bg-gray-900 text-gray-400 text-xs">
                         <tr>
                             <th style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-medium uppercase">Slot</th>
                             ${days.map(d => `
-                                <th class="px-3 py-2 font-medium whitespace-nowrap">
+                                <th class="px-3 py-2 font-medium whitespace-nowrap align-top">
                                     <div class="text-gray-200">${esc(fmt(d.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</div>
                                     <div class="${d.nhlGames && d.nhlGames <= 8 ? 'text-emerald-400' : ''}">${esc(d.nhlGames)} games</div>
+                                    ${d.manual ? `
+                                        <div class="mt-1 flex items-center gap-2">
+                                            <span class="text-[10px] font-semibold uppercase px-1 rounded bg-blue-700 text-white">Set by hand</span>
+                                            <button type="button" class="lineup-reset py-1 text-blue-400 hover:text-blue-300 underline normal-case" data-date="${esc(d.date)}">Reset</button>
+                                        </div>
+                                        ${(d.problems || []).map(p => `
+                                            <div class="text-amber-300 normal-case whitespace-normal max-w-[12rem]">${esc(nameOf(p.playerId))} ${esc(REASONS[p.reason] || 'could not be kept')}.</div>`).join('')}` : ''}
                                 </th>`).join('')}
                         </tr>
                     </thead>
@@ -1912,7 +2079,7 @@
                         ${seats.map((seat, index) => `
                             <tr>
                                 <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(seat.slot)}</td>
-                                ${days.map(d => `<td class="px-3 py-2 align-top">${seatCell(d.slots[index].player)}</td>`).join('')}
+                                ${days.map(d => `<td class="px-3 py-2 align-top">${editable ? seatSelect(d, d.slots[index], index) : seatCell(d.slots[index].player)}</td>`).join('')}
                             </tr>`).join('')}
                         <tr class="bg-gray-900/50">
                             <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-amber-400">Bench</td>
@@ -1927,15 +2094,149 @@
 
         function renderGridSide() {
             const hasOpponent = Boolean(lastPlan?.matchup);
+            if (!hasOpponent) gridSide = 'mine';
             $('grid-side').classList.toggle('hidden', !hasOpponent);
             renderToggleGroup('.side-btn', 'side', gridSide);
-            renderGrid(gridSide === 'theirs' && hasOpponent ? lastPlan.opponent.days : lastPlan?.days);
+            const theirs = gridSide === 'theirs';
+            // Only your own lineups can be set by hand
+            $('lineup-edit').classList.toggle('hidden', theirs);
+            $('lineup-reset-all').classList.toggle('hidden', theirs || !Object.keys(activeLineupEdits()).length);
+            renderGrid(theirs ? lastPlan.opponent.days : lastPlan?.days, editingLineups && !theirs);
+            renderRosterView();
         }
 
         document.querySelectorAll('.side-btn').forEach(btn => btn.addEventListener('click', () => {
             gridSide = btn.dataset.side;
+            if (gridSide === 'theirs' && editingLineups) setEditing(false);
             renderGridSide();
         }));
+
+        // --- Roster view -----------------------------------------------------
+        // The old site's Lineups roster: each player's week at a glance -
+        // nights he starts highlighted, nights he sits plain - with his usage,
+        // form, draft-board rank and per-game line, skaters and goalies apart.
+        const POSITION_ORDER = { C: 0, L: 1, R: 2, D: 3, G: 4 };
+        const weekday = iso => fmt(iso, { weekday: 'short' });
+
+        function nextWeek() {
+            const week = selectedWeek();
+            if (!week) return null;
+            return weeks[weeks.findIndex(w => w.start === week.start) + 1] || null;
+        }
+
+        function statText(code, value) {
+            if (value == null) return '';
+            const n = Number(value);
+            return code === 'SVpct' ? n.toFixed(3).replace(/^0/, '') : n.toFixed(2);
+        }
+
+        // Green is good for the league whatever the stat's direction; the
+        // server has already turned GA and GAA round.
+        const heatStyle = h => (h == null ? '' : `background-color: hsla(${Math.round(h * 120)}, 55%, 32%, 0.75)`);
+
+        function trendMark(trend) {
+            if (trend === 'up') return '<span class="text-emerald-400" aria-label="up">&#9650;</span>';
+            if (trend === 'down') return '<span class="text-red-400" aria-label="down">&#9660;</span>';
+            if (trend === 'flat') return '<span class="text-gray-500" aria-label="steady">&ndash;</span>';
+            return '<span class="text-gray-700" aria-label="not enough games">&middot;</span>';
+        }
+
+        // H or A for his next game, green when it is the venue he has done better at
+        function venueMark(player) {
+            const next = player.nights?.[0] || player.nextWeek?.[0];
+            if (!next) return '';
+            const letter = next.home ? 'H' : 'A';
+            const better = player.form?.venue?.better;
+            const tone = !better ? 'text-gray-400' : better === letter ? 'text-emerald-400' : 'text-red-400';
+            const title = !better ? 'Not enough games at each venue to say'
+                : better === letter ? 'Next game is at the venue he does better at' : 'Next game is at his weaker venue';
+            return `<span class="${tone} font-semibold" title="${title}">${letter}</span>`;
+        }
+
+        function weekNights(player) {
+            if (!player.nights?.length) return '<span class="text-gray-600">&mdash;</span>';
+            return player.nights.map(n => {
+                const tone = n.status === 'start' ? 'text-amber-300 font-semibold'
+                    : n.status === 'out' ? 'text-red-400 line-through' : 'text-gray-400';
+                return `<span class="${tone}">${esc(weekday(n.date))}</span>`;
+            }).join(', ');
+        }
+
+        function rosterTable(players, categories, goalies) {
+            if (!players.length) return '';
+            const head = label => `<th class="px-3 py-2 font-medium whitespace-nowrap">${label}</th>`;
+            const rows = players.map(p => {
+                const pp = p.form?.pp;
+                const trends = p.form?.trends || {};
+                const startShare = goalies && p.games ? ` <span class="text-[10px] font-semibold px-1 rounded bg-blue-800 text-white">${pct(p.starts / p.games)}</span>` : '';
+                const tags = [
+                    p.out ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-red-800 text-white">Out</span>' : '',
+                    p.added ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-emerald-700 text-white">Add</span>' : '',
+                    p.dropped ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-gray-600 text-white">Drop</span>' : '',
+                ].join(' ');
+                return `
+                <tr class="table-row-hover ${p.out ? 'opacity-70' : ''}">
+                    <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${esc(p.fullName)}${startShare} ${tags}</td>
+                    <td class="px-3 py-2 text-gray-300">${esc(p.teamAbbrevs || '')}</td>
+                    <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${esc(p.eligiblePositions || p.positionCode || '')}</td>
+                    <td class="px-3 py-2 whitespace-nowrap">${weekNights(p)}</td>
+                    <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${(p.nights || []).map(n => `${n.home ? '' : '@'}${esc(n.opponent)}`).join(', ') || '&mdash;'}</td>
+                    <td class="px-3 py-2 text-right text-gray-300">${esc(p.games)}</td>
+                    <td class="px-3 py-2 text-right text-white font-semibold">${esc(round1(p.starts))}</td>
+                    <td class="px-3 py-2 text-gray-400 whitespace-nowrap">${(p.nextWeek || []).map(g => esc(weekday(g.date))).join(', ') || '&mdash;'}</td>
+                    ${goalies ? '' : `<td class="px-3 py-2 text-right whitespace-nowrap">${pp && pp.recent != null
+                        ? `<span class="text-gray-200">${pct(pp.recent)}</span>${pp.last != null ? ` <span class="text-xs text-gray-500">last ${pct(pp.last)}</span>` : ''}`
+                        : '<span class="text-gray-600">&mdash;</span>'}</td>`}
+                    <td class="px-3 py-2 whitespace-nowrap text-center">${trendMark(trends.L20)} ${trendMark(trends.L10)} ${trendMark(trends.L5)} <span class="ml-1">${venueMark(p)}</span></td>
+                    <td class="px-3 py-2 text-right text-blue-300 font-semibold">${p.seasonRank ?? '&mdash;'}</td>
+                    ${categories.map(code => `<td class="px-3 py-2 text-right text-white" style="${heatStyle(p.heat?.[code])}">${esc(statText(code, p.perGame?.[code]))}</td>`).join('')}
+                </tr>`;
+            }).join('');
+            return `
+                <div>
+                    <h3 class="px-3 sm:px-4 pt-3 pb-2 text-sm font-semibold text-gray-300">${goalies ? 'Goalies' : 'Skaters'}</h3>
+                    <div class="overflow-x-auto">
+                        <table class="data-table w-full text-left text-sm">
+                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                <tr>
+                                    <th class="col-sticky px-3 py-2 font-medium">Player</th>
+                                    ${head('Team')}${head('Pos')}${head('This week')}${head('Opponents')}
+                                    ${head('#')}${head('Starts')}${head('Next wk')}${goalies ? '' : head('PP%')}
+                                    <th class="px-3 py-2 font-medium whitespace-nowrap text-center" title="Last 20, 10 and 5 games against his season; then his next game's venue">L20 L10 L5 H/A</th>
+                                    ${head('Rank')}
+                                    ${categories.map(code => `<th class="px-3 py-2 font-medium text-right">${esc(code)}</th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-700">${rows}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+        }
+
+        function renderRosterView() {
+            const side = gridSide === 'theirs' && lastPlan?.matchup ? lastPlan.opponent : lastPlan;
+            if (!side?.players?.length) {
+                $('roster-view').innerHTML = '<p class="text-gray-400 text-sm p-4">Set up your league and add players to see your roster.</p>';
+                return;
+            }
+            const team = teamById(side === lastPlan ? league.mine : league.opponent);
+            $('roster-view-title').textContent = team ? team.name : 'Roster';
+            $('roster-view-note').innerHTML = `Nights in <span class="text-amber-300 font-semibold">yellow</span> he starts, in grey he sits.
+                Per-game projections are shaded against the league's regulars.
+                PP% is his share of his team's power play over his last 5 games; the arrows compare his last 20, 10 and 5 games with his season.
+                ${lastPlan.formSeason ? `Both come from the ${esc(lastPlan.formSeason)} season.` : ''}`;
+
+            const goalieCodes = new Set(setup.categories.filter(c => c.goalie).map(c => c.code));
+            const codes = lastPlan.categories || [];
+            const skaterCats = codes.filter(c => !goalieCodes.has(c));
+            const goalieCats = codes.filter(c => goalieCodes.has(c));
+            const isGoalie = p => String(p.positionCode) === 'G';
+            const order = (a, b) => (POSITION_ORDER[a.positionCode] ?? 9) - (POSITION_ORDER[b.positionCode] ?? 9)
+                || (a.seasonRank ?? 1e9) - (b.seasonRank ?? 1e9);
+            const players = side.players.slice().sort(order);
+            $('roster-view').innerHTML = rosterTable(players.filter(p => !isGoalie(p)), skaterCats, false)
+                + rosterTable(players.filter(isGoalie), goalieCats, true);
+        }
 
         // Rendered from the league's categories, not from the last plan, so the
         // score-so-far boxes are there to type into before a plan comes back.
@@ -2028,18 +2329,7 @@
         }
 
         function renderPlan(data) {
-            const players = data.players || [];
-            const games = players.filter(p => !p.out).reduce((sum, p) => sum + p.games, 0);
-            const starts = players.reduce((sum, p) => sum + p.starts, 0);
-            const benched = players.reduce((sum, p) => sum + p.benchedGames, 0);
-            const empty = data.days.reduce((sum, d) => sum + d.slots.filter(s => !s.player).length, 0);
-
-            $('summary').innerHTML = [
-                card('Expected starts', round1(starts)),
-                card('Roster games', games),
-                card('Benched games', benched, benched ? 'text-amber-400' : 'text-white'),
-                card('Empty slots', empty, empty ? 'text-red-400' : 'text-white'),
-            ].join('');
+            renderSummary();
 
             const notes = [];
             notes.push(data.adjusted ? 'Adjusted for each opponent and home ice.' : 'Opponent strength not loaded - unadjusted projections.');

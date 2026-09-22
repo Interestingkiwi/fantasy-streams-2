@@ -39,6 +39,7 @@ TESTS = [
     "test_week_planner.py",
     "test_yahoo_rosters.py",
     "test_yahoo_matchup.py",
+    "test_player_form.py",
 ]
 
 

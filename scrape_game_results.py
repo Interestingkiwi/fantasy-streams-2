@@ -38,6 +38,14 @@ top-heavy sample presented as a complete one is the worst possible input to a
 calibration, so the range is split into chunks small enough that no single
 query approaches the ceiling, and `PAGE_CEILING` raises if one ever does.
 
+**Power-play share needs two more reports.** A skater's `ppTimeOnIce` comes
+from `skater/timeonice`, and his team's power-play time in the same game from
+`team/powerplaytime` - a team report, so it is keyed onto each player row by
+(gameId, opponentTeamAbbrev): the team whose opponent that is. Their ratio is
+the player's share of his team's power play, which is the PP Util column on
+League Home's Lineups tab. `--pp-only` fills just these two columns over a range
+already scraped, for the season that predates them.
+
 Pages are capped at 100 rows however large a limit is asked for, so a full
 season is roughly 670 requests and takes about twenty minutes. Re-running a
 range replaces it rather than duplicating, so an interrupted backfill can
@@ -45,7 +53,7 @@ simply be run again.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/8/2026
+Updated - 9/21/2026
 """
 
 import argparse
@@ -65,6 +73,12 @@ SUMMARY_URL = BASE_URL + '{kind}/summary'
 PAGE = 100
 TIMEOUT = 60
 PAUSE = 0.15          # polite gap between requests
+# A season is hundreds of requests, and the API times out now and then; one
+# timeout used to throw away a twenty-minute backfill.
+RETRIES = 3
+RETRY_PAUSE = 5.0
+# A power-play backfill writes every this many days, so a failure costs a chunk.
+BACKFILL_DAYS = 14
 
 # The API refuses offsets past this and just stops, without an error. Anything
 # reaching it has been truncated, so treat it as a failure rather than a result.
@@ -118,6 +132,17 @@ REALTIME = {
     'takeaways': 'takeaways',
     'giveaways': 'giveaways',
 }
+# A skater's power-play ice time, from skater/timeonice - a fourth pass.
+TIMEONICE = {
+    'ppTimeOnIce': 'ppTimeOnIce',
+}
+# His team's power-play time in that game, from the team/powerplaytime report.
+TEAM_PP_COLUMN = 'teamPpTimeOnIce'
+
+# A team report has no playerId; (teamId, gameId) is its unique key.
+TEAM_SORT = json.dumps([{'property': 'teamId', 'direction': 'ASC'},
+                        {'property': 'gameId', 'direction': 'ASC'}])
+
 GOALIE = {
     'goalieFullName': 'fullName',
     'gamesStarted': 'gamesStarted',
@@ -133,7 +158,8 @@ GOALIE = {
 
 def _columns():
     seen, columns = set(), []
-    for mapping in (SHARED, SKATER, REALTIME, GOALIE):
+    for mapping in (SHARED, SKATER, REALTIME, TIMEONICE, GOALIE,
+                    {TEAM_PP_COLUMN: TEAM_PP_COLUMN}):
         for column in mapping.values():
             if column not in seen:
                 seen.add(column)
@@ -177,6 +203,8 @@ CREATE TABLE IF NOT EXISTS player_game_stats (
     "shotsAgainst"       DOUBLE PRECISION,
     "goalsAgainst"       DOUBLE PRECISION,
     "shutouts"           DOUBLE PRECISION,
+    "ppTimeOnIce"        DOUBLE PRECISION,
+    "teamPpTimeOnIce"    DOUBLE PRECISION,
     PRIMARY KEY ("playerId", "gameId")
 )
 '''
@@ -184,7 +212,7 @@ INDEX = ('CREATE INDEX IF NOT EXISTS player_game_stats_date '
          'ON player_game_stats ("gameDate")')
 
 
-def fetch(kind, start, end, kind_path=None):
+def fetch(kind, start, end, kind_path=None, sort=STABLE_SORT):
     """
     Every row of one endpoint across a date range.
 
@@ -199,13 +227,13 @@ def fetch(kind, start, end, kind_path=None):
     while window_start <= last:
         window_end = min(window_start + timedelta(days=CHUNK_DAYS - 1), last)
         rows += _fetch_window(kind, window_start.isoformat(),
-                              window_end.isoformat(), kind_path)
+                              window_end.isoformat(), kind_path, sort)
         window_start = window_end + timedelta(days=1)
 
     return rows
 
 
-def _fetch_window(kind, start, end, kind_path=None):
+def _fetch_window(kind, start, end, kind_path=None, sort=STABLE_SORT):
     """One window, paged until exhausted. Raises rather than truncating."""
     rows, offset, total = [], 0, None
 
@@ -221,11 +249,10 @@ def _fetch_window(kind, start, end, kind_path=None):
             'cayenneExp': (f'gameDate>="{start}" and gameDate<="{end}" '
                            f'and gameTypeId=2'),
             'factCayenneExp': 'gamesPlayed>=1',
-            'sort': STABLE_SORT,
+            'sort': sort,
         }
         url = (BASE_URL + kind_path) if kind_path else SUMMARY_URL.format(kind=kind)
-        response = requests.get(url, params=params, timeout=TIMEOUT)
-        response.raise_for_status()
+        response = _get(url, params)
         payload = response.json()
 
         total = payload.get('total', 0)
@@ -238,6 +265,21 @@ def _fetch_window(kind, start, end, kind_path=None):
         time.sleep(PAUSE)
 
     return rows
+
+
+def _get(url, params):
+    """One request, retried on a timeout or dropped connection."""
+    for attempt in range(1, RETRIES + 1):
+        try:
+            response = requests.get(url, params=params, timeout=TIMEOUT)
+            response.raise_for_status()
+            return response
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            if attempt == RETRIES:
+                raise
+            log.warning('%s - retrying (%d of %d).', exc, attempt, RETRIES - 1)
+            time.sleep(RETRY_PAUSE * attempt)
+    raise RuntimeError('unreachable')
 
 
 def shape(raw, mapping):
@@ -262,7 +304,7 @@ def write(rows, start, end):
         conn.execute(text(INDEX))
         # The table predates the realtime columns; CREATE IF NOT EXISTS will
         # not add them to one that already exists.
-        for column in REALTIME.values():
+        for column in [*REALTIME.values(), *TIMEONICE.values(), TEAM_PP_COLUMN]:
             conn.execute(text(f'ALTER TABLE player_game_stats '
                               f'ADD COLUMN IF NOT EXISTS "{column}" DOUBLE PRECISION'))
         conn.execute(text('DELETE FROM player_game_stats '
@@ -303,6 +345,8 @@ def run(start, end):
         realtime += 1
     log.info('Realtime rows merged: %d', realtime)
 
+    _merge_power_play(merged, start, end)
+
     goalies = [shape(row, GOALIE) for row in fetch('goalie', start, end)]
     log.info('Goalie rows: %d', len(goalies))
 
@@ -315,10 +359,76 @@ def run(start, end):
     return written
 
 
+def team_power_play(start, end):
+    """{(gameId, opponentTeamAbbrev): the team's power-play seconds}."""
+    return {(raw.get('gameId'), raw.get('opponentTeamAbbrev')): raw.get('timeOnIcePp')
+            for raw in fetch('team', start, end, kind_path='team/powerplaytime',
+                             sort=TEAM_SORT)}
+
+
+def _merge_power_play(merged, start, end):
+    """Put each skater's PP time, and his team's, onto the rows in `merged`."""
+    for raw in fetch('skater', start, end, kind_path='skater/timeonice'):
+        row = merged.get((raw.get('playerId'), raw.get('gameId')))
+        if row is not None:
+            for field, column in TIMEONICE.items():
+                row[column] = raw.get(field)
+    team_pp = team_power_play(start, end)
+    for row in merged.values():
+        row[TEAM_PP_COLUMN] = team_pp.get((row['gameId'], row['opponentTeamAbbrev']))
+    log.info('Power-play time merged for %d team-games.', len(team_pp))
+
+
+def backfill_power_play(start, end):
+    """
+    Fill only the two power-play columns over a range already scraped.
+
+    A third of a full re-scrape's requests: the season scraped before these
+    columns existed does not need its other twenty re-fetched. Written every
+    `BACKFILL_DAYS`, so an interrupted run has kept what it finished and can
+    be restarted from where it stopped.
+    """
+    total = 0
+    first, last = date.fromisoformat(start), date.fromisoformat(end)
+    while first <= last:
+        chunk_end = min(first + timedelta(days=BACKFILL_DAYS - 1), last)
+        total += _backfill_power_play(first.isoformat(), chunk_end.isoformat())
+        first = chunk_end + timedelta(days=1)
+    return total
+
+
+def _backfill_power_play(start, end):
+    rows = {(r['playerId'], r['gameId']): dict(r) for r in _existing(start, end)}
+    _merge_power_play(rows, start, end)
+    updates = [{'playerId': r['playerId'], 'gameId': r['gameId'],
+                'pp': r.get('ppTimeOnIce'), 'team': r.get(TEAM_PP_COLUMN)}
+               for r in rows.values()]
+    with engine.begin() as conn:
+        for column in [*TIMEONICE.values(), TEAM_PP_COLUMN]:
+            conn.execute(text(f'ALTER TABLE player_game_stats '
+                              f'ADD COLUMN IF NOT EXISTS "{column}" DOUBLE PRECISION'))
+        for index in range(0, len(updates), 5000):
+            conn.execute(text('UPDATE player_game_stats SET "ppTimeOnIce" = :pp, '
+                              '"teamPpTimeOnIce" = :team '
+                              'WHERE "playerId" = :playerId AND "gameId" = :gameId'),
+                         updates[index:index + 5000])
+    log.info('Power-play columns filled on %d rows, %s..%s.', len(updates), start, end)
+    return len(updates)
+
+
+def _existing(start, end):
+    with engine.connect() as conn:
+        return [dict(r._mapping) for r in conn.execute(text(
+            'SELECT "playerId", "gameId", "opponentTeamAbbrev" FROM player_game_stats '
+            'WHERE "gameDate" BETWEEN :start AND :end'), {'start': start, 'end': end})]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--start', help='First game date (YYYY-MM-DD).')
     parser.add_argument('--end', help='Last game date (YYYY-MM-DD).')
+    parser.add_argument('--pp-only', action='store_true',
+                        help='Fill only the power-play columns on rows already scraped.')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -326,7 +436,10 @@ def main():
 
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     start = args.start or yesterday
-    run(start, args.end or start)
+    if args.pp_only:
+        backfill_power_play(start, args.end or start)
+    else:
+        run(start, args.end or start)
 
 
 if __name__ == '__main__':

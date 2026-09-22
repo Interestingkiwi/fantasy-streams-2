@@ -43,11 +43,21 @@ season schedule, and the week is read out of that.
 from `date`, and the dropped one plays up to the night before - which is how an
 add made before tonight's games lock behaves.
 
+**Manual lineups** replace the optimiser's choice for the nights a user set by
+hand: `{date: [playerId or None per seat]}`, seats in `seat_order`. A manual
+night is fixed - the matchup iteration projects it but never re-seats it - so
+its production feeds the category weights the other nights are chosen under.
+A seat that can no longer be honoured (the player was dropped, is out, has no
+game, or is not eligible for it) is left empty and reported, never silently
+refilled: the user set that night, and a quiet substitution would be the
+optimiser overruling them.
+
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/16/2026
+Updated - 9/21/2026
 """
 
+import bisect
 import math
 from collections import defaultdict
 from datetime import date
@@ -56,7 +66,7 @@ import daily_value as dv
 import goalie_starts as gs
 import matchup_weights as mw
 import opponent_strength as ops
-from lineup_utils import optimal_lineup, starting_slots
+from lineup_utils import optimal_lineup, slots_for, starting_slots
 
 # The order slots are shown in: specific positions, then the generics that
 # widen them, goalies last.
@@ -76,6 +86,10 @@ DISPLAY_PLACES = 3
 SCREEN_SHORTLIST = 40      # by unadjusted weighted value over the nights left
 DROP_CANDIDATES = 3        # the roster's weakest players over the rest of the season
 EXACT_CANDIDATES = 10      # re-planned in full, on every date
+
+# Projected games (starts, for a goalie) to count in the pool a heat colour is
+# measured against.
+HEAT_MIN_GAMES = 20
 
 
 def categories_from_columns(columns):
@@ -149,10 +163,41 @@ class Week:
         self.venue = {**ops.venue_multipliers(team_stats or []), **(peripheral or {})}
         self._probabilities = {}
         self._rows = {}
+        self._heat_pools = None
 
     @property
     def adjusted(self):
         return bool(self.splits)
+
+    def heat(self, player):
+        """
+        {category: 0..1} - where his per-game line sits among players of his
+        kind (skaters or goalies), 1 the best. Polarity is respected, so a low
+        goals-against average is hot. The pool is regulars only
+        (`HEAT_MIN_GAMES`), or a 3-game call-up's rates would set the scale.
+        """
+        if self._heat_pools is None:
+            pools = defaultdict(list)
+            for row in self.valued:
+                goalie = _is_goalie(row)
+                games = _number(row.get('proj_gamesStarted' if goalie else 'projectedGames'))
+                if games < HEAT_MIN_GAMES:
+                    continue
+                for category, value in (row.get('perGame') or {}).items():
+                    if value is not None:
+                        pools[(goalie, category)].append(float(value))
+            self._heat_pools = {key: sorted(values) for key, values in pools.items()}
+
+        goalie = _is_goalie(player)
+        result = {}
+        for category, value in (player.get('perGame') or {}).items():
+            pool = self._heat_pools.get((goalie, category))
+            if not pool or value is None or category not in self.categories:
+                continue
+            share = bisect.bisect_left(pool, float(value)) / len(pool)
+            result[category] = round(share if self.polarity.get(category, 1.0) >= 0
+                                     else 1.0 - share, 3)
+        return result
 
     def resolve(self, ids):
         """(valued rows, ids not in the pool), duplicates dropped."""
@@ -267,7 +312,7 @@ def roster_on(ids, moves, night):
 def plan_week(pool, roster, categories, roster_slots, dates, schedule,
               team_stats=None, peripheral=None, points=None, pim_positive=False,
               out=None, opponent=None, opponent_out=None, banked=None, moves=None,
-              week=None):
+              week=None, lineups=None, next_dates=None):
     """
     The best lineup for each date in `dates`, plus a per-player summary.
 
@@ -276,6 +321,8 @@ def plan_week(pool, roster, categories, roster_slots, dates, schedule,
     for the other side, and turn on the matchup. `banked` is the score so far
     as {category: {'mine': n, 'theirs': n}}, for planning the rest of a week
     already under way. `moves` are planned add/drops on your roster.
+    `lineups` are manual nights (see the module docstring), and `next_dates`
+    the following week's dates, for listing each player's games in it.
 
     Pass a prepared `week` to skip rebuilding it; the other setup arguments
     are then ignored.
@@ -289,15 +336,19 @@ def plan_week(pool, roster, categories, roster_slots, dates, schedule,
     _theirs, unknown_theirs = week.resolve(opponent)
     my_nights = week.nights(roster, out or (), moves)
     their_nights = week.nights(opponent or (), opponent_out or ())
-    run = _run(week, my_nights, their_nights, banked, has_opponent=bool(_theirs))
+    run = _run(week, my_nights, their_nights, banked, has_opponent=bool(_theirs),
+               manual=lineups)
 
-    my_side = _side(week, roster, moves, my_nights, run['mine'], out)
+    next_games = games_by_team(week.schedule, next_dates or [])
+    my_side = _side(week, roster, moves, my_nights, run['mine'], out,
+                    manual=run['manual'], next_games=next_games)
     response = {
         'categories': week.categories,
         'rateCategories': week.rates,
         'missingCategories': week.missing,
         'weights': {c: round(w, 6) for c, w in run['weights'].items()
                     if c not in dv.RATE_COLUMNS},
+        'seats': seat_order(week.slots),
         'adjusted': week.adjusted,
         **my_side,
         'unknownPlayers': unknown,
@@ -307,7 +358,8 @@ def plan_week(pool, roster, categories, roster_slots, dates, schedule,
     }
 
     if _theirs:
-        their_side = _side(week, opponent, (), their_nights, run['theirs'], opponent_out)
+        their_side = _side(week, opponent, (), their_nights, run['theirs'], opponent_out,
+                           next_games=next_games)
         response['opponent'] = {**their_side, 'unknownPlayers': unknown_theirs}
         response['matchup'] = run['matchup']
     elif unknown_theirs:
@@ -319,7 +371,7 @@ def plan_week(pool, roster, categories, roster_slots, dates, schedule,
 
 def free_agents(week, roster, rostered, out=None, opponent=None, opponent_out=None,
                 banked=None, moves=None, evaluate=None, season=None,
-                limit=EXACT_CANDIDATES):
+                limit=EXACT_CANDIDATES, lineups=None):
     """
     The adds that would help this week's matchup most, each with a drop and
     the date that gets the most out of the pair.
@@ -352,6 +404,11 @@ def free_agents(week, roster, rostered, out=None, opponent=None, opponent_out=No
 
     `evaluate` ({add, drop}) skips the search and scores that one pair on every
     date - the path a user takes when they disagree with the suggestion.
+
+    `lineups` are the nights set by hand, held fixed exactly as `plan_week`
+    holds them, so the baseline is the plan the page is showing. An add is
+    worth nothing on a manual night he is not seated in - the user set that
+    night - and a drop seated in one leaves the seat empty.
     """
     moves = list(moves or [])
     out = {str(i) for i in (out or [])}
@@ -363,7 +420,7 @@ def free_agents(week, roster, rostered, out=None, opponent=None, opponent_out=No
     base_nights = week.nights(roster, out, moves)
     their_nights = week.nights(opponent or (), opponent_out or ())
     has_opponent = bool(week.resolve(opponent)[0])
-    base = _run(week, base_nights, their_nights, banked, has_opponent)
+    base = _run(week, base_nights, their_nights, banked, has_opponent, manual=lineups)
     baseline = _metric(week, base, has_opponent)
 
     def exact(add_id, drop_id):
@@ -371,7 +428,8 @@ def free_agents(week, roster, rostered, out=None, opponent=None, opponent_out=No
         gains = {}
         for night in week.dates:
             trial = moves + [{'add': add_id, 'drop': drop_id, 'date': night}]
-            run = _run(week, week.nights(roster, out, trial), their_nights, banked, has_opponent)
+            run = _run(week, week.nights(roster, out, trial), their_nights, banked,
+                       has_opponent, manual=lineups)
             gains[night] = _metric(week, run, has_opponent) - baseline
         return gains
 
@@ -532,9 +590,12 @@ def matchup(categories, mine, theirs, banked=None, polarity=None, points_per=Non
     }
 
 
-def _run(week, my_nights, their_nights, banked, has_opponent):
+def _run(week, my_nights, their_nights, banked, has_opponent, manual=None):
     """
     Lineups for both sides and, with an opponent, the matchup.
+
+    `manual` ({date: seats}) fixes those nights of mine as the user set them;
+    `run['manual']` reports, per such night, the seats that could not be kept.
 
     Returns {mine, theirs} as {date: lineup}, the weights my lineups were set
     under, both sides' projected totals, and the matchup twice over - rounded
@@ -543,14 +604,25 @@ def _run(week, my_nights, their_nights, banked, has_opponent):
     mine = [{'date': n['date'], 'mine': n['players'],
              'theirs': t['players']} for n, t in zip(my_nights, their_nights)]
 
+    fixed, kept = {}, {}
+    for night in my_nights:
+        seats = (manual or {}).get(night['date'])
+        if seats is not None:
+            fixed[night['date']], problems, placed = manual_lineup(
+                night['players'], week.slots, seats)
+            kept[night['date']] = {'problems': problems, 'seats': placed}
+
     if has_opponent and not week.points:
         banked_margin = {c: v['mine'] - v['theirs'] for c, v in banked.items()}
         result = mw.optimise_week(mine, week.slots, week.categories, _normalised(week.flat),
-                                  polarity=week.polarity, banked_margin=banked_margin)
+                                  polarity=week.polarity, banked_margin=banked_margin,
+                                  fixed=fixed)
         my_lineups, their_lineups = result['lineups'], result['opponentLineups']
         weights = result['weights']
     else:
-        my_lineups = {n['date']: optimal_lineup(n['players'], week.slots) for n in my_nights}
+        my_lineups = {n['date']: fixed[n['date']] if n['date'] in fixed
+                      else optimal_lineup(n['players'], week.slots)
+                      for n in my_nights}
         their_lineups = {n['date']: optimal_lineup(n['players'], week.slots)
                          for n in their_nights}
         weights = dict(week.flat)
@@ -559,7 +631,7 @@ def _run(week, my_nights, their_nights, banked, has_opponent):
     their_totals = _counting(mw.project_totals(their_lineups.values(), week.categories))
     run = {'mine': my_lineups, 'theirs': their_lineups, 'weights': weights,
            'totals': totals, 'theirTotals': their_totals,
-           'matchup': None, 'exact': None}
+           'matchup': None, 'exact': None, 'manual': kept}
 
     if has_opponent:
         per = week.points if week.points else None
@@ -568,6 +640,65 @@ def _run(week, my_nights, their_nights, banked, has_opponent):
         run['exact'] = matchup(week.categories, totals, their_totals, banked,
                                week.polarity, points_per=per, places=None)
     return run
+
+
+def seat_order(slots):
+    """Every starting seat's slot, in display order - the index a manual lineup uses."""
+    ordered = [s for s in SLOT_ORDER if s in slots]
+    ordered += sorted(s for s in slots if s not in SLOT_ORDER)
+    return [slot for slot in ordered for _ in range(slots[slot])]
+
+
+def manual_lineup(players, slots, seats):
+    """
+    ({slot: [player]}, problems, placed) for one night set by hand.
+
+    `players` are tonight's available rows - on the roster, not out, with a
+    game - and `seats` a playerId (or None) per seat in `seat_order`. A seat
+    whose player is not among them, is seated twice, or is not eligible for
+    that slot is left empty and reported as {seat, playerId, reason}.
+
+    `placed` is the player (or None) in each seat, in seat order. The lineup
+    dict cannot carry that - `{slot: [players]}` has no empty places - so
+    without it, emptying the first of two C seats would slide the second C
+    into it on the page.
+    """
+    order = seat_order(slots)
+    tonight = {str(p['playerId']): p for p in players}
+    lineup = {slot: [] for slot in slots}
+    used, problems = set(), []
+    placed = [None] * len(order)
+    for index, slot in enumerate(order):
+        player_id = seats[index] if index < len(seats or []) else None
+        if player_id in (None, ''):
+            continue
+        player_id = str(player_id)
+        player = tonight.get(player_id)
+        if player is None:
+            reason = 'unavailable'
+        elif player_id in used:
+            reason = 'twice'
+        elif slot not in slots_for(player.get('eligiblePositions'), [slot]):
+            reason = 'ineligible'
+        else:
+            lineup[slot].append(player)
+            placed[index] = player
+            used.add(player_id)
+            continue
+        problems.append({'seat': index, 'playerId': player_id, 'reason': reason})
+    return lineup, problems, placed
+
+
+def games_by_team(schedule, dates):
+    """{team: [{date, opponent, home}]} for the games on `dates`, in date order."""
+    wanted = {str(d) for d in dates}
+    games = defaultdict(list)
+    for game_date, home, away in sorted(schedule or [], key=lambda g: str(g[0])):
+        game_date = str(game_date)
+        if game_date in wanted:
+            games[home].append({'date': game_date, 'opponent': away, 'home': True})
+            games[away].append({'date': game_date, 'opponent': home, 'home': False})
+    return games
 
 
 def _metric(week, run, has_opponent):
@@ -661,9 +792,21 @@ def _lineup_value(players, slots, weights, seated=False):
     return sum(p['value'] for seats in lineup.values() for p in seats)
 
 
-def _side(week, ids, moves, nights, lineups, out):
-    """One roster's week: nightly seats and bench, per-player summary, totals."""
+def _side(week, ids, moves, nights, lineups, out, manual=None, next_games=None):
+    """
+    One roster's week: nightly seats and bench, per-player summary, totals.
+
+    Each night also lists who is `playing` and which slots each could take, so
+    the page can offer a manual edit without knowing the eligibility rules;
+    `manual` marks the nights set by hand and what could not be kept. Each
+    player carries his `nights` - start, bench or out, against whom - his
+    unadjusted per-game line, and his games in the next week.
+    """
     out = {str(i) for i in (out or [])}
+    manual = manual or {}
+    next_games = next_games or {}
+    seat_slots = sorted(set(seat_order(week.slots)))
+    player_nights = defaultdict(list)
     everyone = _unique([i for night in nights for i in night['ids']]
                        + [str(i) for i in _unique(ids)])
     players = [week.by_id[i] for i in everyone if i in week.by_id]
@@ -692,12 +835,37 @@ def _side(week, ids, moves, nights, lineups, out):
         for player in bench:
             summary[str(player['playerId'])]['benchedGames'] += 1
 
-        days.append({
+        playing = {str(p['playerId']) for p in night['players']}
+        for player in players:
+            player_id = str(player['playerId'])
+            team = gs.primary_team(player.get('teamAbbrevs'))
+            opponent = week.facing.get(night['date'], {}).get(team)
+            if player_id not in on_roster or opponent is None:
+                continue
+            status = ('start' if player_id in seated else
+                      'bench' if player_id in playing else 'out')
+            player_nights[player_id].append({
+                'date': night['date'], 'opponent': opponent,
+                'home': team in week.home_teams[night['date']], 'status': status,
+            })
+
+        day = {
             'date': night['date'],
             'nhlGames': week.games_on.get(night['date'], 0),
             'slots': _seat_list(lineup, week.slots),
             'bench': [_public(p) for p in bench],
-        })
+            'playing': [{**_public(p),
+                         'slots': slots_for(p.get('eligiblePositions'), seat_slots)}
+                        for p in night['players']],
+        }
+        if night['date'] in manual:
+            day['manual'] = True
+            day['problems'] = manual[night['date']]['problems']
+            # Seat for seat as the user set them, not repacked by slot
+            day['slots'] = [{'slot': slot, 'player': _public(player) if player else None}
+                            for slot, player in zip(seat_order(week.slots),
+                                                    manual[night['date']]['seats'])]
+        days.append(day)
 
     added = {str(m.get('add')) for m in moves}
     dropped = {str(m.get('drop')) for m in moves if m.get('drop') is not None}
@@ -708,7 +876,12 @@ def _side(week, ids, moves, nights, lineups, out):
             {**_public(p), 'out': str(p['playerId']) in out,
              'added': str(p['playerId']) in added,
              'dropped': str(p['playerId']) in dropped,
-             **_rounded(summary[str(p['playerId'])])}
+             **_rounded(summary[str(p['playerId'])]),
+             'nights': player_nights.get(str(p['playerId']), []),
+             'nextWeek': next_games.get(gs.primary_team(p.get('teamAbbrevs')), []),
+             'perGame': _rounded({c: v for c, v in (p.get('perGame') or {}).items()
+                                  if c in week.categories}),
+             'heat': week.heat(p)}
             for p in players
         ],
         'totals': _rounded(_counting(totals)),
@@ -751,15 +924,13 @@ def _clean_banked(banked, categories):
 
 def _seat_list(lineup, slots):
     """Every seat in display order, with None for one nobody could fill."""
-    ordered = [s for s in SLOT_ORDER if s in slots]
-    ordered += sorted(s for s in slots if s not in SLOT_ORDER)
-
-    seats = []
-    for slot in ordered:
+    seats, taken = [], defaultdict(int)
+    for slot in seat_order(slots):
         filled = lineup.get(slot, [])
-        for index in range(slots[slot]):
-            player = filled[index] if index < len(filled) else None
-            seats.append({'slot': slot, 'player': _public(player) if player else None})
+        index = taken[slot]
+        taken[slot] += 1
+        player = filled[index] if index < len(filled) else None
+        seats.append({'slot': slot, 'player': _public(player) if player else None})
     return seats
 
 

@@ -64,7 +64,7 @@ variance is not its to model. Conditioned on that, Poisson holds.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/16/2026
+Updated - 9/21/2026
 """
 
 import math
@@ -217,7 +217,7 @@ def project_totals(lineups, categories):
 def optimise_week(days, roster_slots, categories, flat_weights,
                   polarity=None, banked_margin=None, dispersion=None,
                   iterations=ITERATIONS, damping=DAMPING, floor=WEIGHT_FLOOR,
-                  seat_all=True):
+                  seat_all=True, fixed=None):
     """
     Set a week's lineups against the categories that are actually in doubt.
 
@@ -227,7 +227,8 @@ def optimise_week(days, roster_slots, categories, flat_weights,
     `flat_weights` is the matchup-blind baseline, normally
     `daily_value.default_weights`, used for the first pass and for the
     opponent throughout. `banked_margin` is the matchup's current score as
-    `mine - theirs` per category.
+    `mine - theirs` per category. `fixed` ({date: lineup}) holds nights the
+    user set by hand: they are projected every pass but never re-seated.
 
     Returns the chosen lineups by date (and the opponent's, set once on flat
     weights), the weights they were chosen under,
@@ -237,6 +238,7 @@ def optimise_week(days, roster_slots, categories, flat_weights,
     """
     polarity = polarity or category_polarity(categories)
     banked_margin = banked_margin or {}
+    fixed = fixed or {}
 
     # The opponent is assumed to play his best team, not to counter-optimise,
     # so his lineups are set once and never revisited.
@@ -254,6 +256,9 @@ def optimise_week(days, roster_slots, categories, flat_weights,
     for _ in range(max(1, iterations)):
         by_date = {}
         for day in days:
+            if day.get('date') in fixed:
+                by_date[day.get('date')] = fixed[day.get('date')]
+                continue
             by_date[day.get('date')] = optimal_lineup(
                 _valued(day.get('mine', []), weights), roster_slots, seat_all=seat_all)
 

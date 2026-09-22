@@ -40,7 +40,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups, matchup, planned moves and free agents from a hand-entered league; no session, no Yahoo. See *Standalone mode* below |
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
 | `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
-| `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows |
+| `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
+| `player_form.py` | PP share, L20/L10/L5 trends and home/road splits from `player_game_stats`, for the Lineups roster view. See *The Lineups tab* |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
 | `static/fantasy-weeks.js` | The weeks every page numbers by: standard weeks plus a league's edits (`fs_fantasyWeeks`), and the edit operations. See *Fantasy weeks* |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
@@ -52,7 +53,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `manager_profiles.py` | Classifies an opponent's add/drop style from their real transaction history. See *Lineups* below |
 | `opponent_strength.py` | Per-category nudge for which NHL team a player is facing. See *Lineups* below |
 | `scrape_team_stats.py` | Scrapes every team's strength and home/road splits into `team_stats`; feeds `opponent_strength.py` |
-| `scrape_game_results.py` | Nightly per-game player results into `player_game_stats`; also backfills any historical range |
+| `scrape_game_results.py` | Nightly per-game player results into `player_game_stats`, including power-play time; also backfills any historical range (`--pp-only` for just the PP columns) |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/aging.py` | The age curve. Restates a past season as what it would be worth at the age being projected. See *Ageing* |
 | `preseason_db_build/derive_aging_curve.py` | Re-measures that curve from the historic tables. Not part of the pipeline — it produces constants, not rows |
@@ -63,7 +64,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents tabs |
+| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents tabs. Lineups carries the roster view and the hand-editable nightly grid |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -420,6 +421,17 @@ before a new season has played a game. Hits and blocks need a third endpoint
 (`skater/realtime`); `skater/summary` does not carry them, and 21 of the 25
 imported leagues score at least one.
 
+**Power-play time needs two more reports**, for PP Util on the Lineups tab:
+`skater/timeonice` for each skater's `ppTimeOnIce`, and `team/powerplaytime`
+for his team's (`teamPpTimeOnIce`). The team report has no playerId, so it is
+matched onto each player row by `(gameId, opponentTeamAbbrev)`, and paged on
+`(teamId, gameId)`, its own unique key. The 2025-26 season predates these
+columns and was filled with `--pp-only`, which fetches just those two reports
+and writes every `BACKFILL_DAYS` (14). The first attempt fetched the whole
+season before writing and lost twenty minutes to a single API timeout, so
+requests now retry up to three times on a timeout or dropped connection. That
+also helps the nightly run.
+
 **Two ways this endpoint corrupts data silently, both hit during the port.**
 
 *It stops paging at an offset of 10,000 and says nothing.* A season-long
@@ -660,6 +672,76 @@ final value depends on volume that is not projected as a ratio.
 `playerId`, not `lineup_utils.benched` — which matches object identity and
 would report nobody seated.
 
+### The Lineups tab
+
+Built to the old site's Lineups roster view. From the top:
+
+- **An Opponent picker** that is the same setting as the Matchup tab's (both
+  write `league.opponent`), and a **Yours / Opponent's** toggle that switches
+  the roster view and the grid together.
+- **Summary cards** with the opponent's figure under yours.
+- **The roster view**, skaters and goalies in separate tables. It shows each
+  player's nights this week (yellow when he starts, grey when he sits, struck
+  through when he is out), who he plays, games and expected starts, and his
+  games next week. Then PP%, trend arrows for his last 20, 10 and 5 games plus
+  H/A for his next game, his draft-board rank, and his unadjusted per-game line
+  shaded against the pool. A goalie's name carries his share of starts. The line
+  and PP-unit badges the old site had are not here: nothing collects linemates
+  yet.
+- **The nightly grid**, one table, which can now be **edited by hand**.
+
+The server supplies all of it. `plan_week` gives every player his `nights`
+(start / bench / out), `nextWeek` (from `next_start` / `next_end`), `perGame`
+and `heat`. `heat` is where his line ranks among regulars of his kind: at least
+20 projected games or starts, since a call-up's 3-game rate would set the
+scale, and flipped for GA and GAA. The route adds `seasonRank`, the same draft-board
+ranking the free-agent drops use (so it takes `num_teams` / `draft_slots` /
+`roster_mode`, which every plan request now sends), and `form` from
+`player_form`.
+
+**Form is descriptive, never fed into a projection.** See *Hot goalies do not
+stay hot*. It is read from the latest season in `player_game_stats`, so before
+opening night it shows 2025-26, and the page names the season.
+
+- *Trends* compare the last N games with the player's own season mean in
+  standard errors of an N-game mean, arrowed past 1.5. Measured on 1,038
+  players from 2025-26, that marks about 1 in 10 in each window. At 1.0 it was
+  1 in 4, which is not "major outliers". A percentage threshold would flag every
+  depth player's good week and no star's slump. A value is the game's line
+  under the league's own weights; a goalie counts starts only.
+- *PP%* is his PP seconds over his team's across his last 5 games, and in his
+  last game. **It never reaches back past those games**: an early version took
+  the last five games *that had the data*, so with the backfill half done it
+  presented October's usage as recent. `test_player_form` pins this.
+- *H/A* needs 5 games at each venue before it claims a preference.
+
+**Manual lineups** (`fs_lineupEdits`, `{date: {sig, seats}}`). **Edit
+lineups** turns every seat of your grid into a picker of the players with a
+game that night who can fill that slot. The server says who, in each night's
+`playing`, so the page never re-implements eligibility. Picking a player who is
+already seated swaps the two, or empties his old seat if the displaced player
+cannot fill it. A changed night is sent as `lineups` and **held fixed**:
+`manual_lineup` builds it, and `optimise_week(fixed=...)` projects it on every
+pass but never re-seats it. The matchup, totals, summary cards and best adds
+all come from that one plan. Best adds holds manual nights fixed too
+(`free_agents(lineups=...)`), so an add nobody seats on a manual night is
+worth nothing there.
+
+- *A seat that can no longer be kept is emptied and reported, never
+  refilled.* That covers a dropped or out player, a night with no game, a slot
+  he cannot play, or the same player twice. The night shows why. A quiet
+  substitution would be the optimiser overruling the user.
+- *`sig` is the starting slots the night was set under.* A seat is an index
+  into `seat_order`, so after a slot change the same list means something
+  else. Such nights are ignored rather than misread.
+- Each night has a *Reset*, and *Reset all to best* clears the week. Only your
+  own side is editable.
+- *A manual night is shown seat for seat as it was set.* Lineups are
+  `{slot: [players]}`, which has no empty places, so the first version showed
+  the second of two C seats sliding into an emptied first one. `manual_lineup`
+  therefore also returns `placed`, one entry per seat, and a manual night's
+  grid is built from that.
+
 **Goalie odds are balanced over the whole NHL team, not the roster.** Owning
 only the backup does not make him the starter, so `_goalie_probabilities` runs
 the balancing over every projected goalie on each rostered goalie's team, across
@@ -672,7 +754,7 @@ Starting slots are **not** shared: draft prep's roster settings have no `Util`
 or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
 (below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
-`fs_standaloneBanked`, `fs_standaloneTab` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
+`fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
 `fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
@@ -1312,7 +1394,8 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
-| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; then the routes on real data including every 400 |
+| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped |
+| `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
