@@ -487,6 +487,40 @@ try:
               client.post("/standalone/api/free-agents/pool",
                           json={**body, "roster": []}).status_code == 400)
 
+        # Render has no player_game_stats until its nightly job first runs.
+        # Three routes read it - for form, and for the venue peripherals - and
+        # a deployment that has never scraped a game must still plan.
+        import player_form
+        import routes.standalone_routes as standalone_routes
+
+        def missing_table(*_args, **_kwargs):
+            raise RuntimeError('relation "player_game_stats" does not exist')
+
+        real_form_fetch = player_form.fetch_all
+        real_peripheral = standalone_routes._peripheral_cache['value']
+        player_form.fetch_all = missing_table
+        standalone_routes._peripheral_cache.update(at=0.0, value=None)
+        real_route_fetch = standalone_routes.fetch_all
+
+        def fetch_without_games(sql, params=None):
+            if 'player_game_stats' in str(sql):
+                return missing_table()
+            return real_route_fetch(sql, params)
+
+        standalone_routes.fetch_all = fetch_without_games
+        try:
+            for path, extra in [("/standalone/api/week", {}),
+                                ("/standalone/api/free-agents/pool", {"rostered": ids}),
+                                ("/standalone/api/goalies", {})]:
+                answer = client.post(path, json={**body, **extra})
+                check(f"{path} still answers with no games scraped yet",
+                      answer.status_code == 200, (answer.status_code,
+                                                  answer.get_json().get("message")))
+        finally:
+            player_form.fetch_all = real_form_fetch
+            standalone_routes.fetch_all = real_route_fetch
+            standalone_routes._peripheral_cache.update(at=0.0, value=real_peripheral)
+
         bad = [
             ({**body, "roster": []}, "an empty roster"),
             ({**body, "categories": ["nope"]}, "no usable categories"),

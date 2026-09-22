@@ -92,6 +92,29 @@ check("a goalie is judged on his starts only, and has no PP share",
 
 
 # --------------------------------------------------------------------------
+print("\n=== 4. a deployment with no games yet ===")
+
+# Render has no player_game_stats until its nightly job first runs, and every
+# plan asks for form. A missing table has to cost the trends, not the request.
+real_fetch = pf.fetch_all
+
+
+def missing_table(*_args, **_kwargs):
+    raise RuntimeError('relation "player_game_stats" does not exist')
+
+
+pf.fetch_all = missing_table
+try:
+    check("no table means no season rather than an error", pf.latest_season() is None)
+    check("and loading form gives nothing back, quietly", pf.load([1, 2]) == ({}, None))
+    forms, season = pf.forms([1, 2], WEIGHTS)
+    check("every player still gets an (empty) form, so the page can render",
+          set(forms) == {'1', '2'} and forms['1']['games'] == 0 and season is None, forms)
+finally:
+    pf.fetch_all = real_fetch
+
+
+# --------------------------------------------------------------------------
 print("\n==============================================")
 if FAILURES:
     print(f"{len(FAILURES)} check(s) FAILED:")

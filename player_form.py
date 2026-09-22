@@ -36,10 +36,13 @@ Created - 9/21/2026
 Updated - 9/21/2026
 """
 
+import logging
 import math
 
 from daily_value import RATE_COLUMNS
 from db import fetch_all
+
+log = logging.getLogger(__name__)
 
 # Yahoo category code -> player_game_stats column.
 GAME_COLUMNS = {
@@ -62,8 +65,18 @@ COLUMNS = sorted({*GAME_COLUMNS.values(), 'ppTimeOnIce', 'teamPpTimeOnIce'})
 
 
 def latest_season():
-    """The season the table's newest game belongs to (2025 for 2025-26), or None."""
-    rows = fetch_all('SELECT MAX("gameId") AS latest FROM player_game_stats')
+    """
+    The season the table's newest game belongs to (2025 for 2025-26), or None.
+
+    None as well when there is no table: a deployment whose nightly job has
+    not run yet has no games, and a roster view without trends is the right
+    answer there rather than a failed request.
+    """
+    try:
+        rows = fetch_all('SELECT MAX("gameId") AS latest FROM player_game_stats')
+    except Exception:                             # noqa: BLE001
+        log.warning("No player_game_stats yet - no form to show.")
+        return None
     latest = rows[0]['latest'] if rows else None
     return int(latest) // 1_000_000 if latest else None
 
@@ -75,11 +88,15 @@ def load(player_ids, season=None):
     if not ids or not season:
         return {}, season
     quoted = ', '.join(f'"{c}"' for c in COLUMNS)
-    rows = fetch_all(
-        f'SELECT "playerId", "gameId", "gameDate", "homeRoad", "positionCode", {quoted} '
-        'FROM player_game_stats WHERE "playerId" = ANY(:ids) '
-        'AND "gameId" >= :first AND "gameId" < :next ORDER BY "gameDate", "gameId"',
-        {'ids': ids, 'first': season * 1_000_000, 'next': (season + 1) * 1_000_000})
+    try:
+        rows = fetch_all(
+            f'SELECT "playerId", "gameId", "gameDate", "homeRoad", "positionCode", {quoted} '
+            'FROM player_game_stats WHERE "playerId" = ANY(:ids) '
+            'AND "gameId" >= :first AND "gameId" < :next ORDER BY "gameDate", "gameId"',
+            {'ids': ids, 'first': season * 1_000_000, 'next': (season + 1) * 1_000_000})
+    except Exception:                             # noqa: BLE001
+        log.warning("Could not read player_game_stats - no form to show.")
+        return {}, season
     games = {}
     for row in rows:
         games.setdefault(str(row['playerId']), []).append(row)

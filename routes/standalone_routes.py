@@ -67,8 +67,15 @@ def _peripheral_venue():
                 and time.monotonic() - _peripheral_cache['at'] < PERIPHERAL_TTL_SECONDS):
             return _peripheral_cache['value']
 
-    rows = fetch_all('SELECT "homeRoad", hits, "blockedShots", "penaltyMinutes"'
-                     ' FROM player_game_stats')
+    # A deployment whose nightly job has not run yet has no table at all. That
+    # costs the hits/blocks/PIM venue multipliers, which the planner already
+    # treats as optional - it must not cost the whole plan.
+    try:
+        rows = fetch_all('SELECT "homeRoad", hits, "blockedShots", "penaltyMinutes"'
+                         ' FROM player_game_stats')
+    except Exception:                             # noqa: BLE001
+        log.warning("No player_game_stats yet - planning without venue peripherals.")
+        rows = []
     value = ops.peripheral_venue(rows)
     with _peripheral_lock:
         _peripheral_cache.update(at=time.monotonic(), value=value)
