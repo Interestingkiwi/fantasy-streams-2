@@ -42,13 +42,20 @@ October the adjustment is nearly nothing and grows as the sample does. No
 hardcoded "off until November" gate, and the same regression-to-the-mean trick
 `calculate_goalie_projections.REGRESSION_GAMES` already uses.
 
-**Home ice, measured rather than assumed.** It is the larger effect: on the
-completed 2025-26 season teams scored 2.2% more at home and won 4.4% more
-often, against an opponent adjustment that is typically 1.5%. `VENUE_DRIVERS`
-maps each category onto the quantity that actually moves it, and the
-multipliers are derived at run time from the scraped `season-home` and
-`season-road` windows, so they recalibrate every season instead of ageing into
-a constant.
+**Home ice, measured rather than assumed.** It is the larger effect: over the
+ten full-crowd seasons to 2025-26 teams scored 4.2% more at home than on
+average and won 8.2% more often, against an opponent adjustment that is
+typically 1.5%. `VENUE_DRIVERS` maps each category onto the quantity that
+actually moves it.
+
+**A season's own split is mostly noise, so it is blended with the long run.**
+Across those ten seasons the home effect on goals, shots, blocks and PIM
+varies no more than one season's sampling noise alone would make it: the
+effect itself hardly moves, and a single season barely measures it. 2025-26 was
+the weakest for goals in sixteen seasons (+2.2%), and a first week of games is
+far worse - five games on opening night could credit home goalies with 60%
+more wins. So each multiplier starts at `VENUE_PRIOR` and this season's split
+is blended in as it accumulates (`VENUE_PRIOR_GAMES`).
 
 **Venue and opponent strength cannot double-count, by construction.** The
 worry is real: a team allows more goals on the road, so using an opponent's
@@ -61,7 +68,7 @@ There is a test.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/8/2026
+Updated - 9/27/2026
 """
 
 import math
@@ -170,14 +177,53 @@ UNDRIVEN_CATEGORIES = frozenset({'HIT', 'BLK', 'PIM', 'FW', 'FL', 'FOT', 'TOI'})
 
 # Categories whose venue effect cannot come from `team_stats` - the team
 # endpoint carries no hits, blocks or penalty minutes - so it is measured from
-# `player_game_stats` instead. Worth the extra source: on 2025-26 the home
-# effect on hits was +4.7%, larger than the +4.5% on goals that was already
-# modelled, and blocks and PIM both run the other way.
+# `player_game_stats` instead. Worth the extra source: over ten seasons hits
+# run 1.9% above average at home, about half the goals effect, and blocks and
+# PIM both run the other way.
 PERIPHERAL_VENUE = {
     'HIT': 'hits',
     'BLK': 'blockedShots',
     'PIM': 'penaltyMinutes',
 }
+
+# Home ice before this season has shown any: each quantity's home and road
+# multiplier (that split's league mean over the overall mean), averaged over
+# the ten full-crowd seasons 2015-16 to 2025-26. Measured by
+# `derive_venue_prior.py`; re-run it between seasons and copy the numbers in by
+# hand, as `aging.py` does - a prior that moved nightly would not be a prior.
+#
+# 2020-21 is left out because it was played without fans, and it shows: its PIM
+# and blocks effects vanished. Seasons before 2015-16 are left out because
+# hits were recorded differently - the home effect ran +4-5% to 2013-14 and has
+# sat between +1.2% and +2.4% every season since 2015-16.
+VENUE_PRIOR = {
+    'goalsForPerGame':     {'home': 1.0418, 'road': 0.9582},
+    'goalsAgainstPerGame': {'home': 0.9583, 'road': 1.0419},
+    'shotsForPerGame':     {'home': 1.0222, 'road': 0.9778},
+    'shotsAgainstPerGame': {'home': 0.9778, 'road': 1.0222},
+    'winRate':             {'home': 1.0816, 'road': 0.9184},
+    'hits':                {'home': 1.0191, 'road': 0.9809},
+    'blockedShots':        {'home': 0.9804, 'road': 1.0196},
+    'penaltyMinutes':      {'home': 0.9675, 'road': 1.0325},
+}
+
+# How many league games of this season it takes to count as much as the prior.
+# A season's own split gets weight games / (games + this): 0.4% after opening
+# night's five games, 13% after a month, half by the end of the season.
+#
+# Measured, then rounded to one season. The point estimate of how much home ice
+# really moves between seasons is zero for every quantity but wins - the
+# seasons differ by what sampling noise alone predicts - which would say never
+# to trust the current season at all. That is too sure for ten seasons, so this
+# takes the most drift those ten cannot rule out (the 90% upper bound), which
+# puts the break-even at 760 games for wins, 1,040 for PIM, 1,350 for goals and
+# 1,900 for shots, and far higher for hits and blocks. One season sits in that
+# range.
+VENUE_PRIOR_GAMES = 1300
+
+# Skaters dressed per side in a game - how many `player_game_stats` rows one
+# team-game produces, and so how rows become games for the blend.
+SKATERS_PER_SIDE = 18
 
 
 def team_z_scores(team_stats, games_key='gamesPlayed'):
@@ -215,16 +261,37 @@ def team_z_scores(team_stats, games_key='gamesPlayed'):
     return scores
 
 
-def venue_multipliers(rows):
+def blend_venue(quantity, observed, games, prior_games=VENUE_PRIOR_GAMES):
     """
-    {quantity: {'home': m, 'road': m}} from the scraped home/road windows.
+    One quantity's {'home', 'road'}: the prior, moved toward what this season
+    has shown by games / (games + prior_games).
+
+    With no games, or nothing observed, it is the prior exactly; a quantity
+    with no prior is taken as observed. Both pairs straddle 1.0, so the blend
+    does too.
+    """
+    prior = VENUE_PRIOR.get(quantity)
+    if not observed:
+        return dict(prior) if prior else None
+    if not prior or prior_games <= 0:
+        return dict(observed)
+    weight = games / (games + prior_games) if games > 0 else 0.0
+    return {side: prior[side] + weight * (observed[side] - prior[side])
+            for side in ('home', 'road')}
+
+
+def venue_multipliers(rows, prior_games=VENUE_PRIOR_GAMES):
+    """
+    {quantity: {'home': m, 'road': m}} from the scraped home/road windows,
+    blended with the long run (`VENUE_PRIOR`).
 
     Each is that split's league mean over the overall league mean, so the pair
     straddles 1.0 and applying it across a full season - 41 home, 41 road -
-    is close to neutral. Derived rather than hardcoded so a season with less
-    home advantage than 2025-26 produces smaller numbers on its own.
+    is close to neutral. With no splits scraped - before opening night, or a
+    deployment whose nightly job has not run - it is the prior.
 
     `rows` is the whole `team_stats` table; the windows are picked out here.
+    `prior_games=0` gives the season's own split, unblended.
     """
     windows = {}
     for row in rows or []:
@@ -233,29 +300,34 @@ def venue_multipliers(rows):
     overall = windows.get('season') or []
     home = windows.get('season-home') or []
     road = windows.get('season-road') or []
-    if not (overall and home and road):
-        return {}
+    scraped = overall and home and road
+    # Every game has exactly one home team, so the home window's games played
+    # is the number of games in the league so far.
+    games = sum(_number(row.get('gamesPlayed')) for row in home)
 
     quantities = {stat for stat, _ in VENUE_DRIVERS.values()}
     effects = {}
     for quantity in quantities:
-        base = _league_mean(overall, quantity)
-        if not base:
-            continue
-        effects[quantity] = {
+        base = _league_mean(overall, quantity) if scraped else None
+        observed = {
             'home': (_league_mean(home, quantity) or base) / base,
             'road': (_league_mean(road, quantity) or base) / base,
-        }
+        } if base else None
+        blended = blend_venue(quantity, observed, games, prior_games)
+        if blended:
+            effects[quantity] = blended
     return effects
 
 
-def peripheral_venue(game_rows):
+def peripheral_venue(game_rows, prior_games=VENUE_PRIOR_GAMES):
     """
-    {quantity: {'home': m, 'road': m}} for hits, blocks and PIM.
+    {quantity: {'home': m, 'road': m}} for hits, blocks and PIM, blended with
+    the long run as `venue_multipliers` is.
 
     Measured straight off per-game player rows, since `team_stats` has no such
     columns. Each is the league's home per-game average over the overall
     average, the same shape `venue_multipliers` produces, so the two merge.
+    With no rows it is the prior.
 
     Some of this is scorekeeper bias rather than play - home rinks are known to
     be generous with hits - but the recorded stat is what a league scores, so
@@ -279,14 +351,16 @@ def peripheral_venue(game_rows):
     for column, sides in totals.items():
         home_sum, home_n = sides['H']
         road_sum, road_n = sides['R']
-        if home_n < 100 or road_n < 100:
-            continue
-        home_rate = home_sum / home_n
-        road_rate = road_sum / road_n
-        overall = (home_sum + road_sum) / (home_n + road_n)
-        if overall <= 0:
-            continue
-        effects[column] = {'home': home_rate / overall, 'road': road_rate / overall}
+        observed = None
+        if home_n and road_n:
+            home_rate = home_sum / home_n
+            road_rate = road_sum / road_n
+            overall = (home_sum + road_sum) / (home_n + road_n)
+            if overall > 0:
+                observed = {'home': home_rate / overall, 'road': road_rate / overall}
+        blended = blend_venue(column, observed, home_n / SKATERS_PER_SIDE, prior_games)
+        if blended:
+            effects[column] = blended
     return effects
 
 

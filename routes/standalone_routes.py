@@ -67,14 +67,15 @@ def _peripheral_venue():
                 and time.monotonic() - _peripheral_cache['at'] < PERIPHERAL_TTL_SECONDS):
             return _peripheral_cache['value']
 
-    # A deployment whose nightly job has not run yet has no table at all. That
-    # costs the hits/blocks/PIM venue multipliers, which the planner already
-    # treats as optional - it must not cost the whole plan.
+    # A deployment whose nightly job has not run yet has no table at all. The
+    # hits/blocks/PIM venue multipliers then fall back to their long-run size,
+    # which is what a first week of games would barely move anyway - it must
+    # not cost the whole plan.
     try:
         rows = fetch_all('SELECT "homeRoad", hits, "blockedShots", "penaltyMinutes"'
                          ' FROM player_game_stats')
     except Exception:                             # noqa: BLE001
-        log.warning("No player_game_stats yet - planning without venue peripherals.")
+        log.warning("No player_game_stats yet - long-run venue peripherals only.")
         rows = []
     value = ops.peripheral_venue(rows)
     with _peripheral_lock:
@@ -87,14 +88,14 @@ def _team_stats():
     Every `team_stats` window, or [] before the nightly job has created it.
 
     Same case as `_peripheral_venue`: the table only exists once
-    `nightly_update` has run, and without it the week is planned unadjusted
-    for opponent and venue - which `Week` already reports - rather than not
-    at all.
+    `nightly_update` has run, and without it the week is planned with no
+    opponent adjustment and home ice at its long-run size - which `Week`
+    reports - rather than not at all.
     """
     try:
         return fetch_all('SELECT * FROM team_stats')
     except Exception:                             # noqa: BLE001
-        log.warning("No team_stats yet - planning without opponent or venue adjustments.")
+        log.warning("No team_stats yet - no opponent adjustment, long-run home ice.")
         return []
 
 
@@ -670,7 +671,8 @@ def goalie_planning_view():
                             per_start)
 
         result = {"status": "success", "mine": mine, "theirs": theirs,
-                  "adjusted": week.adjusted, "dates": week.dates,
+                  "adjusted": week.adjusted, "homeIce": bool(goalie_week.venue),
+                  "dates": week.dates,
                   "goalies": _roster_goalies(goalie_week, roster_ids, plan)}
 
         extra = body.get('extra') or {}

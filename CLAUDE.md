@@ -55,6 +55,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `manager_profiles.py` | Classifies an opponent's add/drop style from their real transaction history. See *Lineups* below |
 | `opponent_strength.py` | Per-category nudge for which NHL team a player is facing. See *Lineups* below |
 | `scrape_team_stats.py` | Scrapes every team's strength and home/road splits into `team_stats`; feeds `opponent_strength.py` |
+| `derive_venue_prior.py` | Re-measures home ice's long-run size (`VENUE_PRIOR`) and how fast a season's own split overrides it. Not a job — it prints constants to copy by hand. See *Home ice* |
 | `scrape_game_results.py` | Nightly per-game player results into `player_game_stats`, including power-play time; also backfills any historical range (`--pp-only` for just the PP columns) |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/aging.py` | The age curve. Restates a past season as what it would be worth at the age being projected. See *Ageing* |
@@ -278,14 +279,16 @@ GF/GA/SF/SA per game plus PP% and PK% into `team_stats`, across six windows:
 `season`, `season-home`, `season-road`, and trailing `last-1w` / `last-2w` /
 `last-4w`.
 
-**What updates and what does not.** Team rates, the z-scores built from them,
-and every venue multiplier are derived at run time, so they move with each
-nightly scrape. The *calibration constants* — `PER_STANDARD_DEVIATION`,
-`MAX_ADJUSTMENT`, `RECENT_WEIGHT`, and `matchup_weights.CATEGORY_DISPERSION` —
-are fixed, measured once against the completed 2025-26 season. That is
-deliberate: re-deriving them mid-season on a few weeks of play would chase
-noise, and the whole point of measuring was to stop guessing. Re-measure them
-between seasons, not nightly.
+**What updates and what does not.** Team rates and the z-scores built from them
+are derived at run time, so they move with each nightly scrape. Venue
+multipliers are a blend: a fixed long-run prior, with this season's split
+folded in as games accumulate (see *Home ice* below). The *calibration
+constants* — `PER_STANDARD_DEVIATION`, `MAX_ADJUSTMENT`, `RECENT_WEIGHT`,
+`VENUE_PRIOR`, `VENUE_PRIOR_GAMES` and `matchup_weights.CATEGORY_DISPERSION` —
+are fixed, measured against completed seasons. That is deliberate:
+re-deriving them mid-season on a few weeks of play would chase noise, and the
+whole point of measuring was to stop guessing. Re-measure them between
+seasons, not nightly — `python derive_venue_prior.py` for the venue pair.
 
 **Recent form: real, weak, and mostly already known.** Tested by predicting
 each team-week from windows strictly before it, season-to-date correlates 0.35
@@ -364,9 +367,39 @@ effect is scorekeeper bias — home rinks are generous — but the recorded stat
 what a league scores, so modelling it is right whatever its cause.
 `VENUE_DRIVERS` maps each category onto the quantity that actually moves it
 (wins for W, goals against for GA, shots against for SV — so a goalie at home
-allows fewer goals *and* makes fewer saves), and the multipliers are derived at
-run time from the scraped `season-home` / `season-road` windows, so they
-recalibrate each season instead of ageing into a constant.
+allows fewer goals *and* makes fewer saves).
+
+**2025-26 was a weak year for home ice, and one season barely measures it.**
+`derive_venue_prior.py` reads every season's home/road split straight from the
+NHL stats API. Over the ten full-crowd seasons 2015-16 to 2025-26 (2020-21,
+played without fans, left out) home teams scored **4.2%** above average, took
+2.2% more shots, won **8.2%** more often and recorded 1.9% more hits, with
+blocks 2.0% and PIM 3.3% below. 2025-26's +2.2% on goals was the lowest in
+sixteen seasons, so the "hits larger than goals" comparison above holds for
+that season only. And across the ten, the home effect on goals, shots, blocks
+and PIM varies **no more than one season's sampling noise alone predicts** —
+the effect hardly moves between seasons, and a single season barely measures
+it. A first week measures nothing: opening night 2026-27 is five games, and
+four home wins read raw would credit every home goalie with 60% more wins.
+
+So each multiplier starts at `VENUE_PRIOR` (the ten-season mean) and this
+season's split is blended in with weight `games / (games + VENUE_PRIOR_GAMES)`:
+0.4% after opening night, 13% after a month, half by season's end. The 1,300 is
+one season, rounded, inside the range the data supports: the most drift ten
+seasons cannot rule out (90% upper bound) puts the break-even at 760 games for
+wins, 1,040 for PIM, 1,350 for goals and 1,900 for shots. The point estimate of
+drift is zero for all but wins, which would say never trust the current season;
+ten seasons cannot prove that. Hits before 2015-16 are left out too — the home
+effect ran +4-5% then and has sat at +1.2% to +2.4% every season since, a
+recording change rather than a trend. `player_game_stats` rows become games at
+18 skaters a side.
+
+**With no data it is the prior, not nothing.** Before the nightly job first
+runs there is no `team_stats` and no `player_game_stats`, and home ice still
+applies at its long-run size — the plan's `homeIce` flag, separate from
+`adjusted`, which is opponent strength only. Before this, a deployment that had
+never scraped planned venue-blind, and one that had scraped a single night
+planned on five games.
 
 **Venue and opponent strength cannot double-count, by construction.** The worry
 is real — a team allows more goals on the road, so using an opponent's road
@@ -1497,7 +1530,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_goalie_starts.py` | start probabilities: one start per team night exactly, season totals approximately, and the teams whose projections do not add up |
 | `test_matchup_weights.py` | category weighting: that a contested category outweighs a settled one, that inverse categories keep their sign, and that the same margin is less settled the more is still to come |
 | `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
-| `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), and that the adjustment breaks ties without reordering tiers |
+| `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), that the adjustment breaks ties without reordering tiers, and home ice held at its long-run size until a season's games earn their weight — an opening night read raw is wild, blended it barely moves |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly |
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |

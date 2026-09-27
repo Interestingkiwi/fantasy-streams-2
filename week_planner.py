@@ -54,7 +54,7 @@ optimiser overruling them.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/21/2026
+Updated - 9/27/2026
 """
 
 import bisect
@@ -121,9 +121,11 @@ class Week:
     points} for a points league; omitted, the league is scored as categories.
 
     `team_stats` (every window) and `peripheral` (from
-    `opponent_strength.peripheral_venue`) are optional: without them the week
-    is planned on unadjusted projections, which is the right fallback before
-    the first nightly scrape rather than an error.
+    `opponent_strength.peripheral_venue`) are optional. Without them there is
+    no opponent adjustment - the right fallback before the first nightly
+    scrape rather than an error - but home ice still applies, at its long-run
+    size (`opponent_strength.VENUE_PRIOR`), since that is known before a game
+    is played.
     """
 
     def __init__(self, pool, categories, roster_slots, dates, schedule,
@@ -160,7 +162,8 @@ class Week:
             self.games_on[game_date] += 1
 
         self.splits = ops.blended_z_scores(team_stats) if team_stats else {}
-        self.venue = {**ops.venue_multipliers(team_stats or []), **(peripheral or {})}
+        self.venue = {**ops.venue_multipliers(team_stats or []),
+                      **(ops.peripheral_venue([]) if peripheral is None else peripheral)}
         self._probabilities = {}
         self._rows = {}
         self._heat_pools = None
@@ -375,6 +378,7 @@ def plan_week(pool, roster, categories, roster_slots, dates, schedule,
                     if c not in dv.RATE_COLUMNS},
         'seats': seat_order(week.slots),
         'adjusted': week.adjusted,
+        'homeIce': bool(week.venue),
         **my_side,
         'unknownPlayers': unknown,
         'moves': moves,

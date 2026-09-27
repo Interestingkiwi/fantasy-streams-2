@@ -12,7 +12,7 @@ the one way combining them could quietly go wrong.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/8/2026
+Updated - 9/27/2026
 """
 
 import os
@@ -170,7 +170,8 @@ SPLIT_ROWS = (
 )
 for row in SPLIT_ROWS:
     row.setdefault("wins", 41)
-VENUE = ops.venue_multipliers(SPLIT_ROWS)
+# The season's own split, unblended, so the directions below are the data's.
+VENUE = ops.venue_multipliers(SPLIT_ROWS, prior_games=0)
 
 check("venue effects are derived from the scraped splits",
       abs(VENUE["goalsForPerGame"]["home"] - 1.02) < 1e-9, VENUE.get("goalsForPerGame"))
@@ -193,7 +194,7 @@ check("an inverted driver flips the split, so losses fall at home",
 # to be a bigger effect than goals, which is why leaving them flat was wrong.
 GAMES = ([{"homeRoad": "H", "hits": 3.0, "blockedShots": 1.0, "penaltyMinutes": 0.5}] * 200
          + [{"homeRoad": "R", "hits": 2.0, "blockedShots": 2.0, "penaltyMinutes": 1.5}] * 200)
-PERIPHERAL = ops.peripheral_venue(GAMES)
+PERIPHERAL = ops.peripheral_venue(GAMES, prior_games=0)
 
 check("peripheral venue effects are measured from the game rows",
       set(PERIPHERAL) == {"hits", "blockedShots", "penaltyMinutes"}, sorted(PERIPHERAL))
@@ -204,8 +205,6 @@ check("more blocks and penalties on the road",
       and PERIPHERAL["penaltyMinutes"]["road"] > 1.0)
 check("home and road straddle one for each",
       all(abs((e["home"] + e["road"]) / 2 - 1.0) < 1e-9 for e in PERIPHERAL.values()))
-check("too little data yields nothing rather than a wild estimate",
-      ops.peripheral_venue(GAMES[:10]) == {})
 
 MERGED = {**VENUE, **PERIPHERAL}
 check("a merged table gives hits a venue multiplier at last",
@@ -216,9 +215,8 @@ check("...and still no OPPONENT adjustment, which nothing predicts",
 check("categories with no venue driver at all remain untouched",
       ops.venue_multiplier("FW", True, MERGED) == 1.0
       and ops.venue_multiplier("HIT", True, VENUE) == 1.0)
-check("with no splits scraped it degrades to venue-blind, not to nothing",
-      ops.venue_multiplier("G", True, {}) == 1.0
-      and ops.venue_multipliers([dict(r, statWindow="season") for r in POOL]) == {})
+check("an empty venue table is venue-blind",
+      ops.venue_multiplier("G", True, {}) == 1.0)
 
 check("a visiting opponent is judged on its road record",
       ops.OPPONENT_WINDOW[True] == "season-road"
@@ -255,6 +253,76 @@ check("a balanced season of home and road is venue-neutral overall",
       all(abs((ops.venue_multiplier(c, True, VENUE)
                + ops.venue_multiplier(c, False, VENUE)) / 2 - 1.0) < 0.002
           for c in ("G", "SOG", "GA", "SV")))
+
+
+# --------------------------------------------------------------------------
+print("\n=== 5b. home ice before the season has shown any ===")
+
+TEAM_QUANTITIES = {stat for stat, _ in ops.VENUE_DRIVERS.values()}
+check("with no splits scraped it is the long run, not nothing",
+      ops.venue_multipliers([]) == {q: ops.VENUE_PRIOR[q] for q in TEAM_QUANTITIES}
+      and ops.venue_multipliers([dict(r, statWindow="season") for r in POOL])
+      == ops.venue_multipliers([]))
+check("and so are hits, blocks and PIM with no games",
+      ops.peripheral_venue([]) == {q: ops.VENUE_PRIOR[q] for q in ops.PERIPHERAL_VENUE.values()})
+check("every prior straddles one, so a balanced season stays unbiased",
+      all(abs((e["home"] + e["road"]) / 2 - 1.0) < 0.001 for e in ops.VENUE_PRIOR.values()))
+check("the long run has home teams scoring more, winning more and hitting more",
+      ops.venue_multiplier("G", True, ops.venue_multipliers([])) > 1.0
+      and ops.venue_multiplier("W", True, ops.venue_multipliers([]))
+      > ops.venue_multiplier("G", True, ops.venue_multipliers([]))
+      and ops.venue_multiplier("HIT", True, ops.peripheral_venue([])) > 1.0)
+
+
+def opening_night(games, home_wins, home_goals=4.0, road_goals=2.0):
+    """team_stats windows after `games` games, one per home team, lopsided."""
+    rows = []
+    for i in range(games):
+        won = i < home_wins
+        home_gf, road_gf = (home_goals, road_goals) if won else (road_goals, home_goals)
+        for window, code, gf, ga, wins in (
+                ("season-home", f"H{i}", home_gf, road_gf, int(won)),
+                ("season-road", f"R{i}", road_gf, home_gf, int(not won))):
+            row = {"teamCode": code, "gamesPlayed": 1, "wins": wins,
+                   "goalsForPerGame": gf, "goalsAgainstPerGame": ga,
+                   "shotsForPerGame": 30.0, "shotsAgainstPerGame": 30.0}
+            rows += [dict(row, statWindow=window), dict(row, statWindow="season")]
+    return rows
+
+
+# Opening night 2026-27 is five games. Four home wins is an 80% home win rate,
+# which read raw would credit a home goalie with 60% more wins.
+FIRST = opening_night(5, 4)
+raw = ops.venue_multipliers(FIRST, prior_games=0)
+blended = ops.venue_multipliers(FIRST)
+check("read raw, one night of games is a wild estimate",
+      raw["winRate"]["home"] > 1.5, raw["winRate"])
+check("blended, it barely moves the long run",
+      abs(blended["winRate"]["home"] - ops.VENUE_PRIOR["winRate"]["home"]) < 0.005
+      and abs(blended["goalsForPerGame"]["home"]
+              - ops.VENUE_PRIOR["goalsForPerGame"]["home"]) < 0.005,
+      (blended["winRate"], blended["goalsForPerGame"]))
+
+K = ops.VENUE_PRIOR_GAMES
+halfway = ops.blend_venue("winRate", {"home": 1.3, "road": 0.7}, K)
+check("after as many games as the prior is worth, the two count equally",
+      abs(halfway["home"] - (ops.VENUE_PRIOR["winRate"]["home"] + 1.3) / 2) < 1e-9, halfway)
+weights = [ops.blend_venue("winRate", {"home": 1.3, "road": 0.7}, n)["home"]
+           for n in (0, 50, 500, 5000, 500000)]
+check("more games move it steadily toward what the season shows",
+      weights == sorted(weights) and weights[0] == ops.VENUE_PRIOR["winRate"]["home"]
+      and abs(weights[-1] - 1.3) < 0.001, [round(w, 4) for w in weights])
+check("a blend of two straddling pairs still straddles one",
+      abs(sum(halfway.values()) / 2 - 1.0) < 1e-9, halfway)
+
+# player_game_stats has one row per skater, eighteen a side, so rows become
+# games by that count - otherwise a week of rows would read as a season.
+side_rows = ops.SKATERS_PER_SIDE * K
+LOTS = ([{"homeRoad": "H", "hits": 3.0, "blockedShots": 1.0, "penaltyMinutes": 1.0}] * side_rows
+        + [{"homeRoad": "R", "hits": 1.0, "blockedShots": 1.0, "penaltyMinutes": 1.0}] * side_rows)
+hits = ops.peripheral_venue(LOTS)["hits"]
+check("peripheral rows count as games, eighteen skaters to a side",
+      abs(hits["home"] - (ops.VENUE_PRIOR["hits"]["home"] + 1.5) / 2) < 1e-9, hits)
 
 
 # --------------------------------------------------------------------------

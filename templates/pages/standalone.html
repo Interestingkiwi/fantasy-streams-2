@@ -2839,7 +2839,9 @@
             renderSummary();
 
             const notes = [];
-            notes.push(data.adjusted ? 'Adjusted for each opponent and home ice.' : 'Opponent strength not loaded - unadjusted projections.');
+            notes.push(data.adjusted ? 'Adjusted for each opponent and home ice.'
+                : data.homeIce ? 'Adjusted for home ice; opponent strength not loaded yet.'
+                : 'Opponent strength not loaded - unadjusted projections.');
             if (data.rateCategories?.length) notes.push(`${data.rateCategories.join(', ')} not used to set lineups (rate stats).`);
             if (data.missingCategories?.length) notes.push(`No projection for ${data.missingCategories.join(', ')}.`);
             const unknown = (data.unknownPlayers?.length || 0) + (data.opponent?.unknownPlayers?.length || 0);
@@ -2940,7 +2942,9 @@
             $('goalie-note').textContent = [
                 `${round1(mine.minutes)} minutes played, ${source[mine.minutesFrom]}`,
                 `${round1(mine.projectedMinutes - mine.minutes)} more projected`,
-                goalieData.adjusted ? 'shots adjusted for each opponent and venue' : 'opponent strength not loaded',
+                goalieData.adjusted ? 'shots adjusted for each opponent and venue'
+                    : goalieData.homeIce ? 'shots adjusted for venue; opponent strength not loaded yet'
+                    : 'opponent strength not loaded',
             ].join(' · ') + '.';
         }
 

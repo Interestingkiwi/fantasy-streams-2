@@ -520,6 +520,8 @@ try:
                 if path == "/standalone/api/week":
                     check("and says it is unadjusted, with no team strength to adjust by",
                           answer.get_json().get("adjusted") is False)
+                    check("but home ice still applies, at its long-run size",
+                          answer.get_json().get("homeIce") is True)
         finally:
             player_form.fetch_all = real_form_fetch
             standalone_routes.fetch_all = real_route_fetch
