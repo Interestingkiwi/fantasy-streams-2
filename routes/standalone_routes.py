@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/21/2026
+Updated - 9/27/2026
 """
 
 import logging
@@ -80,6 +80,22 @@ def _peripheral_venue():
     with _peripheral_lock:
         _peripheral_cache.update(at=time.monotonic(), value=value)
     return value
+
+
+def _team_stats():
+    """
+    Every `team_stats` window, or [] before the nightly job has created it.
+
+    Same case as `_peripheral_venue`: the table only exists once
+    `nightly_update` has run, and without it the week is planned unadjusted
+    for opponent and venue - which `Week` already reports - rather than not
+    at all.
+    """
+    try:
+        return fetch_all('SELECT * FROM team_stats')
+    except Exception:                             # noqa: BLE001
+        log.warning("No team_stats yet - planning without opponent or venue adjustments.")
+        return []
 
 
 def _clean_slots(raw):
@@ -451,7 +467,7 @@ def _request_plan(body):
 
     week = week_planner.Week(
         fetch_all('SELECT * FROM final_projections'), categories, slots, dates, schedule,
-        team_stats=fetch_all('SELECT * FROM team_stats'), peripheral=_peripheral_venue(),
+        team_stats=_team_stats(), peripheral=_peripheral_venue(),
         points=points, pim_positive=bool(body.get('pim_positive')))
 
     return week, {
@@ -641,7 +657,7 @@ def goalie_planning_view():
         # a plan that never projected them. Same pool, same adjustments.
         goalie_week = week_planner.Week(
             fetch_all('SELECT * FROM final_projections'), GOALIE_STATS, {'G': 2},
-            week.dates, week.schedule, team_stats=fetch_all('SELECT * FROM team_stats'),
+            week.dates, week.schedule, team_stats=_team_stats(),
             peripheral=_peripheral_venue())
 
         def per_start(player_id, day):

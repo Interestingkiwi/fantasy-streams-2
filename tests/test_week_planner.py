@@ -10,7 +10,7 @@ tests must not rewrite either table.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/21/2026
+Updated - 9/27/2026
 """
 
 import os
@@ -487,9 +487,10 @@ try:
               client.post("/standalone/api/free-agents/pool",
                           json={**body, "roster": []}).status_code == 400)
 
-        # Render has no player_game_stats until its nightly job first runs.
-        # Three routes read it - for form, and for the venue peripherals - and
-        # a deployment that has never scraped a game must still plan.
+        # Render has neither player_game_stats nor team_stats until its
+        # nightly job first runs - it creates both. Three routes read them -
+        # for form, the venue peripherals and the opponent adjustment - and a
+        # deployment that has never scraped a game must still plan.
         import player_form
         import routes.standalone_routes as standalone_routes
 
@@ -503,7 +504,7 @@ try:
         real_route_fetch = standalone_routes.fetch_all
 
         def fetch_without_games(sql, params=None):
-            if 'player_game_stats' in str(sql):
+            if 'player_game_stats' in str(sql) or 'team_stats' in str(sql):
                 return missing_table()
             return real_route_fetch(sql, params)
 
@@ -516,6 +517,9 @@ try:
                 check(f"{path} still answers with no games scraped yet",
                       answer.status_code == 200, (answer.status_code,
                                                   answer.get_json().get("message")))
+                if path == "/standalone/api/week":
+                    check("and says it is unadjusted, with no team strength to adjust by",
+                          answer.get_json().get("adjusted") is False)
         finally:
             player_form.fetch_all = real_form_fetch
             standalone_routes.fetch_all = real_route_fetch
