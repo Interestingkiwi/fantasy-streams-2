@@ -2,7 +2,7 @@
 app.py for Fantasy Streams
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 9/16/2026
+Updated - 9/29/2026
 """
 
 
@@ -19,6 +19,7 @@ from routes.draft_routes import draft_bp
 from routes.league_routes import league_bp
 from routes.schedule_routes import schedule_bp
 from routes.standalone_routes import standalone_bp
+from routes.account_routes import account_bp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ app.register_blueprint(draft_bp)
 app.register_blueprint(league_bp)
 app.register_blueprint(schedule_bp)
 app.register_blueprint(standalone_bp)
+app.register_blueprint(account_bp)
 
 if __name__ == '__main__':
     # Bind IPv4 explicitly, and say so. Werkzeug listens on one address family

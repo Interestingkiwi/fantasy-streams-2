@@ -12,7 +12,7 @@
  *
  * Author - Jason Druckenmiller
  * Created - 7/3/2026
- * Updated - 9/11/2026
+ * Updated - 9/29/2026
  */
 
 :root {
@@ -316,5 +316,19 @@ tr[data-tag="dnd"] > .col-sticky { background-color: rgb(69, 36, 45); }
        measured 0px. */
     body.has-selection {
         padding-bottom: 7rem;
+    }
+
+    /* League Home's transaction list: four columns on a desktop, one stacked
+       cell a phone can read without scrolling sideways. Ours rather than
+       max-sm:/sm: utilities, which the page's markup never uses and the CDN
+       build would not have generated. */
+    .wide-only {
+        display: none;
+    }
+}
+
+@media (min-width: 640px) {
+    .narrow-only {
+        display: none;
     }
 }

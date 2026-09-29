@@ -1,0 +1,95 @@
+{#
+  The account modal, and the data account-sync.js needs before any page script
+  reads localStorage. Included by page-nav.html, which sets `fs_account`.
+
+  Temporary, like routes/account_routes.py - remove with it.
+
+  Everything the script builds is cloned from markup here, never written as
+  class strings in script: the vendored Tailwind build only generates a
+  utility once it has seen it in the page.
+#}
+<div id="account-modal" class="hidden fixed inset-0 z-50 bg-gray-900/80 p-0 sm:p-4 flex items-center justify-center">
+    <div class="bg-gray-800 border border-gray-700 w-full sm:max-w-md h-full sm:h-auto sm:max-h-[90vh] sm:rounded-lg flex flex-col shadow-xl"
+         role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+        <div class="p-3 sm:p-4 border-b border-gray-700 flex items-start justify-between gap-3">
+            <div class="min-w-0">
+                <h2 id="account-modal-title" class="text-lg font-semibold text-white">Account</h2>
+                <p id="account-subtitle" class="text-xs text-gray-500 mt-0.5 truncate"></p>
+            </div>
+            <button type="button" class="account-close px-3 py-2 text-gray-400 hover:text-white text-xl leading-none" aria-label="Close">&times;</button>
+        </div>
+
+        <form id="account-signed-out" class="flex-1 overflow-y-auto p-3 sm:p-4 flex flex-col gap-3" novalidate>
+            <p class="text-sm text-gray-300">
+                Save your leagues to an account and they follow you to any device you sign in on.
+                Signed out, they stay in this browser only.
+            </p>
+            <div>
+                <label for="account-username" class="block mb-1 text-xs font-medium text-gray-400">Username</label>
+                <input id="account-username" name="username" autocomplete="username" autocapitalize="none"
+                       spellcheck="false" maxlength="30" class="form-input w-full p-2 text-sm">
+            </div>
+            <div>
+                <label for="account-password" class="block mb-1 text-xs font-medium text-gray-400">Password</label>
+                <input id="account-password" name="password" type="password" autocomplete="current-password"
+                       maxlength="200" class="form-input w-full p-2 text-sm">
+                <p class="text-xs text-gray-500 mt-1">At least 8 characters.</p>
+            </div>
+            <p class="text-xs text-amber-300">
+                There is no email, so a forgotten password cannot be reset. Keep it somewhere safe.
+            </p>
+            <p id="account-error" class="hidden text-sm text-red-400" role="alert"></p>
+            {# Sign in comes first in the markup so Enter signs in; the row is reversed to show it last #}
+            <div class="flex flex-row-reverse flex-wrap gap-2">
+                <button type="submit" value="signin" class="btn-primary rounded-md text-sm font-medium px-4 py-2">Sign in</button>
+                <button type="submit" value="signup" class="px-4 py-2 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">Create account</button>
+            </div>
+        </form>
+
+        <div id="account-signed-in" class="hidden flex-1 overflow-y-auto p-3 sm:p-4 flex flex-col gap-4">
+            <p id="account-save-status" class="text-sm text-gray-400" aria-live="polite"></p>
+            <div>
+                <div class="flex items-center justify-between gap-2 mb-2">
+                    <h3 class="text-sm font-semibold text-gray-300">Your leagues</h3>
+                    <button id="account-new-league" type="button" class="column-toggle">New league</button>
+                </div>
+                <ul id="account-leagues" class="flex flex-col divide-y divide-gray-700 border border-gray-700 rounded-md">
+                    <li id="account-league-template" class="hidden flex items-center justify-between gap-2 p-2 sm:px-3">
+                        <div class="min-w-0">
+                            <p class="account-league-name text-sm text-white truncate"></p>
+                            <p class="account-league-meta text-xs text-gray-500"></p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <span class="account-league-current text-xs text-green-400">Current</span>
+                            <button type="button" class="account-league-open column-toggle">Open</button>
+                            <button type="button" class="account-league-delete px-2 py-2 text-xs text-red-300 hover:text-red-200">Delete</button>
+                        </div>
+                    </li>
+                </ul>
+                <p class="text-xs text-gray-500 mt-2">
+                    Each league keeps its own teams, settings, moves and scores. Open one and every page works on it.
+                    Your leagues are yours alone: nobody else can see them, including anyone in the same Yahoo league.
+                </p>
+            </div>
+            <details class="border-t border-gray-700 pt-3">
+                <summary class="text-sm text-gray-400 cursor-pointer py-2">Delete account</summary>
+                <div class="flex flex-col gap-2 mt-2">
+                    <p class="text-xs text-gray-400">Deletes the account and every league saved in it. It cannot be undone.</p>
+                    <label for="account-delete-password" class="block text-xs font-medium text-gray-400">Password</label>
+                    <input id="account-delete-password" type="password" autocomplete="current-password"
+                           maxlength="200" class="form-input w-full p-2 text-sm">
+                    <p id="account-delete-error" class="hidden text-sm text-red-400" role="alert"></p>
+                    <button id="account-delete" type="button"
+                            class="self-start px-4 py-2 text-sm text-red-300 border border-red-800 rounded-md hover:bg-red-900/40">Delete account</button>
+                </div>
+            </details>
+        </div>
+
+        <div id="account-footer" class="hidden p-3 sm:p-4 border-t border-gray-700 flex flex-wrap gap-2 justify-end">
+            <button id="account-signout" type="button" class="px-4 py-2 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">Sign out</button>
+            <button type="button" class="account-close btn-primary rounded-md text-sm font-medium px-4 py-2">Done</button>
+        </div>
+    </div>
+</div>
+<script>window.FS_ACCOUNT = {{ fs_account|tojson }};</script>
+<script src="{{ url_for('static', filename='account-sync.js') }}"></script>

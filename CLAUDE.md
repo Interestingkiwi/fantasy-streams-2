@@ -38,8 +38,12 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `routes/league_routes.py` | `/league/` League Database viewer + read-only APIs, all scoped to the session's league |
 | `routes/schedule_routes.py` | `/schedules/` NHL Schedule Insights; reads `nhl_schedule` only, so it needs no league and no Yahoo |
 | `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups, matchup, planned moves and free agents from a hand-entered league; no session, no Yahoo. See *Standalone mode* below |
+| `routes/account_routes.py` | `/account/` Temporary username/password accounts that keep each user's leagues server-side. See *Accounts (temporary)* |
+| `static/account-sync.js` | Mirrors a league's localStorage keys to and from the signed-in account; drives the account modal. See *Accounts (temporary)* |
+| `manage_accounts.py` | Dev CLI: `list` / `delete <username>` accounts, `--render` for Render's database |
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
 | `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
+| `yahoo_transactions.py` | A league's adds, drops and trades: Yahoo's public read-only API for public leagues, the Transactions page (via the bookmarklet) for private ones, one compact shape. See *Season History: transactions* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
 | `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
 | `goalie_planning.py` | Whether one more goalie start is worth the risk: outcomes, minutes and the limits. See *The Goalie Planning tab* |
@@ -67,8 +71,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents tabs. Lineups carries the roster view and the hand-editable nightly grid |
-| `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell |
+| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid |
+| `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell. Carries the account button, and includes `partials/account.html` (the account modal and the boot data) |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
 | `import_legacy_league_data.py` | Transitional: copies the old deployment's per-league tables in as local fixtures |
@@ -205,6 +209,15 @@ with it every page that reads per-league tables. Carry these into that port:
   against a 2026-27 `nhl_schedule`, which is why anything joining league weeks to
   game dates is empty. A real sync fixes it — not a bug to chase.
 - **Drop `import_legacy_league_data.py`** once a real sync populates the tables.
+- **Retire the temporary accounts** (*Accounts (temporary)*). They hold one copy
+  of a league per member who saved it, so the same Yahoo league is duplicated
+  across accounts by design — do not deduplicate, drop them: `local_accounts`,
+  `account_leagues` and `schema.ACCOUNT_DDL`, `routes/account_routes.py`,
+  `static/account-sync.js`, `partials/account.html` (and its include and the
+  button in `page-nav.html`), `manage_accounts.py`, `tests/test_accounts.py`,
+  and the account lines in the privacy policy. Nothing migrates; the sync
+  replaces it. Tell users first — anything they entered by hand that Yahoo does
+  not carry (planned moves, manual lineups, edited weeks) goes with it.
 
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
 needs an HTTPS tunnel registered as the callback and set in
@@ -647,16 +660,19 @@ score it, so `value_players` logs a warning rather than dropping it silently.
 Lineups for anyone who has not linked Yahoo — which, while the Fantasy API is
 gated, is everyone. The league and roster are typed in and live in
 `localStorage`; each request posts them, so the routes read no session and no
-per-league table. Nav label: **League Home**.
+per-league table. Nav label: **League Home**. Signed in to an account, that
+localStorage is kept in step with the server — see *Accounts (temporary)* —
+and these routes still read nothing but what is posted.
 
 **Laid out like the old site's League Home**, which is the design to follow
 (`Interestingkiwi/fantasy-streams`, `templates/home.html`). A settings bar up
 top holds what every sub-page reads — **Your Team**, **Fantasy Week** (with
 *Only nights still to play*) and **Stat Sourcing**. Below it is a row of
-sub-page tabs, **League · Matchup · Lineups · Free Agents · Goalie Planning**, and the chosen one
-fills the panel under it. The site-wide nav keeps the corner the old Logout
-button had. The old site's Trade Helper, Season History and Tools tabs are
-still to come, each as another tab.
+sub-page tabs, **League · Matchup · Lineups · Free Agents · Goalie Planning · Season History**,
+and the chosen one fills the panel under it. The site-wide nav keeps the corner
+the old Logout button had. Season History so far holds transactions only; the
+old site's bench points and category strength, and its Trade Helper and Tools
+tabs, are still to come.
 
 - Tabs only toggle visibility. Every panel stays in the page and is kept
   current whichever one is showing, so switching tabs never re-plans. The last
@@ -790,7 +806,7 @@ or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
 (below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
 `fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits`,
-`fs_standaloneGoalieStats` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
+`fs_standaloneGoalieStats`, `fs_leagueTransactions` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
 `fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
@@ -1119,6 +1135,153 @@ page and posts `fs-yahoo-page`, and the receiving page routes on the URL's path.
 **A bookmark dragged before this still sends `fs-rosters` and still works for
 rosters, but refuses a Matchup page, so drag it again.** Test mode reads week 2
 of league 22705 from team 6's side (`TEST_MATCHUP_URL`), whatever week is picked.
+
+### Season History: transactions (`yahoo_transactions.py`)
+
+The first piece of the old site's Season History: every add, drop and trade in
+the league, which its transaction pages and "left on the bench" views were
+built from. **Scrape transactions** on the Season History tab; the result is
+kept with the league in `fs_leagueTransactions` (so accounts sync it) and shown
+as a per-team summary (adds, waiver claims, drops, trades) above the list,
+filterable by team, week and kind. Selecting a team in the summary filters the
+list. Times are shown and weeks cut in US Eastern.
+
+**Public leagues come from Yahoo's public read-only API, not the page.**
+`pub-api-ro` - anonymous, what Yahoo's own signed-out pages call, and already
+used by the ADP scrape - answers `/league/nhl.l.<id>/transactions` for a public
+league with structured JSON: epoch timestamps, team keys, and where each player
+came from and went to. `start`/`count` page it (500 a request); a season is one.
+On the completed test league it returned 1,136 transactions, the page's 1,132
+plus 4 `commish` settings changes, which are dropped. A **private league answers
+401** ("You must be logged in") and one that does not exist 400 (worded by
+Yahoo as "a temporary problem"). Five of six imported leagues checked were
+private, so the bookmarklet path is the common one, not the exception.
+
+**This API likely serves far more than transactions for public leagues** -
+rosters, matchups, per-date stats - with no sign-in. Unexplored so far; the
+first thing to try for the bench-points work, and possibly a better source than
+page scrapes for the roster and matchup scrapes on public leagues.
+
+**Private leagues: the bookmarklet reads every Transactions page.** On a
+`/transactions` page it fetches `?transactionsfilter=all&count=N` (25 a page)
+from inside the signed-in Yahoo tab, keeps only each page's
+`table.Tst-transaction-table`, and posts them with the browser's time zone to
+`/api/transactions/parse`. Measured live on the test league: 46 pages, 1.4 MB,
+30 seconds, with the tab title counting pages. **The bookmarklet now opens the
+Fantasy Streams tab at the click**, not after reading - a tab opened once the
+fetches finish is no longer a user gesture and is blocked as a pop-up. A
+bookmark dragged before 9/29/2026 refuses Transactions pages; the steps say to
+drag it again.
+
+**The page parser was checked against the API on a whole season**: all 1,132
+transactions agree at minute precision - types, players, from and to, all 11
+trades and their picks, and years across New Year - and so does the live
+league. Page rows: an "Added Player" / "Dropped Player" icon per player,
+paired in order with a `div.Pbot-xs` whose `h6` says Free Agent, Waiver, To
+Waivers or To Free Agent. **A trade is two rows**, the first with a trade icon
+in a `rowspan=2` cell; each lists what one side received (players, and picks as
+"Round N") and that side's team, whose link lacks `Tst-team-name`.
+
+**Page times have no year or zone.** Signed out they are US Eastern - all 1,132
+matched the API in America/New_York and no other zone. Signed in they are
+presumably the user's zone, so the bookmarklet's browser zone is used;
+**unverified**, for want of a private league to check. Years are inferred
+walking back from the newest: a month-day later than the previous row's means
+New Year was crossed. The anchor is today, or 1 July after a past season's
+`/YYYY/hockey/` URL.
+
+**The shape** (compact - a season is ~120 KB): `{league: {name, season}, teams:
+{number: name}, players: {yahooId: [name, nhlTeam, positions]}, transactions:
+[{id, type, time, moves: [[yahooId, from, to]], picks: [[round, from, to]]}]}`,
+`from`/`to` a Yahoo team number or `freeagents`/`waivers`. Team numbers are the
+roster scrape's `yahooTeamId`, and the page fills in teams Yahoo left unnamed
+(the API only names teams that have made a move) from the roster scrape.
+Players carry Yahoo ids only; **matching them to projections is for whatever
+needs their stats next**, with `yahoo_rosters.match`.
+
+**Phone:** the list is four columns on a desktop and one stacked cell on a
+phone (`.wide-only` / `.narrow-only` in `styles.css` - not `sm:` utilities,
+which this page's markup never uses and the CDN build would not generate).
+
+Test mode reads the completed 2025-26 league 22705, which turns out to be last
+season's copy of league 5848; weeks fall back to Monday-Sunday there, since
+fantasy weeks are loaded for the current season only.
+
+## Accounts (temporary)
+
+With Yahoo's API gated for the season, every league is scraped or typed in by
+hand and lived only in one browser's localStorage. An account (the button at
+the end of the nav; first on a phone) keeps each user's leagues server-side so
+they follow them between devices. **Username and password only** — no email,
+so no reset; the form says so. `manage_accounts.py` is how the developer lists
+and deletes accounts (someone who lost a password and started again).
+**Retire all of it once Yahoo sync is live** — see *When Yahoo API access is
+granted*.
+
+**Per account, never shared.** Each account holds its own copy of each league
+in `account_leagues` (one JSONB `state` of `{localStorage key: raw string}`),
+so a Yahoo league is stored once per member who saves it. One shared row per
+Yahoo league, joined by scraping it, was considered and rejected: a private
+league arrives as HTML the user's browser posts through the bookmarklet, and
+the server cannot tell a real Yahoo page from a hand-made one with the right
+league ID — so scraping proves nothing, and sharing would expose a private
+league to anyone who knew its ID. Per account needs no verification at all.
+
+**The pages were not changed to use it.** They still read and write
+localStorage. `partials/account.html` (included by `page-nav.html`, so on every
+page with the nav) renders the open league's state into `window.FS_ACCOUNT`,
+and `static/account-sync.js`, running before any page script, writes it over
+the browser's copy. It then wraps `Storage.prototype.setItem`/`removeItem`, and
+any write to a league key saves the league 1.5s later. That is why removal is a
+handful of files rather than edits through three pages.
+
+- **Which keys.** `LEAGUE_KEYS`, listed identically in `account_routes.py` and
+  `account-sync.js` (a test fails if they drift): teams, Yahoo league ID,
+  scoring, roster and lineup slots, playoff weeks, fantasy weeks, moves, score
+  so far, goalie stats, manual lineups, scraped transactions. Per-device state stays local: open tab,
+  selected week, *Only nights still to play*, and draft prep's view settings,
+  saved lists and tags (the draft is over; lists are ~1 MB).
+- **Unsaved edits win.** A write sets `fs_accountPending` until a save carrying
+  it lands; a page opened while it is still set sends the local copy up instead
+  of overwriting it (a save lost to a closed tab or a dropped connection). A
+  failed save shows a red dot on the account button.
+- **But never over a newer copy.** Saves replace the whole league, so each
+  carries `base`, the `updatedAt` its copy came from, and the server refuses
+  (409) one built on an older version. The page says so and reloads onto the
+  newer copy. A tab coming back into view asks `/version` and reloads onto a
+  newer copy if it has nothing unsaved. Without this, a desktop tab left open
+  overnight would silently undo the lineups set on a phone the next time it
+  saved anything.
+- **Whose copy is this?** `fs_accountOwner` records the account and league the
+  browser's keys came from. On sign-in, keys with no owner (entered signed out)
+  are offered to the account as another league — silently when the account has
+  none. Keys owned by a *different* account are never carried in.
+  Signing out clears the league keys.
+- **Staying signed in** is the permanent Flask session cookie
+  (`PERMANENT_SESSION_LIFETIME`, 30 days, renewed each visit). It carries only
+  the account id, and every request re-reads the account, so one deleted by
+  `manage_accounts.py` is signed out everywhere.
+- **Limits.** Usernames 3–30 of `[A-Za-z0-9_.-]`, unique ignoring case;
+  passwords 8+ (Werkzeug scrypt hash). Ten wrong passwords lock the account for
+  15 minutes (in the table, so it holds across workers). Five sign-ups per
+  address per hour, keyed on the *last* `X-Forwarded-For` hop (Render's; the
+  rest is client-supplied). 20 leagues and 1 MB per league (a season of
+  transactions is ~120 KB; the busiest imported league would be ~250 KB). Every
+  save sends the whole league, transactions included, which is also more than
+  `keepalive`'s 64 KB - a save on a closing tab is refused and the pending
+  flag sends it next time. Every write
+  endpoint requires JSON, which a cross-site form cannot send without a
+  preflight; SameSite=Lax on the cookie does the rest of CSRF.
+- **A database problem never costs the page** — `boot()` degrades to signed
+  out and the page runs from localStorage as before.
+
+Checked in the browser end to end: sign-up carrying a signed-out league, an
+edit reaching the server, a wiped browser getting the league back, a stale tab
+refused and reloaded, a hidden tab reloading on focus, a lost save sent up on
+the next load, new/open/delete league, sign-out clearing, sign-in offering the
+browser's league, deleting the account, and the modal full screen at 375px.
+**Not checked: two real devices.** The version check was exercised by saving
+from the same browser as a stand-in for the phone.
 
 ## Draft prep page
 
@@ -1535,8 +1698,10 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
+| `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; and the key lists in Python and JS not drifting. **It deletes every `zztest*` account** — do not use that prefix by hand |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
+| `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, and the routes |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
@@ -1659,6 +1824,10 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 - Token refresh has no lock: two concurrent requests on an expired token both
   refresh, and the later write wins. Harmless now; revisit with the Phase 2 worker.
 - Automated transactions are stubs. Standalone mode plans add/drops but executes nothing.
+- The accounts are temporary and store one copy of a league per member —
+  retire them with the Yahoo sync (*When Yahoo API access is granted*). The
+  Yahoo `/logout` does `session.clear()`, which signs out of an account too;
+  harmless while the Yahoo login is unused.
 - ~~`/api/projections` and `/api/rank-players` each take ~2s~~ **Retired 9/7/2026 -
   measured, and it was never the endpoints.** The query is 7ms, `jsonify` 12ms,
   the whole request through Flask's test client ~30ms. The 2s was a flat

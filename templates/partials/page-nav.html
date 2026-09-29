@@ -15,7 +15,14 @@
   Left to wrap, each label broke over two lines and the nav still pushed
   the page ~80px wider than the screen. The including header has to be
   flex-wrap so the nav can drop onto its own row.
+
+  The last item is the account button (routes/account_routes.py), whose
+  modal and sync script come from partials/account.html. It sits here so
+  every page with the nav gets it, and its script runs before the page's
+  own - which is what lets it put the account's league into localStorage
+  before anything reads it.
 #}
+{% set fs_account = account_boot() %}
 <nav class="flex items-center gap-1 text-sm overflow-x-auto whitespace-nowrap max-w-full" aria-label="Pages">
     {% for key, label, href in [
         ('home', 'Home', '/'),
@@ -30,4 +37,11 @@
               {% else %}text-gray-400 hover:text-white hover:bg-gray-700/50{% endif %}"
        {% if active == key %}aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
+    {# Last on a desktop; first on a phone, where the strip scrolls and the end starts off-screen #}
+    <button id="account-button" type="button" aria-haspopup="dialog"
+            class="shrink-0 ml-1 max-sm:ml-0 max-sm:mr-1 max-sm:order-first px-2.5 sm:px-3 py-1.5 rounded-md border border-gray-600 text-gray-300 hover:text-white hover:bg-gray-700/50 inline-flex items-center gap-1.5">
+        <span id="account-dot" class="hidden w-2 h-2 rounded-full bg-red-400" aria-hidden="true"></span>
+        <span id="account-label">{{ fs_account.username if fs_account.signedIn else 'Sign in' }}</span>
+    </button>
 </nav>
+{% include 'partials/account.html' %}

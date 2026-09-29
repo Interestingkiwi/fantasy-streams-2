@@ -10,7 +10,7 @@ tests must not rewrite either table.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/27/2026
+Updated - 9/29/2026
 """
 
 import os
@@ -430,7 +430,7 @@ try:
     panels = soup.select(".tab-panel")
     check("every League Home tab panel sits directly in <main>, none inside another",
           [p.get("id") for p in panels] == ["tab-league", "tab-matchup", "tab-lineups",
-                                            "tab-free-agents", "tab-goalies"]
+                                            "tab-free-agents", "tab-goalies", "tab-history"]
           and all(p.parent.name == "main" for p in panels),
           [(p.get("id"), p.parent.name) for p in panels])
     check("the old stub URL still lands there",

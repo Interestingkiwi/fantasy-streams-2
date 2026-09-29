@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/27/2026
+Updated - 9/29/2026
 """
 
 import logging
@@ -30,6 +30,7 @@ import player_form
 import week_planner
 import yahoo_matchup
 import yahoo_rosters
+import yahoo_transactions
 from db import engine, fetch_all
 from lineup_utils import GENERIC_SLOTS, NON_STARTING_SLOTS
 from ranking_utils import YAHOO_POSITIONS, calculate_player_ranks
@@ -134,6 +135,7 @@ def page():
         roster_test_league=yahoo_rosters.TEST_LEAGUE_ID,
         roster_test_url=yahoo_rosters.TEST_ROSTERS_URL,
         matchup_test_url=yahoo_matchup.TEST_MATCHUP_URL,
+        transactions_test_url=yahoo_transactions.TEST_PAGE_URL,
     )
 
 
@@ -301,6 +303,58 @@ def parse_matchup():
         return _roster_error(exc)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Matchup parse failed.")
+        return _error(str(exc), 500)
+
+
+@standalone_bp.route('/api/transactions/scrape', methods=['POST'])
+def scrape_transactions():
+    """
+    Every add, drop and trade in a league this season, from Yahoo's public
+    read-only API (see `yahoo_transactions`). Body: league_id.
+
+    Public leagues only. A private one answers 403 `private` with the
+    `yahooUrl` of its Transactions page, where the bookmarklet reads every
+    page in the user's own browser and posts them to `/api/transactions/parse`.
+    With ROSTER_SCRAPE_TEST on, the completed 2025-26 test league is read.
+    """
+    test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
+    page_url = None
+    try:
+        body = request.get_json(silent=True) or {}
+        page_url = yahoo_transactions.page_url(body.get('league_id'), test=test)
+        league, raw = yahoo_transactions.fetch_api(body.get('league_id'), test=test)
+        return jsonify({"status": "success", "source": "api", "test": test,
+                        **yahoo_transactions.from_api(league, raw)})
+    except yahoo_rosters.RosterPageError as exc:
+        return _roster_error(exc, yahoo_url=page_url)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Transactions scrape failed.")
+        return _error(str(exc), 500)
+
+
+@standalone_bp.route('/api/transactions/parse', methods=['POST'])
+def parse_transactions():
+    """
+    The same, from the Transactions page tables the bookmarklet read in the
+    user's browser. Body: html (every page's table, newest first), url, and
+    timeZone - the browser's, which the page's times are taken to be in.
+    Parsed and discarded; nothing in the HTML is run or stored.
+    """
+    try:
+        if (request.content_length or 0) > MAX_ROSTER_HTML_BYTES:
+            raise yahoo_rosters.RosterPageError(
+                "unrecognised", "That is far too much to be a league's transactions.")
+        body = request.get_json(silent=True) or {}
+        if not _is_yahoo_url(body.get('url')):
+            raise yahoo_rosters.RosterPageError(
+                "unrecognised", "Transactions can only be read from a Yahoo Fantasy page.")
+        result = yahoo_transactions.parse_pages(str(body.get('html') or ''),
+                                                body.get('timeZone'), url=body.get('url'))
+        return jsonify({"status": "success", "source": "browser", **result})
+    except yahoo_rosters.RosterPageError as exc:
+        return _roster_error(exc)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Transactions parse failed.")
         return _error(str(exc), 500)
 
 

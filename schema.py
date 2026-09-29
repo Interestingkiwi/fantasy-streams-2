@@ -13,7 +13,7 @@ eventual path once the schema stabilises.
 
 Author - Jason Druckenmiller
 Created - 9/6/2026
-Updated - 9/6/2026
+Updated - 9/29/2026
 """
 
 import logging
@@ -324,7 +324,40 @@ MIGRATIONS = [
     """,
 ]
 
-ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL
+# --- Simple accounts (temporary) ------------------------------------------------
+# Username/password accounts so a hand-scraped league follows its user between
+# devices while Yahoo's Fantasy API is gated. Each account holds its own copy of
+# each league - never shared, see routes/account_routes.py for why - so a league
+# can be stored once per member. Drop both tables once Yahoo sync is live; the
+# per-league tables above replace them and nothing here needs migrating.
+
+ACCOUNT_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS local_accounts (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL,
+        username_key TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        failed_logins INTEGER NOT NULL DEFAULT 0,
+        locked_until TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS account_leagues (
+        id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES local_accounts(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT '',
+        state JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS account_leagues_account ON account_leagues (account_id)",
+]
+
+ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL + ACCOUNT_DDL
 
 
 def init_schema(strict=False):

@@ -19,7 +19,7 @@
         <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
             <div>
                 <h1 class="text-xl sm:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">League Home</h1>
-                <p class="text-gray-400 text-xs mt-1">Standalone mode &middot; saved in this browser</p>
+                <p class="text-gray-400 text-xs mt-1">Standalone mode &middot; saved {{ 'to your account' if session.get('account_id') else 'in this browser' }}</p>
             </div>
 
             <div class="w-full sm:w-auto grid grid-cols-1 sm:grid-cols-[auto_auto] lg:grid-cols-[auto_auto_auto_auto] items-center gap-x-3 gap-y-2 bg-gray-900/50 border border-gray-700 rounded-lg p-3">
@@ -61,6 +61,7 @@
             <button type="button" role="tab" class="page-tab" data-tab="lineups" aria-controls="tab-lineups" aria-selected="false">Lineups</button>
             <button type="button" role="tab" class="page-tab" data-tab="free-agents" aria-controls="tab-free-agents" aria-selected="false">Free Agents</button>
             <button type="button" role="tab" class="page-tab" data-tab="goalies" aria-controls="tab-goalies" aria-selected="false">Goalie Planning</button>
+            <button type="button" role="tab" class="page-tab" data-tab="history" aria-controls="tab-history" aria-selected="false">Season History</button>
         </div>
         <p id="plan-status" class="text-xs text-gray-500 -mt-1"></p>
 
@@ -406,6 +407,55 @@
         </section>
         </div>
 
+        <!-- Season History: what has happened in the league, starting with its transactions -->
+        <div id="tab-history" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
+        <div class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-x-4 gap-y-2">
+            <div class="flex-1 min-w-[14rem]">
+                <h2 class="text-lg font-semibold text-white">Transactions</h2>
+                <p id="tx-status" class="text-xs text-gray-500 mt-0.5">Every add, drop and trade in your league this season, read from Yahoo.</p>
+            </div>
+            <button id="tx-scrape" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2 w-full sm:w-auto">Scrape transactions</button>
+            <div id="tx-import" class="hidden w-full rounded-md border border-gray-600 bg-gray-900 p-3 text-sm"></div>
+            {% if roster_scrape_test %}
+            <p class="w-full text-xs text-amber-300">
+                Local test mode: transactions come from the completed 2025-26 league {{ roster_test_league }}, whatever League ID is entered.
+            </p>
+            {% endif %}
+        </div>
+
+        <section id="tx-teams-section" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white">By team</h2>
+                <p class="text-xs text-gray-500 mt-0.5">For the week chosen below. Select a team to see only its moves.</p>
+            </div>
+            <div id="tx-teams" class="overflow-x-auto"></div>
+        </section>
+
+        <section id="tx-section" class="hidden bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="w-full sm:w-auto">
+                    <label for="tx-team" class="block mb-1 text-xs font-medium text-gray-400">Team</label>
+                    <select id="tx-team" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="tx-week" class="block mb-1 text-xs font-medium text-gray-400">Week</label>
+                    <select id="tx-week" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="tx-kind" class="block mb-1 text-xs font-medium text-gray-400">Show</label>
+                    <select id="tx-kind" class="form-select p-2 text-sm w-full sm:w-40">
+                        <option value="">Everything</option>
+                        <option value="add">Adds</option>
+                        <option value="drop">Drops</option>
+                        <option value="trade">Trades</option>
+                    </select>
+                </div>
+                <p id="tx-summary" class="w-full text-xs text-gray-500"></p>
+            </div>
+            <div id="tx-body" class="overflow-x-auto"></div>
+        </section>
+        </div>
+
     </main>
 
     <!-- The recommendations this page already made, now behind a button:
@@ -514,6 +564,7 @@
             tab: 'fs_standaloneTab',
             lineupEdits: 'fs_lineupEdits',
             goalieStats: 'fs_standaloneGoalieStats',
+            transactions: 'fs_leagueTransactions',
         };
 
         function read(key, fallback) {
@@ -537,7 +588,7 @@
         // Every panel is in the page and kept current whichever is showing, so
         // switching is only visibility: nothing re-plans or re-fetches. A hash
         // (#matchup) opens a tab directly; otherwise the last one comes back.
-        const TABS = ['league', 'matchup', 'lineups', 'free-agents', 'goalies'];
+        const TABS = ['league', 'matchup', 'lineups', 'free-agents', 'goalies', 'history'];
 
         function selectTab(name) {
             if (!TABS.includes(name)) name = 'league';
@@ -555,6 +606,7 @@
                 // when the tab is first opened rather than on every plan.
                 if (tab.dataset.tab === 'free-agents') ensurePool();
                 if (tab.dataset.tab === 'goalies') loadGoalies();
+                if (tab.dataset.tab === 'history') renderTransactions();
             }));
         window.addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
 
@@ -1035,6 +1087,7 @@
         const ROSTER_TEST_MODE = {{ 'true' if roster_scrape_test else 'false' }};
         const ROSTER_TEST_URL = {{ roster_test_url | tojson }};
         const MATCHUP_TEST_URL = {{ matchup_test_url | tojson }};
+        const TRANSACTIONS_TEST_URL = {{ transactions_test_url | tojson }};
         const YAHOO_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*yahoo\.com$/;
         let pendingImport = null;
 
@@ -1046,16 +1099,45 @@
             var onYahoo = /(^|\.)yahoo\.com$/.test(location.hostname);
             var rosters = document.querySelector('table[id^="Tst-team-"]');
             var matchup = /\/matchup/.test(location.pathname) && document.querySelector('table.Datatable');
-            if (!onYahoo || !(rosters || matchup)) {
-                alert('Open your league Starting Rosters or Matchup page on Yahoo, signed in, then select this bookmark again.');
+            var transactions = /\/transactions/.test(location.pathname)
+                && document.querySelector('table.Tst-transaction-table');
+            if (!onYahoo || !(rosters || matchup || transactions)) {
+                alert('Open your league’s Starting Rosters, Matchup or Transactions page on Yahoo, signed in, then select this bookmark again.');
                 return;
             }
-            var message = { type: 'fs-yahoo-page', url: location.href, html: document.documentElement.outerHTML };
 
-            // Opened from Fantasy Streams: send it straight back, and wait to hear
-            // it arrived - a posted message to a window that has moved on is
-            // dropped silently, which would otherwise look like success.
-            if (window.opener && !window.opener.closed) {
+            // Where the page goes is settled now, while this is still a click:
+            // a Fantasy Streams tab opened after the transactions have been
+            // read would be blocked as a pop-up.
+            var opener = window.opener && !window.opener.closed ? window.opener : null;
+            var app = null;
+            var ready = false;
+            var waiting = null;
+            if (!opener) {
+                app = window.open(appOrigin + '/standalone/?rosters=receive', '_blank');
+                if (!app) {
+                    alert('The Fantasy Streams tab was blocked. Allow pop-ups for Yahoo, then select the bookmark again.');
+                    return;
+                }
+                window.addEventListener('message', function onReady(event) {
+                    if (event.origin === appOrigin && event.source === app && event.data && event.data.type === 'fs-ready') {
+                        window.removeEventListener('message', onReady);
+                        ready = true;
+                        if (waiting) app.postMessage(waiting, appOrigin);
+                    }
+                });
+            }
+
+            function deliver(message) {
+                // Opened some other way: send once Fantasy Streams says it is ready
+                if (app) {
+                    waiting = message;
+                    if (ready) app.postMessage(message, appOrigin);
+                    return;
+                }
+                // Opened from Fantasy Streams: send it straight back, and wait to
+                // hear it arrived - a posted message to a window that has moved
+                // on is dropped silently, which would otherwise look like success.
                 var acked = false;
                 window.addEventListener('message', function onAck(event) {
                     if (event.origin === appOrigin && event.data && event.data.type === 'fs-received') {
@@ -1064,27 +1146,54 @@
                         alert('Sent to Fantasy Streams. You can close this tab.');
                     }
                 });
-                window.opener.postMessage(message, appOrigin);
+                opener.postMessage(message, appOrigin);
                 setTimeout(function () {
                     if (!acked) {
                         alert('Fantasy Streams did not answer. Go back to its League Home page and open Yahoo from there, then try again.');
                     }
                 }, 5000);
+            }
+
+            if (!transactions) {
+                deliver({ type: 'fs-yahoo-page', url: location.href, html: document.documentElement.outerHTML });
                 return;
             }
 
-            // Opened some other way: open Fantasy Streams, and send once it says it is ready.
-            var app = window.open(appOrigin + '/standalone/?rosters=receive', '_blank');
-            if (!app) {
-                alert('The Fantasy Streams tab was blocked. Allow pop-ups for Yahoo, then select the bookmark again.');
-                return;
+            // Transactions come 25 to a page. Read every page here, where Yahoo
+            // knows who is signed in, and keep only each page's table.
+            var tables = [];
+            var offset = 0;
+            var title = document.title;
+            var timeZone = '';
+            try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (error) { timeZone = ''; }
+            function readPage() {
+                document.title = 'Reading transactions, page ' + (tables.length + 1) + '…';
+                fetch(location.pathname + '?transactionsfilter=all&count=' + offset, { credentials: 'include' })
+                    .then(function (response) {
+                        if (!response.ok) throw new Error('Yahoo answered ' + response.status + '.');
+                        return response.text();
+                    })
+                    .then(function (text) {
+                        var page = new DOMParser().parseFromString(text, 'text/html');
+                        var table = page.querySelector('table.Tst-transaction-table');
+                        if (table) tables.push(table.outerHTML);
+                        var more = table && Array.prototype.some.call(page.querySelectorAll('a[href*="count="]'),
+                            function (link) { return /Next/.test(link.textContent); });
+                        if (more && tables.length < 150) {
+                            offset += 25;
+                            setTimeout(readPage, 300);
+                            return;
+                        }
+                        document.title = title;
+                        deliver({ type: 'fs-yahoo-page', url: location.href, html: tables.join('\n'),
+                                  timeZone: timeZone, pages: tables.length });
+                    })
+                    .catch(function (error) {
+                        document.title = title;
+                        alert('Reading the transactions stopped: ' + error.message);
+                    });
             }
-            window.addEventListener('message', function onReady(event) {
-                if (event.origin === appOrigin && event.source === app && event.data && event.data.type === 'fs-ready') {
-                    window.removeEventListener('message', onReady);
-                    app.postMessage(message, appOrigin);
-                }
-            });
+            readPage();
         }
 
         const BOOKMARKLET_HREF = 'javascript:' + encodeURIComponent(
@@ -1122,16 +1231,17 @@
                 </p>
                 <ol class="list-decimal pl-5 space-y-2 text-gray-300">
                     <li>
-                        Drag this button to your bookmarks bar (you only do this once &mdash; the same bookmark reads rosters and matchups):
+                        Drag this button to your bookmarks bar (you only do this once &mdash; the same bookmark reads rosters, matchups and transactions):
                         <a href="#" draggable="true"
                            class="fs-bookmarklet inline-block mt-1 px-3 py-2 rounded-md bg-emerald-700 text-white font-medium no-underline cursor-grab">Send to Fantasy Streams</a>
+                        ${what === 'transactions' ? '<span class="block text-xs text-gray-500 mt-1">Dragged it before September 29? Drag it again &mdash; older copies cannot read transactions.</span>' : ''}
                     </li>
                     <li>
                         ${url
                             ? `<button type="button" id="${openId}" class="text-blue-400 hover:text-blue-300 underline py-1">${openLabel}</button> and sign in if Yahoo asks.`
                             : 'Enter your League ID on the League tab, then come back to this step.'}
                     </li>
-                    <li>On that Yahoo page, select the bookmark. The ${what} come${what === 'rosters' ? '' : 's'} back to this page.</li>
+                    <li>On that Yahoo page, select the bookmark. The ${what} come${what === 'matchup' ? 's' : ''} back to this page${what === 'transactions' ? ' &mdash; every page of them, which takes a few seconds per 25' : ''}.</li>
                 </ol>
                 <p class="text-xs text-gray-500 mt-2">Needs a desktop browser with a bookmarks bar.</p>
                 <button type="button" class="${cancelClass} mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>`;
@@ -1318,6 +1428,11 @@
             if (/\/matchup/.test(path)) {
                 selectTab('matchup');
                 matchupFromHtml(data.html, String(data.url || ''));
+                return;
+            }
+            if (/\/transactions/.test(path)) {
+                selectTab('history');
+                transactionsFromHtml(data.html, String(data.url || ''), String(data.timeZone || ''));
                 return;
             }
             selectTab('league');
@@ -1997,6 +2112,318 @@
             showMatchupPanel('<p class="text-gray-300">Reading the matchup from Yahoo&hellip;</p>');
             return postMatchup('/standalone/api/matchup/parse', { html, url });
         }
+
+        // --- Season History: transactions ------------------------------------
+        // Scraped on request and kept with the league (fs_leagueTransactions),
+        // so the tab needs no request to show them and they sync with an
+        // account. The shape is yahoo_transactions.py's: a move is [Yahoo
+        // player id, from, to], each end a Yahoo team number or 'freeagents' /
+        // 'waivers'. Times are shown, and weeks cut, in US Eastern - the zone
+        // Yahoo's own pages use.
+        const TX_ROW_LIMIT = 300;
+        const TX_ZONE = 'America/New_York';
+        const txDay = new Intl.DateTimeFormat('en-CA', { timeZone: TX_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
+        const txWhen = new Intl.DateTimeFormat('en-US', { timeZone: TX_ZONE, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        const TX_CLOSE = '<button type="button" class="tx-import-close mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>';
+        const isPool = end => end === 'freeagents' || end === 'waivers';
+        const txDate = t => (t.time ? txDay.format(new Date(t.time * 1000)) : null);
+
+        function isoPlus(iso, days) {
+            const [y, m, d] = iso.split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+        }
+
+        function yahooTransactionsUrl() {
+            if (ROSTER_TEST_MODE) return TRANSACTIONS_TEST_URL;
+            const id = savedLeagueId();
+            return id ? `https://hockey.fantasysports.yahoo.com/hockey/${id}/transactions` : null;
+        }
+
+        function showTxPanel(html) {
+            $('tx-import').innerHTML = html;
+            $('tx-import').classList.toggle('hidden', !html);
+        }
+
+        function txError(code, message) {
+            if (code === 'private') {
+                showTxPanel(bookmarkletSteps(message, {
+                    what: 'transactions', openId: 'open-yahoo-transactions', url: yahooTransactionsUrl(),
+                    openLabel: 'Open your league&rsquo;s transactions on Yahoo', cancelClass: 'tx-import-close',
+                }));
+                wireBookmarklet($('tx-import'));
+                return;
+            }
+            showTxPanel(`<p class="text-red-400 font-medium">${esc(message)}</p>${TX_CLOSE}`);
+        }
+
+        function storeTransactions(data) {
+            const saved = {
+                scrapedAt: Date.now(), source: data.source, test: !!data.test,
+                league: data.league || {}, teams: data.teams || {}, players: data.players || {},
+                transactions: data.transactions || [],
+            };
+            write(KEYS.transactions, saved);
+            const n = saved.transactions.length;
+            showTxPanel(`<p class="text-gray-300">Read ${n.toLocaleString()} transaction${n === 1 ? '' : 's'} from Yahoo`
+                + `${data.test ? ' <span class="text-amber-300">(test league)</span>' : ''}.</p>${TX_CLOSE}`);
+            $('tx-team').value = '';
+            $('tx-week').value = '';
+            renderTransactions();
+        }
+
+        async function postTransactions(url, body) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await response.json();
+                if (!response.ok) txError(data.code, data.message || 'The transactions could not be read.');
+                else storeTransactions(data);
+            } catch (error) {
+                txError('unreachable', error.message);
+            }
+        }
+
+        $('tx-scrape').addEventListener('click', async () => {
+            const leagueId = savedLeagueId();
+            if (!ROSTER_TEST_MODE && !leagueId) {
+                return showTxPanel(`
+                    <p class="text-gray-300">Enter your League ID on the League tab first. It is saved, and every scrape uses it.</p>
+                    <button type="button" class="goto-league mt-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 underline">Go to the League tab</button>
+                    ${TX_CLOSE}`);
+            }
+            $('tx-scrape').disabled = true;
+            $('tx-scrape').textContent = 'Scraping…';
+            showTxPanel('<p class="text-gray-300">Reading your league&rsquo;s transactions from Yahoo&hellip;</p>');
+            await postTransactions('/standalone/api/transactions/scrape', { league_id: leagueId });
+            $('tx-scrape').disabled = false;
+            $('tx-scrape').textContent = 'Scrape transactions';
+        });
+
+        // A private league's Transactions pages, read in the user's browser by the bookmarklet
+        function transactionsFromHtml(html, url, timeZone) {
+            showTxPanel('<p class="text-gray-300">Reading the transactions from Yahoo&hellip;</p>');
+            return postTransactions('/standalone/api/transactions/parse', { html, url, timeZone });
+        }
+
+        $('tx-import').addEventListener('click', event => {
+            if (event.target.closest('.tx-import-close')) {
+                showTxPanel('');
+            } else if (event.target.closest('#open-yahoo-transactions')) {
+                // window.open without noopener, so the Yahoo tab can post back
+                const url = yahooTransactionsUrl();
+                if (url) window.open(url, 'fs-yahoo-transactions');
+            } else if (event.target.closest('.goto-league')) {
+                selectTab('league');
+                $('league-id').focus();
+            }
+        });
+
+        // The weeks to filter by. This season's fantasy weeks when the
+        // transactions are this season's, with a bucket for moves made before
+        // opening night; otherwise Monday-Sunday weeks, since no fantasy weeks
+        // are loaded for a past season (the test league is 2025-26).
+        function transactionWeeks(saved) {
+            const days = saved.transactions.map(txDate).filter(Boolean).sort();
+            if (!days.length) return [];
+            const first = days[0];
+            const last = days[days.length - 1];
+            const season = String(weekData?.season?.start || '').slice(0, 4);
+            if (weeks.length && String(saved.league?.season || '') === season) {
+                const list = weeks.filter(w => w.start <= last).map(w => ({
+                    key: w.start, start: w.start, end: w.end,
+                    label: `Week ${w.week} · ${shortDate(w.start)} – ${shortDate(w.end)}`,
+                }));
+                if (first < weeks[0].start) {
+                    list.unshift({ key: 'before', start: '0000-01-01', end: isoPlus(weeks[0].start, -1), label: 'Before the season' });
+                }
+                return list;
+            }
+            const [y, m, d] = first.split('-').map(Number);
+            let monday = isoPlus(first, -((new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7));
+            const list = [];
+            while (monday <= last) {
+                list.push({ key: monday, start: monday, end: isoPlus(monday, 6), label: `Week of ${shortDate(monday)}` });
+                monday = isoPlus(monday, 7);
+            }
+            return list;
+        }
+
+        function txPlayer(saved, id) {
+            const [name, nhl, positions] = saved.players[id] || ['Unknown player', '', ''];
+            const detail = [nhl, positions].filter(Boolean).join(' · ');
+            return `<span class="text-white">${esc(name)}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
+        }
+
+        const txTeam = (saved, id) => saved.teams[id] || (id ? `Team ${id}` : '');
+
+        // One transaction, twice over: four columns for a desktop (.wide-only)
+        // and one stacked cell for a phone (.narrow-only), since the columns
+        // would put the players a sideways scroll away on a 375px screen.
+        function txRow(saved, t) {
+            const when = esc(t.time ? txWhen.format(new Date(t.time * 1000)) : '—');
+            const cell = 'px-3 py-2 align-top';
+            if (t.type === 'trade') {
+                const gets = {};
+                t.moves.forEach(([id, _from, to]) => (gets[to] = gets[to] || []).push(txPlayer(saved, id)));
+                (t.picks || []).forEach(([round, _from, to]) =>
+                    (gets[to] = gets[to] || []).push(`<span class="text-gray-300">round ${esc(round)} pick</span>`));
+                const sides = Object.entries(gets).map(([team, items]) =>
+                    `<div><span class="font-medium text-gray-300">${esc(txTeam(saved, team))}</span> gets ${items.join(', ')}</div>`).join('');
+                return `<tr>
+                    <td class="wide-only ${cell} whitespace-nowrap text-gray-400">${when}</td>
+                    <td class="wide-only ${cell} font-medium text-blue-300">Trade</td>
+                    <td class="wide-only ${cell}" colspan="2">${sides}</td>
+                    <td class="narrow-only ${cell}">
+                        <div class="flex justify-between gap-2 text-xs"><span class="font-medium text-blue-300">Trade</span><span class="whitespace-nowrap text-gray-400">${when}</span></div>
+                        <div class="mt-1">${sides}</div>
+                    </td></tr>`;
+            }
+            const team = esc(txTeam(saved, t.moves.map(([_id, from, to]) => (isPool(from) ? to : from)).find(Boolean)));
+            const none = '<span class="text-gray-600">&mdash;</span>';
+            const added = t.moves.filter(m => isPool(m[1])).map(m => `<div>${txPlayer(saved, m[0])}`
+                + `${m[1] === 'waivers' ? ' <span class="text-xs text-amber-300">off waivers</span>' : ''}</div>`);
+            const dropped = t.moves.filter(m => isPool(m[2])).map(m => `<div>${txPlayer(saved, m[0])}`
+                + `${m[2] === 'freeagents' ? ' <span class="text-xs text-gray-500">to free agents</span>' : ''}</div>`);
+            const marked = (list, mark) => list.map(line => line.replace('<div>', `<div>${mark} `)).join('');
+            return `<tr>
+                <td class="wide-only ${cell} whitespace-nowrap text-gray-400">${when}</td>
+                <td class="wide-only ${cell} whitespace-nowrap text-gray-300">${team}</td>
+                <td class="wide-only ${cell}">${added.join('') || none}</td>
+                <td class="wide-only ${cell}">${dropped.join('') || none}</td>
+                <td class="narrow-only ${cell}">
+                    <div class="flex justify-between gap-2 text-xs"><span class="font-medium text-gray-300">${team}</span><span class="whitespace-nowrap text-gray-400">${when}</span></div>
+                    <div class="mt-1">${marked(added, '<span class="text-green-400 font-semibold">+</span>')}${marked(dropped, '<span class="text-red-300 font-semibold">&minus;</span>')}</div>
+                </td></tr>`;
+        }
+
+        // Adds (and how many were waiver claims), drops and trades per team
+        function renderTxTeams(saved, list, teamIds, mine) {
+            const counts = Object.fromEntries(teamIds.map(id => [id, { adds: 0, claims: 0, drops: 0, trades: 0 }]));
+            list.forEach(t => {
+                if (t.type === 'trade') {
+                    const sides = new Set(t.moves.flatMap(m => [m[1], m[2]]).concat((t.picks || []).flatMap(p => [p[1], p[2]])));
+                    sides.forEach(team => { if (counts[team]) counts[team].trades += 1; });
+                    return;
+                }
+                t.moves.forEach(([_id, from, to]) => {
+                    if (isPool(from) && counts[to]) {
+                        counts[to].adds += 1;
+                        if (from === 'waivers') counts[to].claims += 1;
+                    }
+                    if (isPool(to) && counts[from]) counts[from].drops += 1;
+                });
+            });
+            const order = teamIds.slice().sort((a, b) => counts[b].adds - counts[a].adds || Number(a) - Number(b));
+            const cell = n => `<td class="px-3 py-2 text-right ${n ? 'text-gray-200' : 'text-gray-600'}">${n}</td>`;
+            $('tx-teams').innerHTML = `
+                <table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th class="px-3 py-2 font-medium">Team</th>
+                            <th class="px-3 py-2 font-medium text-right">Adds</th>
+                            <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Off waivers</th>
+                            <th class="px-3 py-2 font-medium text-right">Drops</th>
+                            <th class="px-3 py-2 font-medium text-right">Trades</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        ${order.map(id => `
+                            <tr class="table-row-hover">
+                                <td class="px-3 py-2">
+                                    <button type="button" data-team="${esc(id)}" class="tx-team-pick text-left py-1 text-blue-400 hover:text-blue-300">${esc(txTeam(saved, id))}</button>${id === mine ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}
+                                </td>
+                                ${cell(counts[id].adds)}${cell(counts[id].claims)}${cell(counts[id].drops)}${cell(counts[id].trades)}
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        function renderTransactions() {
+            const saved = read(KEYS.transactions, null);
+            const has = !!(saved && Array.isArray(saved.transactions));
+            $('tx-section').classList.toggle('hidden', !has);
+            $('tx-teams-section').classList.toggle('hidden', !has);
+            if (!has) {
+                $('tx-status').textContent = 'Every add, drop and trade in your league this season, read from Yahoo.';
+                return;
+            }
+            // Yahoo names only the teams that have made a move. The roster
+            // scrape knows the rest, by the same Yahoo team number.
+            const rostered = Object.fromEntries((league.teams || [])
+                .filter(t => t.yahooTeamId).map(t => [String(t.yahooTeamId), t.name]));
+            saved.teams = { ...rostered, ...(saved.teams || {}) };
+            saved.players = saved.players || {};
+            const total = saved.transactions.length;
+            const scraped = saved.scrapedAt ? new Date(saved.scrapedAt).toLocaleString(undefined,
+                { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+            $('tx-status').textContent = `${total.toLocaleString()} transaction${total === 1 ? '' : 's'}`
+                + `${saved.league?.name ? ` in ${saved.league.name}` : ''}${saved.test ? ' (test league)' : ''}`
+                + `${scraped ? `, scraped ${scraped}` : ''}. Scrape again for the latest.`;
+
+            const teamIds = Object.keys(saved.teams).sort((a, b) => Number(a) - Number(b));
+            const mine = String(teamById(league.mine)?.yahooTeamId || '');
+            const teamValue = $('tx-team').value;
+            $('tx-team').innerHTML = '<option value="">All teams</option>' + teamIds.map(id =>
+                `<option value="${esc(id)}">${esc(txTeam(saved, id))}${id === mine ? ' (you)' : ''}</option>`).join('');
+            if (teamIds.includes(teamValue)) $('tx-team').value = teamValue;
+
+            const txWeeks = transactionWeeks(saved);
+            const weekValue = $('tx-week').value;
+            $('tx-week').innerHTML = '<option value="">All season</option>' + txWeeks.map(w =>
+                `<option value="${esc(w.key)}">${esc(w.label)}</option>`).join('');
+            if (txWeeks.some(w => w.key === weekValue)) $('tx-week').value = weekValue;
+
+            const week = txWeeks.find(w => w.key === $('tx-week').value);
+            const inWeek = t => !week || (d => d && d >= week.start && d <= week.end)(txDate(t));
+            const weekList = saved.transactions.filter(inWeek);
+            renderTxTeams(saved, weekList, teamIds, mine);
+
+            const team = $('tx-team').value;
+            const kind = $('tx-kind').value;
+            const involves = t => !team || t.moves.some(m => m[1] === team || m[2] === team)
+                || (t.picks || []).some(p => p[1] === team || p[2] === team);
+            const ofKind = t => !kind || (kind === 'trade' ? t.type === 'trade'
+                : t.type !== 'trade' && t.moves.some(m => (kind === 'add' ? isPool(m[1]) : isPool(m[2]))));
+            const list = weekList.filter(t => involves(t) && ofKind(t));
+
+            const moves = list.filter(t => t.type !== 'trade').flatMap(t => t.moves)
+                .filter(m => !team || m[1] === team || m[2] === team);
+            const adds = moves.filter(m => isPool(m[1])).length;
+            const drops = moves.filter(m => isPool(m[2])).length;
+            const trades = list.filter(t => t.type === 'trade').length;
+            $('tx-summary').textContent = `${list.length.toLocaleString()} transaction${list.length === 1 ? '' : 's'}`
+                + ` · ${adds} add${adds === 1 ? '' : 's'} · ${drops} drop${drops === 1 ? '' : 's'} · ${trades} trade${trades === 1 ? '' : 's'}`
+                + (list.length > TX_ROW_LIMIT ? `. Showing the newest ${TX_ROW_LIMIT} - pick a week or a team to see the rest.` : '.');
+
+            $('tx-body').innerHTML = !list.length
+                ? '<p class="text-gray-400 text-sm p-4">No transactions match.</p>'
+                : `<table class="data-table w-full text-left text-sm">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                        <tr>
+                            <th class="wide-only px-3 py-2 font-medium whitespace-nowrap">When (ET)</th>
+                            <th class="wide-only px-3 py-2 font-medium">Team</th>
+                            <th class="wide-only px-3 py-2 font-medium">Added</th>
+                            <th class="wide-only px-3 py-2 font-medium">Dropped</th>
+                            <th class="narrow-only px-3 py-2 font-medium">Transaction &middot; times ET</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">${list.slice(0, TX_ROW_LIMIT).map(t => txRow(saved, t)).join('')}</tbody>
+                </table>`;
+        }
+
+        ['tx-team', 'tx-week', 'tx-kind'].forEach(id => $(id).addEventListener('change', renderTransactions));
+
+        // A team picked in the summary filters the list, which sits below it
+        $('tx-teams').addEventListener('click', event => {
+            const pick = event.target.closest('.tx-team-pick');
+            if (!pick) return;
+            $('tx-team').value = pick.dataset.team;
+            renderTransactions();
+            $('tx-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
 
         // --- Plan ------------------------------------------------------------
         let planTimer = null;
@@ -3192,6 +3619,7 @@
                 $('league-id').value = localStorage.getItem(KEYS.yahooLeagueId) || '';
                 renderRemaining();
                 renderMatchup();
+                renderTransactions();
                 // A first visit has nothing to plan against, so open the form
                 setLeagueOpen(!activeCategories().length);
                 plan();
