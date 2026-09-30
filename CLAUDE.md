@@ -44,6 +44,8 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
 | `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
 | `yahoo_transactions.py` | A league's adds, drops and trades: Yahoo's public read-only API for public leagues, the Transactions page (via the bookmarklet) for private ones, one compact shape. See *Season History: transactions* |
+| `yahoo_league_api.py` | A public league's settings, weekly scoreboards and day-by-day rosters with stats, from Yahoo's public API, cached in `yahoo_public_cache`. See *Season History: left on the bench* |
+| `bench_points.py` | Pure: what benched players scored, and the single swaps that would have won or tied a category. See *Season History: left on the bench* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
 | `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
 | `goalie_planning.py` | Whether one more goalie start is worth the risk: outcomes, minutes and the limits. See *The Goalie Planning tab* |
@@ -670,9 +672,9 @@ top holds what every sub-page reads — **Your Team**, **Fantasy Week** (with
 *Only nights still to play*) and **Stat Sourcing**. Below it is a row of
 sub-page tabs, **League · Matchup · Lineups · Free Agents · Goalie Planning · Season History**,
 and the chosen one fills the panel under it. The site-wide nav keeps the corner
-the old Logout button had. Season History so far holds transactions only; the
-old site's bench points and category strength, and its Trade Helper and Tools
-tabs, are still to come.
+the old Logout button had. Season History so far holds transactions and bench
+points; the old site's category strength, and its Trade Helper and Tools tabs,
+are still to come.
 
 - Tabs only toggle visibility. Every panel stays in the page and is kept
   current whichever one is showing, so switching tabs never re-plans. The last
@@ -1224,11 +1226,67 @@ Test mode reads the completed 2025-26 league 22705, which turns out to be last
 season's copy of league 5848; weeks fall back to Monday-Sunday there, since
 fantasy weeks are loaded for the current season only.
 
+### Season History: left on the bench (`bench_points.py`, `yahoo_league_api.py`)
+
+The old site's bench points: what players scored while sitting on a bench,
+**all season** (a league table of bench games and the counting categories they
+left behind) and **week by week** (a team's bench appearances, the league's week
+at a glance, and — the salt in the wound — each single swap that would have won
+or tied a category, with what it would have cost). It loads when Season History
+is first opened, and as the fourth step of Update from Yahoo.
+
+**Public leagues only, for now.** Built from Yahoo's public API: one request per
+game day, `/league/<key>/teams/roster;date=D/players/stats;type=date;date=D`,
+gives every team's slot for each player and his stats that day. **Private
+leagues are the next step**: a team's own page by date
+(`/hockey/<id>/<team>?date=D`) shows the same lineup and that day's stats
+(`#statTable0` skaters, `#statTable1` goalies) — checked — so the bookmarklet
+could read 12 pages a day into the same day shape, kept in the browser rather
+than the shared cache.
+
+**`yahoo_league_api` caches in `yahoo_public_cache`**, keyed by Yahoo's league
+key, and only what can no longer change: a day before today (US Eastern), a
+week whose scoreboard says `postevent`; settings for six hours. So a season is
+read from Yahoo once, whoever asks: a whole completed season (180 days, 23
+weeks) took 47 s the first time and 0.4 s after. Public data only — nothing a
+private league sends is ever stored there. Days are read four at a time.
+
+**What counts.** A bench appearance is a BN slot on a day the player has stats
+(Yahoo's `-` is no game). IR, IR+ and NA never count: he could not have played.
+Season totals are counting categories only — GAA and SV% cannot be added up —
+and display-only categories (`is_only_display_stat`, often GA, SV, SA) are not
+scored at all.
+
+**A swap is one bench player for one starter on one day** — "played X over Y".
+X must fit Y's slot: listed there, or a generic he fits (F any forward, W a
+winger, Util any skater; a goalie only for a goalie). A starter with no game
+that day is included and marked — the cheapest swap there is. The week's totals
+are Yahoo's own from the scoreboard; a swap takes Y's line off and puts X's on,
+and every scored category is compared with the opponent again. Kept if it wins
+or ties at least one more category, with any it would lose shown beside it.
+Starters giving the same outcome are one line ("over Fox, Jones or Gavrikov"),
+and the best two outcomes per appearance are kept.
+
+- **Ratios are rebuilt, not skipped.** SV% from saves over shots against. GAA
+  from goals against over minutes, where a goalie's minutes come back out of
+  his own `GA x 60 / GAA` (a shutout counts 60) and the team's out of its week
+  GA and GAA. If a league does not carry the counts, the ratio is left as it
+  was rather than guessed.
+- **A counting category nobody has recorded yet is zero** (Yahoo's dash); a
+  ratio with nothing under it decides nothing.
+- **A week in progress is judged on the score so far**, and says so.
+- **Points leagues** get the bench totals but no swaps — they are decided on
+  fantasy points, which this does not score yet.
+
+The response is ~200 KB for a season (lines carry only non-zero stats) and is
+held in the page, not stored — the server's cache makes it quick to fetch again.
+
 ### Update from Yahoo (every scrape at once)
 
 **Update from Yahoo**, in League Home's settings bar, runs every scrape in the
 order they depend on each other: rosters (they carry each team's Yahoo number),
-the score so far (which needs yours), then transactions. Results show per step
+the score so far (which needs yours), transactions, then bench points (public
+leagues only; skipped with a note for private ones). Results show per step
 in `#update-panel`. `UPDATE_STEPS` in the page is the list — **a future scrape
 joins by adding a step there** and, for private leagues, a page to the
 bookmarklet's everything mode. It is shown to everyone, signed in or not.
@@ -1746,6 +1804,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; and the key lists in Python and JS not drifting. **It deletes every `zztest*` account** — do not use that prefix by hand |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
+| `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; and the route |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, and the routes |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |

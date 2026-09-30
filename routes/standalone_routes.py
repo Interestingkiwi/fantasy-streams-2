@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/29/2026
+Updated - 9/30/2026
 """
 
 import logging
@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
+import bench_points
 import daily_value as dv
 import opponent_strength as ops
 import goalie_planning
@@ -30,6 +31,7 @@ import player_form
 import week_planner
 import yahoo_matchup
 import yahoo_rosters
+import yahoo_league_api
 import yahoo_transactions
 from db import engine, fetch_all
 from lineup_utils import GENERIC_SLOTS, NON_STARTING_SLOTS
@@ -329,6 +331,37 @@ def scrape_transactions():
         return _roster_error(exc, yahoo_url=page_url)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Transactions scrape failed.")
+        return _error(str(exc), 500)
+
+
+@standalone_bp.route('/api/bench', methods=['POST'])
+def bench():
+    """
+    Bench points for the season so far: every benched player who played, and
+    the swaps that would have won or tied a category (see `bench_points`).
+    Body: league_id.
+
+    Public leagues only, from Yahoo's public API through `yahoo_league_api`,
+    whose cache makes every finished day a one-time read. A private league
+    answers 403 `private`; its day-by-day rosters are not read yet.
+    """
+    test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
+    try:
+        body = request.get_json(silent=True) or {}
+        info, days, weeks = yahoo_league_api.season(body.get('league_id'), test=test)
+        return jsonify({"status": "success", "source": "api", "test": test,
+                        "league": {"name": info.get("name"), "season": info.get("season"),
+                                   "currentWeek": info.get("currentWeek")},
+                        "asOf": days[-1]["date"] if days else None,
+                        **bench_points.summarise(info, days, weeks)})
+    except yahoo_rosters.RosterPageError as exc:
+        if exc.code == 'private':
+            exc = yahoo_rosters.RosterPageError(
+                'private', "Bench points need Yahoo's day-by-day rosters, which its public API only "
+                           "shares for public leagues. Private leagues are not supported yet.")
+        return _roster_error(exc)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Bench points failed.")
         return _error(str(exc), 500)
 
 

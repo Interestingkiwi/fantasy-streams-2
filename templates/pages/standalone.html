@@ -460,6 +460,28 @@
             </div>
             <div id="tx-body" class="overflow-x-auto"></div>
         </section>
+
+        <!-- Left on the bench: what benched players scored, and the swaps that would have changed a week -->
+        <section id="bench-section" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="flex-1 min-w-[14rem]">
+                    <h2 class="text-lg font-semibold text-white">Left on the bench</h2>
+                    <p id="bench-status" class="text-xs text-gray-500 mt-0.5">What benched players scored, and the swaps that would have won or tied a category.</p>
+                </div>
+                <button id="bench-load" type="button" class="column-toggle">Load bench points</button>
+            </div>
+            <div id="bench-controls" class="hidden p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="w-full sm:w-auto">
+                    <label for="bench-week" class="block mb-1 text-xs font-medium text-gray-400">Show</label>
+                    <select id="bench-week" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="bench-team" class="block mb-1 text-xs font-medium text-gray-400">Team</label>
+                    <select id="bench-team" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+            </div>
+            <div id="bench-body" class="text-sm"></div>
+        </section>
         </div>
 
     </main>
@@ -612,7 +634,11 @@
                 // when the tab is first opened rather than on every plan.
                 if (tab.dataset.tab === 'free-agents') ensurePool();
                 if (tab.dataset.tab === 'goalies') loadGoalies();
-                if (tab.dataset.tab === 'history') renderTransactions();
+                if (tab.dataset.tab === 'history') {
+                    renderTransactions();
+                    // A second request, so fetched when the tab is first opened
+                    if (!benchData) loadBench();
+                }
             }));
         window.addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
 
@@ -2493,6 +2519,224 @@
             $('tx-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
         });
 
+        // --- Season History: left on the bench -------------------------------
+        // Worked out by the server from Yahoo's day-by-day rosters (see
+        // bench_points.py) and held here rather than stored: ~200 KB for a
+        // season, and quick to fetch again from the server's cache.
+        let benchData = null;
+        let benchLoading = null;
+        const dayLabel = iso => fmt(iso, { weekday: 'short', month: 'short', day: 'numeric' });
+        const benchTeam = id => benchData.teams[id] || `Team ${id}`;
+        const benchCategory = id => benchData.categories.find(c => c.id === id);
+        const recordText = r => `${r[0]}-${r[1]}-${r[2]}`;
+
+        function benchValue(id, value) {
+            if (id === '26') return Number(value).toFixed(3).replace(/^0/, '');   // SV% as .912
+            if (id === '23') return Number(value).toFixed(2);                     // GAA as 2.50
+            return value;
+        }
+
+        function benchLine(stats) {
+            const parts = benchData.categories.filter(c => stats[c.id])
+                .map(c => `${benchValue(c.id, stats[c.id])} ${c.name}`);
+            return parts.length ? parts.join(' · ') : 'nothing in your categories';
+        }
+
+        function benchPlayer(id) {
+            const [name, nhl, positions] = benchData.players[id] || ['Unknown player', '', ''];
+            const detail = [nhl, positions].filter(Boolean).join(' · ');
+            return `<span class="text-white">${esc(name)}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
+        }
+
+        // "wins G, ties PPP" from [[id, 'win' | 'tie' | 'loss']]
+        function benchChanges(list) {
+            const words = { win: 'wins', tie: 'ties', loss: 'loses' };
+            return ['win', 'tie', 'loss'].map(kind => {
+                const names = list.filter(([, to]) => to === kind).map(([id]) => benchCategory(id)?.name || id);
+                return names.length ? `${words[kind]} ${names.join(', ')}` : '';
+            }).filter(Boolean).join(', ');
+        }
+
+        function starterList(starters) {
+            const names = starters.map(s => esc(benchData.players[s.id]?.[0] || 'a starter')
+                + (s.played ? '' : ' <span class="text-xs text-amber-300">(no game)</span>'));
+            return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names[0];
+        }
+
+        async function loadBench() {
+            if (benchLoading) return benchLoading;
+            const leagueId = savedLeagueId();
+            if (!ROSTER_TEST_MODE && !leagueId) {
+                $('bench-status').textContent = 'Enter your League ID on the League tab first - bench points are read from Yahoo.';
+                return { ok: false, message: 'no League ID yet' };
+            }
+            $('bench-load').disabled = true;
+            $('bench-status').textContent = 'Reading the season from Yahoo… the first time a league is read can take a minute; after that it is quick.';
+            benchLoading = postJSON('/standalone/api/bench', { league_id: leagueId }).then(answer => {
+                benchLoading = null;
+                $('bench-load').disabled = false;
+                if (!answer.ok) {
+                    $('bench-status').textContent = answer.data.message || 'Bench points could not be read.';
+                    return { ok: false, message: answer.data.message || 'could not be read' };
+                }
+                return applyBench(answer.data);
+            });
+            return benchLoading;
+        }
+
+        function applyBench(data) {
+            benchData = data;
+            const games = Object.values(data.season).reduce((n, s) => n + s.appearances, 0);
+            $('bench-status').textContent = `${data.league?.name || 'Your league'}${data.test ? ' (test league)' : ''}`
+                + `${data.asOf ? `, through ${dayLabel(data.asOf)}` : ''}: ${games} bench game${games === 1 ? '' : 's'} league-wide.`
+                + (data.swapsScored ? '' : ' Swaps are worked out for category leagues only.');
+
+            const weekValue = $('bench-week').value;
+            $('bench-week').innerHTML = '<option value="">All season</option>' + data.weeks.map(w =>
+                `<option value="${w.week}">Week ${w.week} · ${esc(shortDate(w.start))} – ${esc(shortDate(w.end))}`
+                + `${w.status === 'postevent' ? '' : ' (so far)'}</option>`).join('');
+            const latest = data.weeks[data.weeks.length - 1];
+            $('bench-week').value = data.weeks.some(w => String(w.week) === weekValue) ? weekValue
+                : latest ? String(latest.week) : '';
+
+            const ids = Object.keys(data.teams).sort((a, b) => Number(a) - Number(b));
+            const mine = String(teamById(league.mine)?.yahooTeamId || '');
+            const teamValue = $('bench-team').value;
+            $('bench-team').innerHTML = ids.map(id =>
+                `<option value="${esc(id)}">${esc(benchTeam(id))}${id === mine ? ' (you)' : ''}</option>`).join('');
+            $('bench-team').value = ids.includes(teamValue) ? teamValue : ids.includes(mine) ? mine : ids[0] || '';
+
+            $('bench-controls').classList.remove('hidden');
+            renderBench();
+            const swaps = data.weeks.reduce((n, w) => n + Object.values(w.teams).reduce((m, t) => m + t.swaps.length, 0), 0);
+            return { ok: true, message: `${games} bench game${games === 1 ? '' : 's'}, ${swaps} swap${swaps === 1 ? '' : 's'} that would have changed a category` };
+        }
+
+        function renderBench() {
+            if (!benchData) return;
+            const week = $('bench-week').value;
+            // The season view is the whole league; a week is one team's
+            $('bench-team').closest('div').classList.toggle('hidden', !week);
+            $('bench-body').innerHTML = week ? benchWeekHtml(Number(week)) : benchSeasonHtml();
+        }
+
+        function benchSeasonHtml() {
+            const categories = benchData.categories.filter(c => !c.ratio);
+            const mine = String(teamById(league.mine)?.yahooTeamId || '');
+            const rows = Object.keys(benchData.teams)
+                .map(id => ({ id, ...(benchData.season[id] || { appearances: 0, totals: {} }) }))
+                .sort((a, b) => b.appearances - a.appearances || Number(a.id) - Number(b.id));
+            return `
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="col-sticky px-3 py-2 font-medium">Team</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Bench games</th>
+                                ${categories.map(c => `<th class="px-3 py-2 font-medium text-right">${esc(c.name)}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700">
+                            ${rows.map(r => `
+                                <tr class="table-row-hover">
+                                    <td class="col-sticky px-3 py-2 ${r.id === mine ? 'text-white font-semibold' : 'text-gray-300'}">${esc(benchTeam(r.id))}${r.id === mine ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}</td>
+                                    <td class="px-3 py-2 text-right text-gray-200">${r.appearances}</td>
+                                    ${categories.map(c => `<td class="px-3 py-2 text-right ${r.totals[c.id] ? 'text-gray-200' : 'text-gray-600'}">${esc(r.totals[c.id] || 0)}</td>`).join('')}
+                                </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="px-3 sm:px-4 py-2 text-xs text-gray-500">
+                    What players scored while sitting on a bench (BN &mdash; IR never counts). GAA and save percentage cannot be added up, so they are left to the weeks.
+                </p>`;
+        }
+
+        function benchWeekHtml(weekNumber) {
+            const week = benchData.weeks.find(w => w.week === weekNumber);
+            if (!week) return '';
+            const team = $('bench-team').value;
+            const entry = week.teams[team] || { appearances: [], swaps: [], opponent: null };
+            const soFar = week.status !== 'postevent';
+            const list = items => `<ul class="divide-y divide-gray-700 border border-gray-700 rounded-md">${items.join('')}</ul>`;
+
+            const appearances = entry.appearances.map(a => `
+                <li class="p-2 sm:px-3 flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                    <span>${benchPlayer(a.player)}</span>
+                    <span class="text-xs text-gray-400">${esc(dayLabel(a.date))} &middot; ${esc(benchLine(a.stats))}</span>
+                </li>`);
+            const swaps = entry.swaps.map(s => `
+                <li class="p-2 sm:px-3">
+                    <p class="text-gray-300"><span class="text-xs text-gray-400">${esc(dayLabel(s.date))}</span>
+                        &mdash; playing ${benchPlayer(s.bench)} over ${starterList(s.starters)}
+                        <span class="text-xs text-gray-500">(${esc(s.starters[0]?.slot || '')})</span></p>
+                    <p class="text-xs mt-0.5">
+                        <span class="text-green-400 font-medium">${esc(benchChanges(s.gains))}</span>${s.losses.length
+                            ? ` <span class="text-red-300">but ${esc(benchChanges(s.losses))}</span>` : ''}
+                        <span class="text-gray-500"> &middot; ${recordText(s.before)} &rarr; ${recordText(s.after)}</span>
+                    </p>
+                </li>`);
+
+            // The league this week, for the shout-outs
+            const mine = String(teamById(league.mine)?.yahooTeamId || '');
+            const leagueRows = Object.keys(benchData.teams).map(id => {
+                const t = week.teams[id] || { appearances: [], swaps: [] };
+                const changed = new Set(t.swaps.flatMap(s => s.gains.map(([cat]) => cat)));
+                return { id, games: t.appearances.length, changed: changed.size };
+            }).sort((a, b) => b.games - a.games || b.changed - a.changed);
+
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-4">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">${esc(benchTeam(team))}: bench games this week</h3>
+                        ${appearances.length ? list(appearances)
+                            : '<p class="text-gray-400">Nobody who played sat on the bench.</p>'}
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">What one swap would have done${entry.opponent
+                            ? ` against ${esc(benchTeam(entry.opponent))}` : ''}${soFar ? ' <span class="text-xs text-gray-500 font-normal">(on the score so far)</span>' : ''}</h3>
+                        ${!benchData.swapsScored ? '<p class="text-gray-400">Worked out for category leagues only.</p>'
+                            : !entry.opponent ? '<p class="text-gray-400">No matchup this week.</p>'
+                            : swaps.length ? list(swaps)
+                            : '<p class="text-gray-400">No single swap would have won or tied another category.</p>'}
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">The league this week</h3>
+                        <div class="overflow-x-auto">
+                            <table class="data-table w-full text-left text-sm">
+                                <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                    <tr>
+                                        <th class="px-3 py-2 font-medium">Team</th>
+                                        <th class="px-3 py-2 font-medium text-right">Bench</th>
+                                        <th class="px-3 py-2 font-medium text-right">Swappable</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-700">
+                                    ${leagueRows.map(r => `
+                                        <tr class="table-row-hover">
+                                            <td class="px-3 py-2">
+                                                <button type="button" data-team="${esc(r.id)}" class="bench-team-pick text-left py-1 text-blue-400 hover:text-blue-300">${esc(benchTeam(r.id))}</button>${r.id === mine ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}
+                                            </td>
+                                            <td class="px-3 py-2 text-right ${r.games ? 'text-gray-200' : 'text-gray-600'}">${r.games}</td>
+                                            <td class="px-3 py-2 text-right ${r.changed ? 'text-amber-300 font-semibold' : 'text-gray-600'}">${r.changed}</td>
+                                        </tr>`).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">Bench: games played by benched players. Swappable: categories a single swap would have won or tied. Select a team to see its week.</p>
+                    </div>
+                </div>`;
+        }
+
+        $('bench-load').addEventListener('click', () => loadBench());
+        ['bench-week', 'bench-team'].forEach(id => $(id).addEventListener('change', renderBench));
+        $('bench-body').addEventListener('click', event => {
+            const pick = event.target.closest('.bench-team-pick');
+            if (!pick) return;
+            $('bench-team').value = pick.dataset.team;
+            renderBench();
+            $('bench-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
+
         // --- Update everything from Yahoo -------------------------------------
         // Every scrape in one go, in the order they depend on each other:
         // rosters first (they carry each team's Yahoo number), then the score
@@ -2567,6 +2811,14 @@
                     return { ok: true, message: `${n.toLocaleString()} read` };
                 },
             },
+            {
+                name: 'Bench points',
+                // Built from Yahoo's public API; a private league's day-by-day
+                // rosters would need a dozen pages a day through the bookmarklet
+                skip: source => (source.kind === 'server' ? null : 'not available for private leagues yet'),
+                fetch: source => source.bench(),
+                apply: applyBench,
+            },
         ];
 
         const serverSource = leagueId => ({
@@ -2576,6 +2828,7 @@
                 league_id: leagueId, week: selectedWeek()?.week, team: teamById(league.mine)?.yahooTeamId,
             }),
             transactions: () => postJSON('/standalone/api/transactions/scrape', { league_id: leagueId }),
+            bench: () => postJSON('/standalone/api/bench', { league_id: leagueId }),
         });
 
         // What the bookmarklet sent: each page's HTML and the Yahoo address it came from
@@ -3868,6 +4121,7 @@
                 renderRemaining();
                 renderMatchup();
                 renderTransactions();
+                if (!$('tab-history').classList.contains('hidden')) loadBench();
                 // A first visit has nothing to plan against, so open the form
                 setLeagueOpen(!activeCategories().length);
                 plan();

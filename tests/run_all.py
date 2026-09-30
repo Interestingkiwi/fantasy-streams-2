@@ -40,6 +40,7 @@ TESTS = [
     "test_yahoo_rosters.py",
     "test_yahoo_matchup.py",
     "test_yahoo_transactions.py",
+    "test_bench_points.py",
     "test_player_form.py",
     "test_goalie_planning.py",
     "test_accounts.py",

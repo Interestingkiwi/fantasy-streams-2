@@ -13,7 +13,7 @@ eventual path once the schema stabilises.
 
 Author - Jason Druckenmiller
 Created - 9/6/2026
-Updated - 9/29/2026
+Updated - 9/30/2026
 """
 
 import logging
@@ -357,7 +357,24 @@ ACCOUNT_DDL = [
     "CREATE INDEX IF NOT EXISTS account_leagues_account ON account_leagues (account_id)",
 ]
 
-ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL + ACCOUNT_DDL
+# --- Yahoo's public API, cached -------------------------------------------------
+# What yahoo_league_api.py reads from Yahoo's public read-only API for public
+# leagues: settings, weekly scoreboards, each day's rosters with stats. Keyed
+# by Yahoo's league key ("477.l.5848") and what was read. Only data that can no
+# longer change is kept - a finished day, a finished week - so a season is read
+# from Yahoo once. Public data only: nothing a private league sends goes here.
+
+PUBLIC_CACHE_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS yahoo_public_cache (
+        cache_key TEXT PRIMARY KEY,
+        payload JSONB NOT NULL,
+        fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+]
+
+ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL + ACCOUNT_DDL + PUBLIC_CACHE_DDL
 
 
 def init_schema(strict=False):

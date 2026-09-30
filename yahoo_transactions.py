@@ -53,7 +53,7 @@ from the page, which does not show one.
 
 Author - Jason Druckenmiller
 Created - 9/29/2026
-Updated - 9/29/2026
+Updated - 9/30/2026
 """
 
 import re
@@ -98,7 +98,7 @@ def league_key(league_id, test=False):
 
 # --------------------------------------------------------------------- the API
 
-def _api_error(response):
+def api_error(response):
     if response.status_code == 401:
         return RosterPageError(
             "private",
@@ -129,7 +129,7 @@ def fetch_api(league_id, test=False, session=None):
         except requests.RequestException as exc:
             raise RosterPageError("unreachable", f"Could not reach Yahoo: {exc}") from exc
         if response.status_code != 200:
-            raise _api_error(response)
+            raise api_error(response)
         try:
             content = response.json()["fantasy_content"]["league"]
         except (ValueError, KeyError, TypeError) as exc:
