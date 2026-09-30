@@ -32,7 +32,7 @@ alerting on non-zero does not fire every night before the season starts.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/8/2026
+Updated - 9/30/2026
 """
 
 import argparse
@@ -45,6 +45,9 @@ import scrape_team_stats
 from db import engine, text
 
 log = logging.getLogger("nightly")
+
+# How far back each night looks for games missing faceoffs
+FACEOFF_LOOKBACK_DAYS = 14
 
 
 def season_first_game():
@@ -98,6 +101,14 @@ def run(target, force=False):
 
     games = scrape_game_results.run(stamp, stamp)
     log.info("Game results: %d rows.", games)
+
+    # Faceoffs were collected from 9/30/2026; games scraped before that - or
+    # on any night the report came back short - are filled in over a short
+    # look-back, so a deployment catches up without a manual backfill.
+    filled = scrape_game_results.fill_missing_faceoffs(
+        target - timedelta(days=FACEOFF_LOOKBACK_DAYS), target)
+    if filled:
+        log.info("Faceoffs filled on %d earlier rows.", filled)
 
     # Team windows are rolled up from games, so they follow rather than lead.
     # week_end is the night just scraped, which keeps the trailing windows

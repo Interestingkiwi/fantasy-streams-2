@@ -593,6 +593,10 @@
             lineupEdits: 'fs_lineupEdits',
             goalieStats: 'fs_standaloneGoalieStats',
             transactions: 'fs_leagueTransactions',
+            // A private league's daily lineups, read by the bookmarklet for bench
+            // points. Kept on this device only - ~3 KB a day, too much to sync -
+            // and read again from Yahoo on another.
+            benchLineups: 'fs_benchLineups',
         };
 
         function read(key, fallback) {
@@ -1149,6 +1153,9 @@
             var everything = !!base && (/fs-all/.test(location.hash)
                 || location.pathname.replace(/\/$/, '') === base);
             var week = (location.hash.match(/[#&]week=(\d+)/) || [])[1];
+            // Bench points: the days and weeks of lineups League Home still lacks
+            var benchDays = location.hash.match(/[#&]bench=(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})/);
+            var benchWeeks = location.hash.match(/[#&]weeks=(\d+)-(\d+)/);
             if (!onYahoo || !(rosters || matchup || transactions || everything)) {
                 alert('Open your league on Yahoo - its home, Starting Rosters, Matchup or Transactions page - signed in, then select this bookmark again.');
                 return;
@@ -1260,6 +1267,86 @@
                 matchupUrl: location.origin + base + '/matchup' + (week ? '?week=' + week + '&module=matchup' : ''),
                 transactionsUrl: location.origin + base + '/transactions',
             };
+            // Each Starting Rosters page by date reduced here to [id, slot, name,
+            // 'TEAM - POS'] per player - a few KB a day instead of a megabyte
+            function lineupsFrom(page) {
+                var teams = {};
+                Array.prototype.forEach.call(page.querySelectorAll('table[id^="Tst-team-"]'), function (table) {
+                    var rows = [];
+                    Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (tr) {
+                        var slot = tr.querySelector('td.pos');
+                        var link = tr.querySelector('.ysf-player-name a.name');
+                        if (!slot || !link) return;
+                        var id = (link.getAttribute('href') || '').match(/players\/(\d+)/);
+                        var info = tr.querySelector('.ysf-player-name .D-b .Fz-xxs');
+                        rows.push([id ? id[1] : null, slot.textContent.trim().toUpperCase(),
+                                   link.getAttribute('title') || link.textContent.trim(),
+                                   info ? info.textContent.trim() : '']);
+                    });
+                    teams[table.id.replace('Tst-team-', '')] = rows;
+                });
+                return teams;
+            }
+            // A week's pairings, from the matchup links on League Home
+            function pairsFrom(page) {
+                var pairs = [];
+                Array.prototype.forEach.call(page.querySelectorAll('a[href*="mid2="]'), function (link) {
+                    var found = (link.getAttribute('href') || '').match(/mid1=(\d+).*mid2=(\d+)/);
+                    if (found && !pairs.some(function (p) { return p[0] === found[1] && p[1] === found[2]; })) {
+                        pairs.push([found[1], found[2]]);
+                    }
+                });
+                return pairs;
+            }
+            function addDay(iso) {
+                var day = new Date(iso + 'T12:00:00Z');
+                day.setUTCDate(day.getUTCDate() + 1);
+                return day.toISOString().slice(0, 10);
+            }
+            // Three pages at a time; a season caught up at once is ~180 of them
+            function readBench(done) {
+                var bench = { dates: {}, pairs: {} };
+                var jobs = [];
+                if (benchDays) {
+                    for (var day = benchDays[1]; day <= benchDays[2] && jobs.length < 300; day = addDay(day)) jobs.push(['date', day]);
+                }
+                if (benchWeeks) {
+                    for (var w = +benchWeeks[1]; w <= +benchWeeks[2]; w++) jobs.push(['week', w]);
+                }
+                var total = jobs.length;
+                var finished = 0;
+                var running = 0;
+                var stopped = false;
+                function pump() {
+                    if (stopped) return;
+                    if (!jobs.length && !running) {
+                        document.title = title;
+                        done(JSON.stringify(bench));
+                        return;
+                    }
+                    while (running < 3 && jobs.length) {
+                        (function (job) {
+                            running += 1;
+                            var url = job[0] === 'date' ? base + '/startingrosters?date=' + job[1]
+                                : base + '?matchup_week=' + job[1] + '&module=matchups';
+                            getText(url).then(function (text) {
+                                var page = new DOMParser().parseFromString(text, 'text/html');
+                                if (job[0] === 'date') bench.dates[job[1]] = lineupsFrom(page);
+                                else bench.pairs[job[1]] = pairsFrom(page);
+                                running -= 1;
+                                finished += 1;
+                                document.title = 'Reading lineups, ' + finished + ' of ' + total + '…';
+                                pump();
+                            }).catch(function (error) {
+                                stopped = true;
+                                fail(error);
+                            });
+                        })(jobs.shift());
+                    }
+                }
+                pump();
+            }
+
             document.title = 'Reading rosters…';
             getText(sent.rostersUrl).then(function (html) {
                 sent.rosters = html;
@@ -1269,7 +1356,14 @@
                 sent.matchup = html;
                 readTransactions(base + '/transactions', function (tables) {
                     sent.transactions = tables;
-                    deliver(sent);
+                    if (!benchDays && !benchWeeks) {
+                        deliver(sent);
+                        return;
+                    }
+                    readBench(function (bench) {
+                        sent.bench = bench;
+                        deliver(sent);
+                    });
                 });
             }).catch(fail);
         }
@@ -1509,6 +1603,10 @@
                 const fields = ['rosters', 'matchup', 'transactions', 'rostersUrl', 'matchupUrl', 'transactionsUrl'];
                 if (!fields.every(key => typeof data[key] === 'string')) return;
                 if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
+                // Lineups for bench points, when the link asked for any
+                if (typeof data.bench === 'string') {
+                    try { mergeBench(JSON.parse(data.bench)); } catch (error) { /* read as nothing */ }
+                }
                 runUpdate(pageSource({ ...Object.fromEntries(fields.map(key => [key, data[key]])),
                     timeZone: String(data.timeZone || '') }));
                 return;
@@ -2531,8 +2629,12 @@
         const recordText = r => `${r[0]}-${r[1]}-${r[2]}`;
 
         function benchValue(id, value) {
-            if (id === '26') return Number(value).toFixed(3).replace(/^0/, '');   // SV% as .912
-            if (id === '23') return Number(value).toFixed(2);                     // GAA as 2.50
+            if (id === '26' || id === '15') return Number(value).toFixed(3).replace(/^0/, '');   // SV%, SH% as .912
+            if (id === '23') return Number(value).toFixed(2);                                    // GAA as 2.50
+            if (id === '33' || id === '28') {                                                    // TOI as 18:32
+                const seconds = Math.round(Number(value) * 60);
+                return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+            }
             return value;
         }
 
@@ -2563,6 +2665,74 @@
             return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names[0];
         }
 
+        // A private league's lineups, as the bookmarklet read them: {league,
+        // season, private, dates: {date: {team: [[yahooId, slot]]}}, players:
+        // {yahooId: [name, 'TEAM - POS']}, pairs: {week: [[team, team]]}}.
+        // Another league or season starts afresh.
+        function benchStore() {
+            const league = ROSTER_TEST_MODE ? 'test' : String(savedLeagueId() || '');
+            const season = String(weekData?.season?.start || '');
+            const stored = read(KEYS.benchLineups, null);
+            return stored && stored.league === league && stored.season === season ? stored
+                : { league, season, private: false, dates: {}, players: {}, pairs: {} };
+        }
+
+        // Folds what the bookmarklet sent into the store. A date whose page
+        // came back with no rosters (a sign-in page, say) is not kept, so it is
+        // asked for again next time.
+        function mergeBench(bench) {
+            const stored = benchStore();
+            stored.private = true;
+            for (const [when, teams] of Object.entries(bench.dates || {})) {
+                if (!teams || !Object.keys(teams).length) continue;
+                stored.dates[when] = {};
+                for (const [team, rows] of Object.entries(teams)) {
+                    stored.dates[when][team] = (rows || []).filter(r => r && r[0]).map(([id, slot, name, info]) => {
+                        stored.players[id] = [String(name || ''), String(info || '')];
+                        return [String(id), String(slot || '')];
+                    });
+                }
+            }
+            for (const [week, pairs] of Object.entries(bench.pairs || {})) {
+                if (Array.isArray(pairs) && pairs.length) stored.pairs[week] = pairs;
+            }
+            write(KEYS.benchLineups, stored);
+            return stored;
+        }
+
+        const easternToday = () => txDay.format(new Date());
+
+        // The days and weeks the store still lacks, for the bookmarklet's link:
+        // every game day from the first one missing up to yesterday, and the
+        // pairings of every week begun that has none
+        function benchHash() {
+            if (!weeks.length) return '';
+            const stored = benchStore();
+            const yesterday = isoPlus(easternToday(), -1);
+            let first = null;
+            for (let day = weeks[0].start; day <= yesterday; day = isoPlus(day, 1)) {
+                if (!stored.dates[day]) { first = day; break; }
+            }
+            const missing = weeks.filter(w => w.start <= easternToday() && !stored.pairs[String(w.week)]);
+            return (first ? `&bench=${first}..${yesterday}` : '')
+                + (missing.length ? `&weeks=${missing[0].week}-${missing[missing.length - 1].week}` : '');
+        }
+
+        function benchRequest() {
+            const stored = benchStore();
+            const yesterday = isoPlus(easternToday(), -1);
+            const cats = activeCategories();
+            return {
+                lineups: { dates: stored.dates, players: stored.players, pairs: stored.pairs },
+                weeks: weeks.filter(w => w.start <= yesterday).map(w => ({ week: w.week, start: w.start, end: w.end })),
+                categories: cats.map(c => c.column),
+                league_mode: leagueMode,
+                names: Object.fromEntries(league.teams.filter(t => t.yahooTeamId).map(t => [t.yahooTeamId, t.name])),
+            };
+        }
+
+        const benchStored = () => Object.keys(benchStore().dates).length > 0;
+
         async function loadBench() {
             if (benchLoading) return benchLoading;
             const leagueId = savedLeagueId();
@@ -2572,7 +2742,17 @@
             }
             $('bench-load').disabled = true;
             $('bench-status').textContent = 'Reading the season from Yahoo… the first time a league is read can take a minute; after that it is quick.';
-            benchLoading = postJSON('/standalone/api/bench', { league_id: leagueId }).then(answer => {
+            benchLoading = (async () => {
+                // A league already known to be private goes straight to its stored lineups
+                let answer = benchStore().private ? null
+                    : await postJSON('/standalone/api/bench', { league_id: leagueId });
+                if (!answer || (!answer.ok && answer.data.code === 'private')) {
+                    const stored = benchStore();
+                    if (!stored.private) write(KEYS.benchLineups, { ...stored, private: true });
+                    answer = benchStored() ? await postJSON('/standalone/api/bench/lineups', benchRequest())
+                        : { ok: false, data: { message: 'This league is private, so its lineups are read through the '
+                            + 'bookmarklet: select Update from Yahoo at the top of the page.' } };
+                }
                 benchLoading = null;
                 $('bench-load').disabled = false;
                 if (!answer.ok) {
@@ -2580,16 +2760,23 @@
                     return { ok: false, message: answer.data.message || 'could not be read' };
                 }
                 return applyBench(answer.data);
-            });
+            })();
             return benchLoading;
         }
 
         function applyBench(data) {
             benchData = data;
             const games = Object.values(data.season).reduce((n, s) => n + s.appearances, 0);
+            // From stored lineups (a private league) it is only as current as the last read
+            const notes = [
+                data.swapsScored ? '' : 'Swaps are worked out for category leagues only.',
+                data.source === 'browser' ? 'Read from your lineups on Yahoo - Update from Yahoo reads the days since.' : '',
+                (data.unsupported || []).length ? `${data.unsupported.join(', ')} cannot be counted from game data.` : '',
+                (data.unmatched || []).length ? `${data.unmatched.length} player${data.unmatched.length === 1 ? '' : 's'} not matched to NHL data: ${data.unmatched.slice(0, 5).join(', ')}.` : '',
+            ].filter(Boolean).join(' ');
             $('bench-status').textContent = `${data.league?.name || 'Your league'}${data.test ? ' (test league)' : ''}`
                 + `${data.asOf ? `, through ${dayLabel(data.asOf)}` : ''}: ${games} bench game${games === 1 ? '' : 's'} league-wide.`
-                + (data.swapsScored ? '' : ' Swaps are worked out for category leagues only.');
+                + (notes ? ` ${notes}` : '');
 
             const weekValue = $('bench-week').value;
             $('bench-week').innerHTML = '<option value="">All season</option>' + data.weeks.map(w =>
@@ -2812,10 +2999,9 @@
                 },
             },
             {
+                // Public: Yahoo's API. Private: the lineups the bookmarklet just
+                // read, merged into this device's store, with our game stats.
                 name: 'Bench points',
-                // Built from Yahoo's public API; a private league's day-by-day
-                // rosters would need a dozen pages a day through the bookmarklet
-                skip: source => (source.kind === 'server' ? null : 'not available for private leagues yet'),
                 fetch: source => source.bench(),
                 apply: applyBench,
             },
@@ -2839,11 +3025,14 @@
             transactions: () => postJSON('/standalone/api/transactions/parse', {
                 html: pages.transactions, url: pages.transactionsUrl, timeZone: pages.timeZone,
             }),
+            bench: () => (benchStored() ? postJSON('/standalone/api/bench/lineups', benchRequest())
+                : Promise.resolve({ ok: false, data: { message: 'no lineups were read' } })),
         });
 
         function yahooEverythingUrl() {
             const week = selectedWeek()?.week;
-            const hash = `#fs-all${week ? `&week=${week}` : ''}`;
+            // Bench points: the days and weeks of lineups this device still lacks
+            const hash = `#fs-all${week ? `&week=${week}` : ''}${benchHash()}`;
             if (ROSTER_TEST_MODE) return ROSTER_TEST_URL + hash;
             const id = savedLeagueId();
             return id ? `https://hockey.fantasysports.yahoo.com/hockey/${id}/startingrosters${hash}` : null;

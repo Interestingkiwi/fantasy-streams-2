@@ -12,7 +12,7 @@ they fetch.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/8/2026
+Updated - 9/30/2026
 """
 
 import os
@@ -64,11 +64,20 @@ def stub_teams(**kwargs):
     return 32
 
 
+faceoff_windows = []
+
+
+def stub_faceoffs(since, until):
+    faceoff_windows.append((since, until))
+    return 0
+
+
 original = (nightly.scrape_game_results.run, nightly.scrape_team_stats.run,
-            nightly.season_first_game)
+            nightly.season_first_game, nightly.scrape_game_results.fill_missing_faceoffs)
 try:
     nightly.scrape_game_results.run = stub_results
     nightly.scrape_team_stats.run = stub_teams
+    nightly.scrape_game_results.fill_missing_faceoffs = stub_faceoffs
     nightly.season_first_game = lambda: OPENING
 
     calls.clear()
@@ -88,6 +97,9 @@ try:
           calls[0][0] == "results" and calls[1][0] == "teams", calls)
     check("the trailing windows end on the night just scraped",
           calls[1][1] == OPENING, calls[1])
+    check("and earlier games missing faceoffs are looked for over a short look-back",
+          faceoff_windows and faceoff_windows[-1] == (OPENING - nightly.timedelta(days=14), OPENING),
+          faceoff_windows)
 
     # A missing schedule must not raise - the cron would alert nightly.
     nightly.season_first_game = lambda: None
@@ -96,7 +108,7 @@ try:
           nightly.run(date(2027, 1, 1)) is False and not calls, calls)
 finally:
     (nightly.scrape_game_results.run, nightly.scrape_team_stats.run,
-     nightly.season_first_game) = original
+     nightly.season_first_game, nightly.scrape_game_results.fill_missing_faceoffs) = original
 
 
 # --------------------------------------------------------------------------

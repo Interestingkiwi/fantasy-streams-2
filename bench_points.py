@@ -21,8 +21,8 @@ line off and puts the bench player's on, and each scored category is compared
 with the opponent's total again. Only swaps that win or tie at least one
 category more are kept, with anything they would have cost shown beside it.
 
-**Ratio categories are recomputed, not skipped.** SV% from saves over shots
-against; GAA from goals against over minutes, where a goalie's minutes come
+**Ratio categories are recomputed, not skipped.** SH% from goals over shots;
+SV% from saves over shots against; GAA from goals against over minutes, where a goalie's minutes come
 back out of his own GAA (`GA x 60 / GAA`, exact - see `goalie_planning`) and a
 team's out of its week's GA and GAA. A shutout has no GAA to invert and counts
 as 60 minutes. When a league does not carry the counts a ratio needs, that
@@ -45,9 +45,10 @@ OUTCOME = {1: "win", 0: "tie", -1: "loss"}
 FORWARDS = frozenset({"C", "LW", "RW"})
 GENERIC = {"F": FORWARDS, "W": frozenset({"LW", "RW"}), "Util": FORWARDS | {"D"}}
 
-# Yahoo stat ids for the goalie counts a ratio is rebuilt from
+# Yahoo stat ids for the counts a ratio is rebuilt from
 GA, GAA, SA, SV, SV_PCT = "22", "23", "24", "25", "26"
-RATIOS = frozenset({GAA, SV_PCT})
+GOALS, SHOTS, SH_PCT = "1", "14", "15"
+RATIOS = frozenset({GAA, SV_PCT, SH_PCT})
 
 
 def played(stats):
@@ -108,6 +109,10 @@ def swapped_totals(totals, starter, bench, categories):
         after[stat] = _value(totals, stat) - _value(starter, stat) + _value(bench, stat)
 
     ids = {c["id"] for c in categories}
+    if SH_PCT in ids and totals.get(GOALS) is not None and totals.get(SHOTS) is not None:
+        goals = _value(totals, GOALS) - _value(starter, GOALS) + _value(bench, GOALS)
+        shots = _value(totals, SHOTS) - _value(starter, SHOTS) + _value(bench, SHOTS)
+        after[SH_PCT] = goals / shots if shots else None
     if SV_PCT in ids and totals.get(SV) is not None and totals.get(SA) is not None:
         saves = _value(totals, SV) - _value(starter, SV) + _value(bench, SV)
         shots = _value(totals, SA) - _value(starter, SA) + _value(bench, SA)

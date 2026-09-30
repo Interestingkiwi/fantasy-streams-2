@@ -244,16 +244,123 @@ try:
         check("bench points come back for a public league", answer.status_code == 200
               and data["season"]["1"]["appearances"] == 2 and data["asOf"] == "2026-10-06", data.get("message"))
         private = client.post("/standalone/api/bench", json={"league_id": "4"})
-        check("a private league is a 403 that says why", private.status_code == 403
-              and "public leagues" in private.get_json()["message"], private.get_json())
+        check("a private league is a 403 that points at the bookmarklet", private.status_code == 403
+              and "bookmarklet" in private.get_json()["message"], private.get_json())
     finally:
         api.season = real
 
     home = client.get("/standalone/").data.decode("utf-8")
     check("Season History has the bench section, and Update from Yahoo loads it",
           'id="bench-section"' in home and "name: 'Bench points'" in home)
+    check("the bookmarklet reads a day's lineups from Starting Rosters, and a week's pairings",
+          "/startingrosters?date=" in home and "module=matchups" in home and "fs_benchLineups" in home)
 except Exception as exc:                                    # noqa: BLE001
     check("route checks ran", False, f"{type(exc).__name__}: {exc}")
+
+
+# --------------------------------------------------------------------------
+print("\n=== 6. private leagues: lineups from the pages, stats from our games ===")
+
+import bench_lineups as bl                                  # noqa: E402
+
+skater_row = {"goals": 1, "assists": 2, "points": 3, "plusMinus": -1, "penaltyMinutes": 2,
+              "ppGoals": 1, "ppPoints": 2, "shGoals": 0, "shPoints": 0, "gameWinningGoals": 1,
+              "shots": 4, "hits": 3, "blockedShots": 1, "timeOnIce": 1200}
+line = bl.game_line(skater_row)
+check("a skater's game becomes Yahoo's stats, PPA worked out from PPP and PPG",
+      line["1"] == 1 and line["2"] == 2 and line["8"] == 2 and line["7"] == 1 and line["14"] == 4
+      and line["31"] == 3 and "toi" not in line, line)
+goalie_row = {"gamesStarted": 1, "wins": 1, "losses": 0, "goalsAgainst": 2, "shotsAgainst": 30,
+              "saves": 28, "shutouts": 0, "timeOnIce": 3690}
+g_line = bl.game_line(goalie_row)
+check("a goalie's GAA comes from his own seconds, not an assumed hour",
+      abs(g_line["23"] - 2 * 3600 / 3690) < 1e-9 and abs(g_line["26"] - 28 / 30) < 1e-9
+      and g_line["toi"] == 3690, g_line)
+
+check("time on ice counts in minutes, and shooting percentage is goals over shots",
+      line["33"] == 20 and abs(line["15"] - 0.25) < 1e-9, line)
+check("faceoffs come through when the row has them",
+      bl.game_line({**skater_row, "faceoffWins": 12, "faceoffLosses": 9})["16"] == 12
+      and bl.game_line({**skater_row, "faceoffWins": 12, "faceoffLosses": 9})["17"] == 9)
+check("and a row scraped before faceoffs were collected has none, not zero",
+      "16" not in line and "17" not in line, line)
+
+info, unsupported = bl.league_info(["G", "A", "HIT", "GAA", "SVpct", "FW", "FL", "TOI", "OTL"])
+check("League Home's categories become Yahoo's, lower-better where they are",
+      [c["id"] for c in info["categories"]] == ["1", "2", "31", "23", "26", "16", "17", "33"]
+      and next(c for c in info["categories"] if c["id"] == "23")["higherBetter"] is False
+      and next(c for c in info["categories"] if c["id"] == "17")["higherBetter"] is False, info)
+check("faceoffs and time on ice are covered; only what Yahoo has no stat for is not",
+      unsupported == ["OTL"], unsupported)
+shooting = bp.swapped_totals({G: 3, "14": 30, "15": 0.1}, {G: 0, "14": 4}, {G: 2, "14": 3},
+                             [cat(G, "G"), cat("14", "SOG"), cat("15", "SH%")])
+check("shooting percentage is rebuilt from goals over shots, not added",
+      abs(shooting["15"] - 5 / 29) < 1e-9, shooting)
+check("and Yahoo's MM:SS time on ice is read as minutes",
+      abs(api.number("18:30") - 18.5) < 1e-9 and api.number("1:xx") is None)
+check("the page's 'TEAM - POS' splits into team and positions",
+      bl.split_info("COL - C,LW") == ("COL", ["C", "LW"]) and bl.split_info("") == ("", []))
+
+POOL = [
+    {"playerId": 100, "fullName": "Elias Pettersson", "teamAbbrevs": "VAN", "positionCode": "C"},
+    {"playerId": 200, "fullName": "Elias Pettersson", "teamAbbrevs": "VAN", "positionCode": "D"},
+    {"playerId": 300, "fullName": "Mitch Marner", "teamAbbrevs": "VGK", "positionCode": "R"},
+    {"playerId": 400, "fullName": "Anze Kopitar", "teamAbbrevs": "LAK", "positionCode": "C"},
+]
+ids = bl.match_players({"7909": ["Elias Pettersson", "VAN - C"], "8645": ["Elias Pettersson", "VAN - D"],
+                        "5387": ["Mitch Marner", "VGK - RW"], "3637": ["Anze Kopitar", "LA - C"]}, POOL)
+check("two Elias Petterssons are told apart by the page's positions, with no call to Yahoo",
+      ids.get("7909") == 100 and ids.get("8645") == 200, ids)
+check("everyone else matches by name", ids.get("5387") == 300 and ids.get("3637") == 400, ids)
+
+LINEUPS = {
+    "dates": {
+        "2026-10-06": {"1": [["5387", "RW"], ["3637", "BN"], ["7909", "C"]],
+                       "2": [["8645", "D"]]},
+        "2026-10-07": {"1": [["5387", "RW"], ["3637", "C"], ["7909", "BN"]],
+                       "2": [["8645", "D"]]},
+    },
+    "players": {"5387": ["Mitch Marner", "VGK - RW"], "3637": ["Anze Kopitar", "LA - C"],
+                "7909": ["Elias Pettersson", "VAN - C"], "8645": ["Elias Pettersson", "VAN - D"]},
+    "pairs": {"1": [["1", "2"]]},
+}
+LINES = {
+    (300, "2026-10-06"): bl.game_line({**skater_row, "goals": 1, "assists": 0, "points": 1}),
+    (400, "2026-10-06"): bl.game_line({**skater_row, "goals": 2, "assists": 0, "points": 2}),   # benched
+    (100, "2026-10-06"): bl.game_line({**skater_row, "goals": 0, "assists": 0, "points": 0}),
+    (200, "2026-10-06"): bl.game_line({**skater_row, "goals": 3, "assists": 0, "points": 3}),
+    (400, "2026-10-07"): bl.game_line({**skater_row, "goals": 1, "assists": 0, "points": 1}),
+}
+DAYS_P = bl.build_days(LINEUPS, ids, LINES)
+day_one = {r[0]: r for r in DAYS_P[0]["teams"]["1"]}
+check("a day's rows carry the slot, the page's positions and that night's stats",
+      day_one["3637"][1] == "BN" and day_one["3637"][2] == ["C"] and day_one["3637"][3]["1"] == 2, day_one)
+check("a player with no game that night has no stats",
+      {r[0]: r for r in DAYS_P[1]["teams"]["1"]}["7909"][3] == {})
+WEEKS_P = bl.build_weeks([{"week": 1, "start": "2026-10-05", "end": "2026-10-11"}], LINEUPS, ids, LINES,
+                         "2026-10-20", bp.NOT_STARTING)
+totals = WEEKS_P[0]["matchups"][0]["totals"]
+check("a week's totals count starters only - Kopitar's two benched goals are not in",
+      totals["1"]["1"] == 1 + 0 + 1 and totals["2"]["1"] == 3, totals)
+check("a week that has ended is final", WEEKS_P[0]["status"] == "postevent")
+PRIVATE = bp.summarise({"scoring": "head", "categories": [cat(G, "G")]}, DAYS_P, WEEKS_P)
+kopitar = PRIVATE["weeks"][0]["teams"]["1"]
+check("and bench_points reads it as it reads the public shape: Kopitar's benched night is an appearance",
+      [a["player"] for a in kopitar["appearances"]] == ["3637"], kopitar["appearances"])
+check("with the swap over the centre who did nothing, which turns a 2-3 loss in G into a 4-3 win",
+      kopitar["swaps"] and [st["id"] for st in kopitar["swaps"][0]["starters"]] == ["7909"]
+      and dict(kopitar["swaps"][0]["gains"]).get(G) == "win"
+      and kopitar["swaps"][0]["before"] == [0, 1, 0] and kopitar["swaps"][0]["after"] == [1, 0, 0],
+      kopitar["swaps"])
+
+try:
+    empty = client.post("/standalone/api/bench/lineups", json={"lineups": {}})
+    check("the lineups route asks for lineups before it has any", empty.status_code == 400)
+    bad = client.post("/standalone/api/bench/lineups",
+                      json={"lineups": {"dates": {"not-a-date": {}}}, "weeks": []})
+    check("and refuses a date that is not one", bad.status_code == 400)
+except Exception as exc:                                    # noqa: BLE001
+    check("lineups route checks ran", False, f"{type(exc).__name__}: {exc}")
 
 
 # --------------------------------------------------------------------------

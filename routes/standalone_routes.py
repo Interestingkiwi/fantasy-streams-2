@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
+import bench_lineups
 import bench_points
 import daily_value as dv
 import opponent_strength as ops
@@ -357,11 +358,104 @@ def bench():
     except yahoo_rosters.RosterPageError as exc:
         if exc.code == 'private':
             exc = yahoo_rosters.RosterPageError(
-                'private', "Bench points need Yahoo's day-by-day rosters, which its public API only "
-                           "shares for public leagues. Private leagues are not supported yet.")
+                'private', "This league is private, so its lineups are read through the bookmarklet: "
+                           "use Update from Yahoo at the top of the page.")
         return _roster_error(exc)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Bench points failed.")
+        return _error(str(exc), 500)
+
+
+MAX_BENCH_DATES = 300
+MAX_BENCH_WEEKS = 40
+
+
+def _game_pool():
+    """
+    Everyone a Yahoo lineup could name: the projected pool, plus anyone who has
+    played a game this data covers but is not projected (a call-up, a rookie).
+    """
+    pool = fetch_all('SELECT "playerId", "fullName", "teamAbbrevs", "positionCode" FROM final_projections')
+    seen = {row["playerId"] for row in pool}
+    try:
+        extra = fetch_all(
+            'SELECT DISTINCT ON ("playerId") "playerId", "fullName", "teamAbbrev" AS "teamAbbrevs",'
+            ' COALESCE("positionCode", \'G\') AS "positionCode"'
+            ' FROM player_game_stats ORDER BY "playerId", "gameDate" DESC')
+    except Exception:                             # noqa: BLE001 - no games scraped yet
+        extra = []
+    return pool + [row for row in extra if row["playerId"] not in seen]
+
+
+@standalone_bp.route('/api/bench/lineups', methods=['POST'])
+def bench_from_lineups():
+    """
+    Bench points for a private league, from the lineups the bookmarklet read
+    off its Starting Rosters pages and our own game stats (see `bench_lineups`).
+
+    Body: lineups ({dates: {date: {team: [[yahooId, slot]]}}, players: {yahooId:
+    [name, 'TEAM - POS']}, pairs: {week: [[team, team]]}}), weeks ([{week,
+    start, end}]), categories and league_mode as the week plan takes them, and
+    names ({team number: name}). The answer is the shape `/api/bench` gives.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        lineups = body.get('lineups') or {}
+        dates = lineups.get('dates')
+        if not isinstance(dates, dict) or not dates:
+            raise BadRequest("No lineups yet - Update from Yahoo reads them.")
+        if len(dates) > MAX_BENCH_DATES:
+            raise BadRequest("That is more days than a season has.")
+        for when, teams in dates.items():
+            date.fromisoformat(str(when))
+            if not isinstance(teams, dict):
+                raise BadRequest("Lineups are {team: [[yahooId, slot]]} per date.")
+        weeks = []
+        for week in (body.get('weeks') or [])[:MAX_BENCH_WEEKS]:
+            weeks.append({"week": int(week["week"]), "start": date.fromisoformat(week["start"]).isoformat(),
+                          "end": date.fromisoformat(week["end"]).isoformat()})
+
+        codes, _unmapped = week_planner.categories_from_columns(body.get('categories'))
+        points = body.get('league_mode') == 'points'
+        info, unsupported = bench_lineups.league_info(codes, points=points)
+        players = {str(k): v for k, v in (lineups.get('players') or {}).items()
+                   if isinstance(v, list) and len(v) == 2}
+        try:
+            aliases = {r["alias_name"]: r["player_id"]
+                       for r in fetch_all("SELECT player_id, alias_name FROM player_aliases")}
+        except Exception:                         # noqa: BLE001 - the table is optional
+            aliases = {}
+        ids = bench_lineups.match_players(players, _game_pool(), aliases)
+        first, last = min(dates), max(dates)
+        try:
+            rows = fetch_all('SELECT * FROM player_game_stats WHERE "gameDate" BETWEEN :a AND :b'
+                             ' AND "playerId" = ANY(:ids)',
+                             {"a": first, "b": last, "ids": list(set(ids.values()))})
+        except Exception:                         # noqa: BLE001 - no games scraped yet
+            rows = []
+        lines = {(r["playerId"], r["gameDate"]): bench_lineups.game_line(r) for r in rows}
+
+        days = bench_lineups.build_days({**lineups, "players": players}, ids, lines)
+        built = bench_lineups.build_weeks(weeks, lineups, ids, lines,
+                                          yahoo_league_api.today().isoformat(), bench_points.NOT_STARTING)
+        result = bench_points.summarise(info, days, built)
+        names = {str(k): str(v) for k, v in (body.get('names') or {}).items()}
+        result["teams"] = {**result["teams"], **names}
+        # [name, NHL team, positions], as the public path gives them
+        result["players"] = {}
+        for yahoo_id, (name, info_text) in players.items():
+            team, positions = bench_lineups.split_info(info_text)
+            result["players"][yahoo_id] = [name, team, ",".join(positions)]
+        return jsonify({"status": "success", "source": "browser", "asOf": last,
+                        "unsupported": unsupported,
+                        "unmatched": sorted(players[k][0] for k in players if k not in ids),
+                        **result})
+    except BadRequest as exc:
+        return _error(str(exc), 400)
+    except (KeyError, TypeError, ValueError) as exc:
+        return _error(f"Those lineups could not be read: {exc}", 400)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Bench points from lineups failed.")
         return _error(str(exc), 500)
 
 

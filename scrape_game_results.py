@@ -46,6 +46,11 @@ the player's share of his team's power play, which is the PP Util column on
 League Home's Lineups tab. `--pp-only` fills just these two columns over a range
 already scraped, for the season that predates them.
 
+**Faceoffs need a fifth, `skater/faceoffwins`**, for Yahoo's FW and FL: the
+summary report carries only the win percentage. The old repo collected them;
+this port had left the report out until bench points needed them.
+`--faceoffs-only` fills just those columns over a range already scraped.
+
 Pages are capped at 100 rows however large a limit is asked for, so a full
 season is roughly 670 requests and takes about twenty minutes. Re-running a
 range replaces it rather than duplicating, so an interrupted backfill can
@@ -53,7 +58,7 @@ simply be run again.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/21/2026
+Updated - 9/30/2026
 """
 
 import argparse
@@ -136,6 +141,13 @@ REALTIME = {
 TIMEONICE = {
     'ppTimeOnIce': 'ppTimeOnIce',
 }
+# Faceoffs, from skater/faceoffwins - a fifth. Yahoo scores FW and FL; the
+# summary report carries only the percentage, not the counts.
+FACEOFFS = {
+    'totalFaceoffWins': 'faceoffWins',
+    'totalFaceoffLosses': 'faceoffLosses',
+    'totalFaceoffs': 'totalFaceoffs',
+}
 # His team's power-play time in that game, from the team/powerplaytime report.
 TEAM_PP_COLUMN = 'teamPpTimeOnIce'
 
@@ -158,7 +170,7 @@ GOALIE = {
 
 def _columns():
     seen, columns = set(), []
-    for mapping in (SHARED, SKATER, REALTIME, TIMEONICE, GOALIE,
+    for mapping in (SHARED, SKATER, REALTIME, TIMEONICE, FACEOFFS, GOALIE,
                     {TEAM_PP_COLUMN: TEAM_PP_COLUMN}):
         for column in mapping.values():
             if column not in seen:
@@ -205,6 +217,9 @@ CREATE TABLE IF NOT EXISTS player_game_stats (
     "shutouts"           DOUBLE PRECISION,
     "ppTimeOnIce"        DOUBLE PRECISION,
     "teamPpTimeOnIce"    DOUBLE PRECISION,
+    "faceoffWins"        DOUBLE PRECISION,
+    "faceoffLosses"      DOUBLE PRECISION,
+    "totalFaceoffs"      DOUBLE PRECISION,
     PRIMARY KEY ("playerId", "gameId")
 )
 '''
@@ -304,7 +319,7 @@ def write(rows, start, end):
         conn.execute(text(INDEX))
         # The table predates the realtime columns; CREATE IF NOT EXISTS will
         # not add them to one that already exists.
-        for column in [*REALTIME.values(), *TIMEONICE.values(), TEAM_PP_COLUMN]:
+        for column in [*REALTIME.values(), *TIMEONICE.values(), *FACEOFFS.values(), TEAM_PP_COLUMN]:
             conn.execute(text(f'ALTER TABLE player_game_stats '
                               f'ADD COLUMN IF NOT EXISTS "{column}" DOUBLE PRECISION'))
         conn.execute(text('DELETE FROM player_game_stats '
@@ -346,6 +361,7 @@ def run(start, end):
     log.info('Realtime rows merged: %d', realtime)
 
     _merge_power_play(merged, start, end)
+    _merge_faceoffs(merged, start, end)
 
     goalies = [shape(row, GOALIE) for row in fetch('goalie', start, end)]
     log.info('Goalie rows: %d', len(goalies))
@@ -416,6 +432,73 @@ def _backfill_power_play(start, end):
     return len(updates)
 
 
+def _merge_faceoffs(merged, start, end):
+    """Put each skater's faceoff wins, losses and total onto the rows in `merged`."""
+    count = 0
+    for raw in fetch('skater', start, end, kind_path='skater/faceoffwins'):
+        row = merged.get((raw.get('playerId'), raw.get('gameId')))
+        if row is not None:
+            for field, column in FACEOFFS.items():
+                row[column] = raw.get(field)
+            count += 1
+    log.info('Faceoffs merged for %d skater-games.', count)
+
+
+def backfill_faceoffs(start, end):
+    """
+    Fill only the faceoff columns over a range already scraped - the season
+    scraped before they were collected. Written every `BACKFILL_DAYS`, like the
+    power-play backfill, so an interrupted run keeps what it finished.
+    """
+    total = 0
+    first, last = date.fromisoformat(start), date.fromisoformat(end)
+    while first <= last:
+        chunk_end = min(first + timedelta(days=BACKFILL_DAYS - 1), last)
+        total += _backfill_faceoffs(first.isoformat(), chunk_end.isoformat())
+        first = chunk_end + timedelta(days=1)
+    return total
+
+
+def _backfill_faceoffs(start, end):
+    rows = {(r['playerId'], r['gameId']): dict(r) for r in _existing(start, end)}
+    _merge_faceoffs(rows, start, end)
+    updates = [{'playerId': r['playerId'], 'gameId': r['gameId'],
+                'wins': r.get('faceoffWins'), 'losses': r.get('faceoffLosses'),
+                'total': r.get('totalFaceoffs')}
+               for r in rows.values() if 'faceoffWins' in r]
+    with engine.begin() as conn:
+        for column in FACEOFFS.values():
+            conn.execute(text(f'ALTER TABLE player_game_stats '
+                              f'ADD COLUMN IF NOT EXISTS "{column}" DOUBLE PRECISION'))
+        for index in range(0, len(updates), 5000):
+            conn.execute(text('UPDATE player_game_stats SET "faceoffWins" = :wins, '
+                              '"faceoffLosses" = :losses, "totalFaceoffs" = :total '
+                              'WHERE "playerId" = :playerId AND "gameId" = :gameId'),
+                         updates[index:index + 5000])
+    log.info('Faceoff columns filled on %d rows, %s..%s.', len(updates), start, end)
+    return len(updates)
+
+
+def fill_missing_faceoffs(since, until):
+    """
+    Backfill faceoffs on skater rows between `since` and `until` that lack
+    them - games scraped before the report was collected. Called nightly over
+    a short look-back, so a deployment that started without faceoffs catches up
+    by itself, and a player the report never lists cannot make every night
+    re-fetch the whole season. Returns the rows filled.
+    """
+    with engine.connect() as conn:
+        found = conn.execute(text(
+            'SELECT min("gameDate") AS lo, max("gameDate") AS hi FROM player_game_stats'
+            ' WHERE "positionCode" IS NOT NULL AND "faceoffWins" IS NULL'
+            ' AND "gameDate" BETWEEN :since AND :until'),
+            {'since': str(since), 'until': str(until)}).fetchone()
+    if not found or not found.lo:
+        return 0
+    log.info('Skater rows without faceoffs %s..%s - filling them.', found.lo, found.hi)
+    return backfill_faceoffs(found.lo, found.hi)
+
+
 def _existing(start, end):
     with engine.connect() as conn:
         return [dict(r._mapping) for r in conn.execute(text(
@@ -429,6 +512,8 @@ def main():
     parser.add_argument('--end', help='Last game date (YYYY-MM-DD).')
     parser.add_argument('--pp-only', action='store_true',
                         help='Fill only the power-play columns on rows already scraped.')
+    parser.add_argument('--faceoffs-only', action='store_true',
+                        help='Fill only the faceoff columns on rows already scraped.')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -438,6 +523,8 @@ def main():
     start = args.start or yesterday
     if args.pp_only:
         backfill_power_play(start, args.end or start)
+    elif args.faceoffs_only:
+        backfill_faceoffs(start, args.end or start)
     else:
         run(start, args.end or start)
 

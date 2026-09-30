@@ -13,7 +13,7 @@ guard can be exercised deterministically.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/8/2026
+Updated - 9/30/2026
 """
 
 import os
@@ -168,6 +168,38 @@ try:
           raised, "a silently truncated season is the worst input to a calibration")
 finally:
     sgr.requests.get = original_get
+
+
+# --------------------------------------------------------------------------
+print("\n=== 3b. faceoffs, the fifth report ===")
+
+original_fetch = sgr.fetch
+asked = []
+
+
+def faceoff_report(kind, start, end, kind_path=None, sort=None):
+    asked.append(kind_path)
+    return [{"playerId": 1, "gameId": 10, "totalFaceoffWins": 12, "totalFaceoffLosses": 9,
+             "totalFaceoffs": 21},
+            {"playerId": 9, "gameId": 10, "totalFaceoffWins": 3, "totalFaceoffLosses": 3,
+             "totalFaceoffs": 6}]
+
+
+try:
+    sgr.fetch = faceoff_report
+    rows = {(1, 10): {"playerId": 1, "gameId": 10}, (2, 10): {"playerId": 2, "gameId": 10}}
+    sgr._merge_faceoffs(rows, "2026-01-01", "2026-01-01")
+    check("faceoffs come from skater/faceoffwins", asked == ["skater/faceoffwins"], asked)
+    check("and land on the skater's own row as wins, losses and total",
+          rows[(1, 10)].get("faceoffWins") == 12 and rows[(1, 10)].get("faceoffLosses") == 9
+          and rows[(1, 10)].get("totalFaceoffs") == 21, rows[(1, 10)])
+    check("a player with no faceoff row is left alone, not zeroed",
+          "faceoffWins" not in rows[(2, 10)], rows[(2, 10)])
+    check("and a faceoff row with no player row adds nothing", (9, 10) not in rows)
+    check("the table carries the three columns",
+          {"faceoffWins", "faceoffLosses", "totalFaceoffs"} <= set(sgr.COLUMNS))
+finally:
+    sgr.fetch = original_fetch
 
 
 # --------------------------------------------------------------------------

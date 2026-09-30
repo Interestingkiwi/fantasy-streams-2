@@ -101,9 +101,18 @@ def _store(key, payload):
 
 
 def number(value):
-    """A stat as Yahoo sends it, as a float - None for its dash or nothing."""
+    """
+    A stat as Yahoo sends it, as a float - None for its dash or nothing. Time
+    on ice comes as "MM:SS" and is read as minutes.
+    """
     if value in (None, "", "-", "--"):
         return None
+    if isinstance(value, str) and ":" in value:
+        minutes, _, seconds = value.partition(":")
+        try:
+            return int(minutes) + int(seconds) / 60.0
+        except ValueError:
+            return None
     try:
         return float(value)
     except (TypeError, ValueError):
