@@ -366,6 +366,8 @@ try:
           'data-tab="history"' in home and 'id="tab-history"' in home)
     check("and the bookmarklet reads every Transactions page, 25 at a time",
           "Tst-transaction-table" in home and "transactionsfilter=all&count=" in home)
+    check("one button updates everything from Yahoo, and the bookmarklet can send it all at once",
+          'id="update-all"' in home and "fs-yahoo-all" in home and "fs-all" in home)
     check("scraped transactions are kept with the league, so an account carries them",
           "fs_leagueTransactions" in account_routes.LEAGUE_KEYS)
     check("a busy season's transactions fit in what an account will store",

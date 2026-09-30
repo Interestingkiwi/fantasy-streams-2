@@ -14,7 +14,7 @@ record of the player, not guessed.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/16/2026
+Updated - 9/30/2026
 """
 
 import os
@@ -36,11 +36,15 @@ def check(label, cond, detail=""):
         FAILURES.append(label)
 
 
-def row(slot, name, yahoo_id):
+def row(slot, name, yahoo_id, status=None):
+    # Yahoo's status badge sits beside the name: the code as text, the meaning as title
+    badge = (f'<span class="ysf-player-status Nowrap F-injury Fz-xxs">'
+             f'<span alt="{status[1]}" class="Pstart-sm" title="{status[1]}">{status[0]}</span></span>'
+             if status else '')
     return (f'<tr><td class="pos first">{slot}</td><td class="player last">'
             f'<div class="ysf-player-name Nowrap"><a class="Nowrap name F-link" '
             f'href="https://sports.yahoo.com/nhl/players/{yahoo_id}" title="{name}">{name}</a>'
-            f'</div></td></tr>')
+            f'{badge}</div></td></tr>')
 
 
 def team(number, title, rows, league="11111"):
@@ -117,6 +121,28 @@ check("IR stays on the team, marked out", out["Leon Draisaitl"] is True)
 check("NA stays on the team, marked out", out["Some Prospect"] is True)
 check("the bench is not out", out["Elias Pettersson"] is False and out["Connor McDavid"] is False)
 check("the slot is kept", teams[1]["players"][1]["slot"] == "IR")
+
+# Yahoo's status, whatever the slot. Charlie McAvoy, suspended, sat in a D slot
+# tagged NA and was planned as a starter until this was read.
+STATUSES = yr.parse(page(team(3, "Status Team", [
+    row("D", "Charlie McAvoy", 7122, ("NA", "Not Active")),
+    row("BN", "Olen Zellweger", 8909, ("O", "Out")),
+    row("BN", "Dylan Larkin", 6381, ("DTD", "Day-to-Day")),
+    row("IR", "Connor Bedard", 8887, ("IR-NR", "Injured Reserve – Non-Roster")),
+    row("C", "Nathan MacKinnon", 5980),
+])))["teams"][0]["players"]
+by_name = {p["name"]: p for p in STATUSES}
+check("a Not Active player in a starting slot is out",
+      by_name["Charlie McAvoy"]["out"] is True and by_name["Charlie McAvoy"]["slot"] == "D",
+      by_name["Charlie McAvoy"])
+check("so is one marked Out on the bench", by_name["Olen Zellweger"]["out"] is True)
+check("day-to-day is a doubt, not an absence: recorded, still active",
+      by_name["Dylan Larkin"]["out"] is False and by_name["Dylan Larkin"]["status"] == "DTD")
+check("the status and what Yahoo calls it are both kept",
+      by_name["Connor Bedard"]["status"] == "IR-NR"
+      and by_name["Connor Bedard"]["statusLabel"].startswith("Injured Reserve"))
+check("no badge is no status", by_name["Nathan MacKinnon"]["status"] is None
+      and by_name["Nathan MacKinnon"]["out"] is False)
 
 for label, html, code in [
     ("a sign-in page is private", page(title="Login - Sign in to Yahoo"), "private"),

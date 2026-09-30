@@ -44,6 +44,11 @@
                     <option value="todate" disabled>Season to date (from opening night)</option>
                     <option value="combined" disabled>Combined (from opening night)</option>
                 </select>
+
+                <!-- Every Yahoo scrape in one go: rosters, the score so far,
+                     transactions - and whatever is scraped next -->
+                <span class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Yahoo</span>
+                <button id="update-all" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2 w-full sm:w-56">Update from Yahoo</button>
                 <p id="stat-source-help" class="text-xs text-gray-500 sm:col-start-2 lg:col-start-auto lg:col-span-2">Preseason projections, adjusted for age and injury.</p>
             </div>
         </div>
@@ -53,6 +58,7 @@
     <main class="flex-grow container mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-3 sm:gap-4">
 
         <div id="page-error" class="hidden error-message"></div>
+        <div id="update-panel" class="hidden rounded-md border border-gray-600 bg-gray-900 p-3 text-sm" aria-live="polite"></div>
 
         <!-- Sub-pages: one sideways-scrolling row on a phone -->
         <div class="flex gap-2 overflow-x-auto whitespace-nowrap pb-1" role="tablist" aria-label="League Home">
@@ -628,9 +634,19 @@
             };
         }
 
+        // A player's Yahoo status (NA, O, DTD, IR...) rides along from the
+        // roster scrape, for the badge; `out` is what the planner reads.
         const cleanRoster = list => (Array.isArray(list) ? list : [])
             .filter(p => p && p.id != null)
-            .map(p => ({ id: p.id, out: Boolean(p.out) }));
+            .map(p => ({ id: p.id, out: Boolean(p.out), ...(p.status ? { status: String(p.status) } : {}) }));
+        const STATUS_NAMES = {
+            NA: 'Not Active', O: 'Out', DTD: 'Day-to-Day', IR: 'Injured Reserve',
+            'IR-LT': 'Injured Reserve - Long Term', 'IR-NR': 'Injured Reserve - Non-Roster', SUSP: 'Suspended',
+        };
+        const statusBadge = status => (status
+            ? ` <span class="text-[10px] font-semibold px-1 rounded ${status === 'DTD' ? 'bg-amber-800' : 'bg-red-800'} text-white"`
+              + ` title="${esc(STATUS_NAMES[status] || status)} on Yahoo">${esc(status)}</span>`
+            : '');
 
         // --- The league ------------------------------------------------------
         // Every team's roster, because a free agent is anyone on none of them.
@@ -956,7 +972,7 @@
                             return `
                             <tr class="table-row-hover ${entry.out ? 'opacity-60' : ''}">
                                 <td class="col-sticky px-4 py-2 text-white font-medium">${player ? esc(player.fullName)
-                                    : `<span class="text-gray-500">Unknown player ${esc(entry.id)}</span>`}</td>
+                                    : `<span class="text-gray-500">Unknown player ${esc(entry.id)}</span>`}${statusBadge(entry.status)}</td>
                                 <td class="px-4 py-2 text-gray-300">${esc(player?.eligiblePositions || player?.positionCode || '')}</td>
                                 <td class="px-4 py-2 text-gray-300">${esc(player?.teamAbbrevs || '')}</td>
                                 ${showPlan ? `
@@ -1101,8 +1117,14 @@
             var matchup = /\/matchup/.test(location.pathname) && document.querySelector('table.Datatable');
             var transactions = /\/transactions/.test(location.pathname)
                 && document.querySelector('table.Tst-transaction-table');
-            if (!onYahoo || !(rosters || matchup || transactions)) {
-                alert('Open your league’s Starting Rosters, Matchup or Transactions page on Yahoo, signed in, then select this bookmark again.');
+            // Everything at once: opened by League Home's Update from Yahoo
+            // (#fs-all), or on the league's own home page
+            var base = (location.pathname.match(/^\/(?:\d{4}\/)?hockey\/\d+/) || [''])[0];
+            var everything = !!base && (/fs-all/.test(location.hash)
+                || location.pathname.replace(/\/$/, '') === base);
+            var week = (location.hash.match(/[#&]week=(\d+)/) || [])[1];
+            if (!onYahoo || !(rosters || matchup || transactions || everything)) {
+                alert('Open your league on Yahoo - its home, Starting Rosters, Matchup or Transactions page - signed in, then select this bookmark again.');
                 return;
             }
 
@@ -1154,26 +1176,32 @@
                 }, 5000);
             }
 
-            if (!transactions) {
+            if (!transactions && !everything) {
                 deliver({ type: 'fs-yahoo-page', url: location.href, html: document.documentElement.outerHTML });
                 return;
             }
 
-            // Transactions come 25 to a page. Read every page here, where Yahoo
-            // knows who is signed in, and keep only each page's table.
-            var tables = [];
-            var offset = 0;
             var title = document.title;
             var timeZone = '';
             try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (error) { timeZone = ''; }
-            function readPage() {
-                document.title = 'Reading transactions, page ' + (tables.length + 1) + '…';
-                fetch(location.pathname + '?transactionsfilter=all&count=' + offset, { credentials: 'include' })
-                    .then(function (response) {
-                        if (!response.ok) throw new Error('Yahoo answered ' + response.status + '.');
-                        return response.text();
-                    })
-                    .then(function (text) {
+            function fail(error) {
+                document.title = title;
+                alert('Reading Yahoo stopped: ' + error.message);
+            }
+            // Pages are read here, where Yahoo knows who is signed in
+            function getText(url) {
+                return fetch(url, { credentials: 'include' }).then(function (response) {
+                    if (!response.ok) throw new Error('Yahoo answered ' + response.status + '.');
+                    return response.text();
+                });
+            }
+            // Transactions come 25 to a page; keep only each page's table
+            function readTransactions(path, done) {
+                var tables = [];
+                var offset = 0;
+                function readPage() {
+                    document.title = 'Reading transactions, page ' + (tables.length + 1) + '…';
+                    getText(path + '?transactionsfilter=all&count=' + offset).then(function (text) {
                         var page = new DOMParser().parseFromString(text, 'text/html');
                         var table = page.querySelector('table.Tst-transaction-table');
                         if (table) tables.push(table.outerHTML);
@@ -1185,15 +1213,39 @@
                             return;
                         }
                         document.title = title;
-                        deliver({ type: 'fs-yahoo-page', url: location.href, html: tables.join('\n'),
-                                  timeZone: timeZone, pages: tables.length });
-                    })
-                    .catch(function (error) {
-                        document.title = title;
-                        alert('Reading the transactions stopped: ' + error.message);
-                    });
+                        done(tables.join('\n'));
+                    }).catch(fail);
+                }
+                readPage();
             }
-            readPage();
+
+            if (!everything) {
+                readTransactions(location.pathname, function (html) {
+                    deliver({ type: 'fs-yahoo-page', url: location.href, html: html, timeZone: timeZone });
+                });
+                return;
+            }
+
+            // Everything: rosters, the matchup (your own, signed in; the week
+            // League Home asked for), then every page of transactions
+            var sent = {
+                type: 'fs-yahoo-all', url: location.href, timeZone: timeZone,
+                rostersUrl: location.origin + base + '/startingrosters',
+                matchupUrl: location.origin + base + '/matchup' + (week ? '?week=' + week + '&module=matchup' : ''),
+                transactionsUrl: location.origin + base + '/transactions',
+            };
+            document.title = 'Reading rosters…';
+            getText(sent.rostersUrl).then(function (html) {
+                sent.rosters = html;
+                document.title = 'Reading the matchup…';
+                return getText(sent.matchupUrl);
+            }).then(function (html) {
+                sent.matchup = html;
+                readTransactions(base + '/transactions', function (tables) {
+                    sent.transactions = tables;
+                    deliver(sent);
+                });
+            }).catch(fail);
         }
 
         const BOOKMARKLET_HREF = 'javascript:' + encodeURIComponent(
@@ -1234,14 +1286,14 @@
                         Drag this button to your bookmarks bar (you only do this once &mdash; the same bookmark reads rosters, matchups and transactions):
                         <a href="#" draggable="true"
                            class="fs-bookmarklet inline-block mt-1 px-3 py-2 rounded-md bg-emerald-700 text-white font-medium no-underline cursor-grab">Send to Fantasy Streams</a>
-                        ${what === 'transactions' ? '<span class="block text-xs text-gray-500 mt-1">Dragged it before September 29? Drag it again &mdash; older copies cannot read transactions.</span>' : ''}
+                        ${what.includes('transactions') ? '<span class="block text-xs text-gray-500 mt-1">Dragged it before September 30? Drag it again &mdash; older copies cannot read transactions or update everything at once.</span>' : ''}
                     </li>
                     <li>
                         ${url
                             ? `<button type="button" id="${openId}" class="text-blue-400 hover:text-blue-300 underline py-1">${openLabel}</button> and sign in if Yahoo asks.`
                             : 'Enter your League ID on the League tab, then come back to this step.'}
                     </li>
-                    <li>On that Yahoo page, select the bookmark. The ${what} come${what === 'matchup' ? 's' : ''} back to this page${what === 'transactions' ? ' &mdash; every page of them, which takes a few seconds per 25' : ''}.</li>
+                    <li>On that Yahoo page, select the bookmark. The ${what} come${what === 'matchup' ? 's' : ''} back to this page${what.includes('transactions') ? ' &mdash; transactions are read 25 at a time, so a busy season takes about half a minute' : ''}.</li>
                 </ol>
                 <p class="text-xs text-gray-500 mt-2">Needs a desktop browser with a bookmarks bar.</p>
                 <button type="button" class="${cancelClass} mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>`;
@@ -1293,7 +1345,7 @@
                     Found ${teams.length} teams and ${players} players${result.test ? ' <span class="text-amber-300">(test league)</span>' : ''}.
                 </p>
                 <ul class="list-disc pl-5 mt-1 text-gray-300 space-y-0.5">
-                    ${out ? `<li>${out} on IR, IR+ or NA &mdash; they stay on their team, marked Out.</li>` : ''}
+                    ${out ? `<li>${out} in an IR, IR+ or NA slot, or tagged Out, Not Active, suspended or injured by Yahoo &mdash; they stay on their team, marked Out.</li>` : ''}
                     ${unmatched.length
                         ? `<li>${unmatched.length} not in the projections, so left off: ${esc(unmatched.join(', '))}.</li>`
                         : '<li>Every player matched a projection.</li>'}
@@ -1324,11 +1376,16 @@
             const mineIndex = $('import-mine').value;
             if (mineIndex === '') return;
             const oppIndex = $('import-opponent').value;
+            applyImportFrom(pendingImport, Number(mineIndex), oppIndex === '' ? -1 : Number(oppIndex));
+        }
+
+        // `mineIndex` / `oppIndex` index the scraped teams; -1 is no opponent
+        function applyImportFrom(result, mineIndex, oppIndex) {
             const norm = s => String(s || '').trim().toLowerCase();
 
             // A team keeps its id when its name comes back unchanged, so
             // anything keyed to it survives a re-import.
-            const teams = pendingImport.teams.map(scraped => {
+            const teams = result.teams.map(scraped => {
                 const same = league.teams.find(t => norm(t.name) === norm(scraped.name));
                 const seen = new Set();
                 return {
@@ -1338,13 +1395,13 @@
                     ...(scraped.yahooTeamId ? { yahooTeamId: String(scraped.yahooTeamId) } : {}),
                     players: scraped.players
                         .filter(p => p.playerId != null && !seen.has(String(p.playerId)) && seen.add(String(p.playerId)))
-                        .map(p => ({ id: p.playerId, out: Boolean(p.out) })),
+                        .map(p => ({ id: p.playerId, out: Boolean(p.out), ...(p.status ? { status: p.status } : {}) })),
                 };
             });
 
             league.teams = teams;
-            league.mine = teams[Number(mineIndex)].id;
-            league.opponent = oppIndex !== '' && oppIndex !== mineIndex ? teams[Number(oppIndex)].id : null;
+            league.mine = teams[mineIndex].id;
+            league.opponent = oppIndex >= 0 && oppIndex !== mineIndex ? teams[oppIndex].id : null;
             activeTeamId = league.mine;
             pendingImport = null;
             showImportPanel('');
@@ -1421,6 +1478,15 @@
         window.addEventListener('message', event => {
             if (!YAHOO_ORIGIN.test(event.origin)) return;
             const data = event.data;
+            // Everything at once: each page's HTML and the address it came from
+            if (data && data.type === 'fs-yahoo-all') {
+                const fields = ['rosters', 'matchup', 'transactions', 'rostersUrl', 'matchupUrl', 'transactionsUrl'];
+                if (!fields.every(key => typeof data[key] === 'string')) return;
+                if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
+                runUpdate(pageSource({ ...Object.fromEntries(fields.map(key => [key, data[key]])),
+                    timeZone: String(data.timeZone || '') }));
+                return;
+            }
             if (!data || !['fs-yahoo-page', 'fs-rosters'].includes(data.type) || typeof data.html !== 'string') return;
             if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
             let path = '';
@@ -2070,6 +2136,8 @@
                 ${notes.length ? `<ul class="list-disc pl-5 mt-1 text-xs text-amber-300 space-y-0.5">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
                 ${MATCHUP_CLOSE}`);
             saveLeague();
+            // True when the score was used; each refusal above returns nothing
+            return true;
         }
 
         async function postMatchup(url, body) {
@@ -2423,6 +2491,182 @@
             $('tx-team').value = pick.dataset.team;
             renderTransactions();
             $('tx-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
+
+        // --- Update everything from Yahoo -------------------------------------
+        // Every scrape in one go, in the order they depend on each other:
+        // rosters first (they carry each team's Yahoo number), then the score
+        // so far (which needs yours), then transactions. A public league is
+        // read by the server; a private one by the bookmarklet, which fetches
+        // every page in the signed-in Yahoo tab and sends them together. A
+        // future scrape joins by adding a step to UPDATE_STEPS - and, for
+        // private leagues, a page to the bookmarklet's everything mode.
+        const UPDATE_CLOSE = '<button type="button" class="update-close mt-2 px-3 py-2 text-sm text-gray-400 hover:text-white">Close</button>';
+
+        function showUpdatePanel(html) {
+            $('update-panel').innerHTML = html;
+            $('update-panel').classList.toggle('hidden', !html);
+        }
+
+        async function postJSON(url, body) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await response.json().catch(() => ({}));
+                return { ok: response.ok, data };
+            } catch (error) {
+                return { ok: false, data: { code: 'unreachable', message: error.message } };
+            }
+        }
+
+        // Rosters without the preview when that is safe - your team is known
+        // by its Yahoo number, so nothing has to be guessed. Otherwise the
+        // League tab's preview asks, as its own scrape does.
+        function autoApplyRosters(data) {
+            const teams = data.teams || [];
+            const byNumber = number => (number
+                ? teams.findIndex(t => String(t.yahooTeamId) === String(number)) : -1);
+            const mineIndex = byNumber(teamById(league.mine)?.yahooTeamId);
+            if (mineIndex < 0) {
+                previewImport(data);
+                return { ok: false, message: 'Read - choose which team is yours on the League tab, then update again for the score.' };
+            }
+            applyImportFrom(data, mineIndex, byNumber(teamById(league.opponent)?.yahooTeamId));
+            const players = teams.reduce((n, t) => n + t.players.filter(p => p.playerId != null).length, 0);
+            const out = teams.reduce((n, t) => n + t.players.filter(p => p.out).length, 0);
+            const missed = (data.unmatched || []).length;
+            return { ok: true, message: `${teams.length} teams, ${players} players, ${out} out`
+                + (missed ? ` (${missed} not in the projections)` : '') };
+        }
+
+        const UPDATE_STEPS = [
+            {
+                name: 'Rosters',
+                fetch: source => source.rosters(),
+                apply: autoApplyRosters,
+            },
+            {
+                name: 'Score so far',
+                // Signed out, Yahoo shows team 1's matchup unless told whose
+                skip: source => (source.kind === 'server' && !teamById(league.mine)?.yahooTeamId
+                    ? 'skipped until Fantasy Streams knows which Yahoo team is yours' : null),
+                fetch: source => source.matchup(),
+                apply: data => (applyMatchupScrape(data)
+                    ? { ok: true, message: `week ${data.week ?? selectedWeek()?.week ?? ''} filled in` }
+                    : { ok: false, message: 'read, but not used - see the Matchup tab' }),
+            },
+            {
+                name: 'Transactions',
+                fetch: source => source.transactions(),
+                apply: data => {
+                    storeTransactions(data);
+                    const n = (data.transactions || []).length;
+                    return { ok: true, message: `${n.toLocaleString()} read` };
+                },
+            },
+        ];
+
+        const serverSource = leagueId => ({
+            kind: 'server',
+            rosters: () => postJSON('/standalone/api/rosters/scrape', { league_id: leagueId }),
+            matchup: () => postJSON('/standalone/api/matchup/scrape', {
+                league_id: leagueId, week: selectedWeek()?.week, team: teamById(league.mine)?.yahooTeamId,
+            }),
+            transactions: () => postJSON('/standalone/api/transactions/scrape', { league_id: leagueId }),
+        });
+
+        // What the bookmarklet sent: each page's HTML and the Yahoo address it came from
+        const pageSource = pages => ({
+            kind: 'browser',
+            rosters: () => postJSON('/standalone/api/rosters/parse', { html: pages.rosters, url: pages.rostersUrl }),
+            matchup: () => postJSON('/standalone/api/matchup/parse', { html: pages.matchup, url: pages.matchupUrl }),
+            transactions: () => postJSON('/standalone/api/transactions/parse', {
+                html: pages.transactions, url: pages.transactionsUrl, timeZone: pages.timeZone,
+            }),
+        });
+
+        function yahooEverythingUrl() {
+            const week = selectedWeek()?.week;
+            const hash = `#fs-all${week ? `&week=${week}` : ''}`;
+            if (ROSTER_TEST_MODE) return ROSTER_TEST_URL + hash;
+            const id = savedLeagueId();
+            return id ? `https://hockey.fantasysports.yahoo.com/hockey/${id}/startingrosters${hash}` : null;
+        }
+
+        function renderUpdate(results, running) {
+            showUpdatePanel(`
+                <p class="text-white font-medium">${running ? 'Updating from Yahoo&hellip;' : 'Updated from Yahoo'}</p>
+                <ul class="mt-1 space-y-0.5">
+                    ${results.map(r => `<li class="${r.ok ? 'text-gray-300' : 'text-amber-300'}">
+                        <span class="font-medium ${r.ok ? 'text-green-400' : 'text-amber-300'}">${r.ok ? '&check;' : '!'}</span>
+                        ${esc(r.name)}: ${esc(r.message)}</li>`).join('')}
+                </ul>
+                ${running ? '' : UPDATE_CLOSE}`);
+        }
+
+        async function runUpdate(source) {
+            const results = [];
+            for (const step of UPDATE_STEPS) {
+                renderUpdate(results, true);
+                const skip = step.skip ? step.skip(source) : null;
+                if (skip) {
+                    results.push({ name: step.name, ok: false, message: skip });
+                    continue;
+                }
+                const answer = await step.fetch(source);
+                if (!answer.ok && answer.data.code === 'private' && source.kind === 'server') {
+                    // Private: nothing more the server can read, so hand over to the bookmarklet
+                    showUpdatePanel(bookmarkletSteps(answer.data.message, {
+                        what: 'rosters, score and transactions', openId: 'open-yahoo-all', url: yahooEverythingUrl(),
+                        openLabel: 'Open your league on Yahoo', cancelClass: 'update-close',
+                    }));
+                    wireBookmarklet($('update-panel'));
+                    return;
+                }
+                let outcome;
+                try {
+                    outcome = answer.ok ? step.apply(answer.data)
+                        : { ok: false, message: answer.data.message || 'Yahoo could not be read.' };
+                } catch (error) {
+                    outcome = { ok: false, message: error.message };
+                }
+                results.push({ name: step.name, ...outcome });
+            }
+            renderUpdate(results, false);
+        }
+
+        $('update-all').addEventListener('click', async () => {
+            const leagueId = savedLeagueId();
+            if (!ROSTER_TEST_MODE && !leagueId) {
+                return showUpdatePanel(`
+                    <p class="text-gray-300">Enter your League ID on the League tab first. It is saved, and every update uses it.</p>
+                    <button type="button" class="goto-league mt-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 underline">Go to the League tab</button>
+                    ${UPDATE_CLOSE}`);
+            }
+            $('update-all').disabled = true;
+            $('update-all').textContent = 'Updating…';
+            try {
+                await runUpdate(serverSource(leagueId));
+            } finally {
+                $('update-all').disabled = false;
+                $('update-all').textContent = 'Update from Yahoo';
+            }
+        });
+
+        $('update-panel').addEventListener('click', event => {
+            if (event.target.closest('.update-close')) {
+                showUpdatePanel('');
+            } else if (event.target.closest('#open-yahoo-all')) {
+                // window.open without noopener, so the Yahoo tab can post back
+                const url = yahooEverythingUrl();
+                if (url) window.open(url, 'fs-yahoo-all');
+            } else if (event.target.closest('.goto-league')) {
+                selectTab('league');
+                $('league-id').focus();
+            }
         });
 
         // --- Plan ------------------------------------------------------------
@@ -2791,6 +3035,9 @@
                     : label;
                 return `<th class="px-3 py-2 font-medium whitespace-nowrap ${extra}" ${on ? `aria-sort="${poolSort.dir === 1 ? 'ascending' : 'descending'}"` : ''}>${inner}</th>`;
             };
+            // Yahoo's status from the roster scrape, which the plan does not carry
+            const yahooStatus = new Map(league.teams.flatMap(t =>
+                t.players.filter(e => e.status).map(e => [String(e.id), e.status])));
             const rows = players.map(p => {
                 const pp = p.form?.pp;
                 const trends = p.form?.trends || {};
@@ -2803,6 +3050,7 @@
                     ? ` <span class="text-[10px] font-semibold uppercase px-1 rounded bg-amber-800 text-white" title="${esc([p.injury.status, p.injury.type, p.injury.returnDate && `back ${p.injury.returnDate}`].filter(Boolean).join(' · '))}">${esc(INJURY_CODES[p.injury.status] || 'INJ')}</span>` : '';
                 const tags = [
                     p.out ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-red-800 text-white">Out</span>' : '',
+                    statusBadge(yahooStatus.get(String(p.playerId))).trim(),
                     p.added ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-emerald-700 text-white">Add</span>' : '',
                     p.dropped ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-gray-600 text-white">Drop</span>' : '',
                 ].join(' ');

@@ -24,7 +24,7 @@ ADP scrape uses), which returns both.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/16/2026
+Updated - 9/30/2026
 """
 
 import re
@@ -57,6 +57,13 @@ TIMEOUT_SECONDS = 30
 # reserve; NA holds players not on an NHL roster. All three are kept on the team
 # - they are still rostered, so still not free agents - but marked out.
 OUT_SLOTS = frozenset({"IR", "IR+", "NA"})
+
+# Yahoo's player statuses that mean he will not play, whatever slot he sits in.
+# The slot alone missed these: a suspended Charlie McAvoy stayed in a D slot
+# tagged NA ("Not Active", note "Suspension") and was planned as a starter.
+# Seen live: IR, IR-NR, NA, O and DTD. DTD - day-to-day - is a doubt, not an
+# absence, so it is recorded and shown but leaves him active.
+OUT_STATUSES = frozenset({"O", "IR", "IR-LT", "IR-NR", "NA", "SUSP"})
 
 # Copies of the pipeline's `player_utils.normalise` and
 # `scrape_yahoo_adp.TEAM_FIXES` / `POSITION_WIDENING`. The pipeline modules
@@ -138,10 +145,13 @@ def fetch(url, session=None):
 
 def parse(html):
     """
-    {teams: [{name, yahooTeamId, players: [{name, yahooId, slot, out}]}]}.
+    {teams: [{name, yahooTeamId, players: [{name, yahooId, slot, status,
+    statusLabel, out}]}]}.
 
     One table per team, `id="Tst-team-N"`, preceded by the team's name linked to
-    `/.../hockey/<league>/<team number>`. Raises a RosterPageError when the
+    `/.../hockey/<league>/<team number>`. A player's status is the badge beside
+    his name (`.ysf-player-status`: code as text, meaning as title), and he is
+    out if his slot or his status says so. Raises a RosterPageError when the
     document is one of Yahoo's other pages instead.
     """
     soup = BeautifulSoup(html or "", "lxml")
@@ -175,11 +185,16 @@ def parse(html):
                 continue      # an empty slot
             slot = slot_cell.get_text(strip=True).upper()
             yahoo_id = re.search(r"/players/(\d+)", name_link.get("href", ""))
+            badge = row.select_one(".ysf-player-status")
+            status = badge.get_text(strip=True).upper() if badge else ""
+            label = badge.select_one("[title]") if badge else None
             team["players"].append({
                 "name": name_link.get("title") or name_link.get_text(strip=True),
                 "yahooId": yahoo_id.group(1) if yahoo_id else None,
                 "slot": slot,
-                "out": slot in OUT_SLOTS,
+                "status": status or None,
+                "statusLabel": (label.get("title") if label else None) or None,
+                "out": slot in OUT_SLOTS or status in OUT_STATUSES,
             })
         teams.append(team)
     return {"teams": teams}

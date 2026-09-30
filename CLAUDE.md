@@ -858,7 +858,7 @@ checkboxes would otherwise have none.
 ### League rosters, planned moves and free agents
 
 **Every team's roster is entered**, because a free agent is anyone on none of
-them. `fs_leagueTeams` is `{teams: [{id, name, yahooTeamId?, players: [{id, out}]}],
+them. `fs_leagueTeams` is `{teams: [{id, name, yahooTeamId?, players: [{id, out, status?}]}],
 mine, opponent}` — mine and opponent are team ids, `yahooTeamId` is Yahoo's team
 number (from the roster scrape, or learned from a matchup scrape by name), and the opponent is simply whichever
 team is marked for this week. **That shape is the target for the planned
@@ -1053,8 +1053,19 @@ to `/hockey/<league>/<team number>` holding its name; each row is `td.pos` (the
 slot) and `.ysf-player-name a.name` (title = name, href = Yahoo player id).
 
 **IR, IR+ and NA players stay on their team, marked Out** — still rostered, so
-still not free agents, but not playing. Out follows Yahoo's slots on every
-import.
+still not free agents, but not playing. Out follows Yahoo on every import.
+
+**Out reads Yahoo's player status as well as the slot.** The slot alone missed
+players a manager had not moved: a suspended Charlie McAvoy sat in a D slot
+tagged NA ("Not Active", note "Suspension") and was planned as a starter, and
+had to be unticked by hand after every re-scrape. The badge beside each name
+(`.ysf-player-status`, code as text, meaning as `title`) is now read, and
+`OUT_STATUSES` (O, IR, IR-LT, IR-NR, NA, SUSP) marks him Out whatever his slot.
+**DTD is a doubt, not an absence** — recorded and shown, still active. The
+status is kept on the roster entry (`{id, out, status}`) and shown as a badge on
+the League tab and the Lineups roster view. On league 5848 the page gave the
+same 15 statuses, 14 of them out, as Yahoo's API. A manual Out tick is still
+replaced by the next scrape — only Yahoo's own flags now survive it.
 
 **Matching.** The page has no NHL team or position per player, only the name
 and Yahoo's player id. A name matching exactly one projected player is taken.
@@ -1157,10 +1168,16 @@ plus 4 `commish` settings changes, which are dropped. A **private league answers
 Yahoo as "a temporary problem"). Five of six imported leagues checked were
 private, so the bookmarklet path is the common one, not the exception.
 
-**This API likely serves far more than transactions for public leagues** -
-rosters, matchups, per-date stats - with no sign-in. Unexplored so far; the
-first thing to try for the bench-points work, and possibly a better source than
-page scrapes for the roster and matchup scrapes on public leagues.
+**The same API serves a public league's everything, checked 9/30/2026.**
+`/league/nhl.l.<id>/settings` (categories with Yahoo stat ids, roster slots),
+`/teams/roster` (each player's `status`, `status_full`, `injury_note`),
+`/scoreboard`, `/standings`, and above all
+`/league/nhl.l.<id>/teams/roster;date=D/players/stats;type=date;date=D` — **every
+team's slot for each player on day D plus his stats that day, in one request**
+(0.7 s, 1.3 MB; `-` for no game). That is the old site's "left on the bench"
+data: on opening night it already showed two benched players who scored. A
+season is one request per game day. Private leagues would need the equivalent
+team pages by date through the bookmarklet — 12 a day — which is the harder half.
 
 **Private leagues: the bookmarklet reads every Transactions page.** On a
 `/transactions` page it fetches `?transactionsfilter=all&count=N` (25 a page)
@@ -1206,6 +1223,34 @@ which this page's markup never uses and the CDN build would not generate).
 Test mode reads the completed 2025-26 league 22705, which turns out to be last
 season's copy of league 5848; weeks fall back to Monday-Sunday there, since
 fantasy weeks are loaded for the current season only.
+
+### Update from Yahoo (every scrape at once)
+
+**Update from Yahoo**, in League Home's settings bar, runs every scrape in the
+order they depend on each other: rosters (they carry each team's Yahoo number),
+the score so far (which needs yours), then transactions. Results show per step
+in `#update-panel`. `UPDATE_STEPS` in the page is the list — **a future scrape
+joins by adding a step there** and, for private leagues, a page to the
+bookmarklet's everything mode. It is shown to everyone, signed in or not.
+
+- **Rosters apply without the preview when that is safe** — your team is
+  already known by its Yahoo number (`autoApplyRosters`). The first import of a
+  league, or one entered by hand, still gets the preview to ask which team is
+  yours, and the score is skipped until it knows (signed out, Yahoo would show
+  team 1's matchup). The opponent follows by Yahoo number too, and the score
+  step resets it from the matchup anyway.
+- **Public leagues are read by the server** (the three `/scrape` routes).
+- **Private leagues: one bookmark click reads everything.** The first `private`
+  answer hands over to the bookmarklet steps, whose link opens the league's
+  Starting Rosters page with `#fs-all&week=N`. That marker — or being on the
+  league's home page (`/hockey/<id>`) — puts the bookmarklet in everything mode:
+  it fetches `startingrosters`, `matchup?week=N` (the signed-in user's own) and
+  every transactions page in the Yahoo tab, and posts one `fs-yahoo-all`
+  message with each page's HTML and address. The receiving page runs the same
+  steps through the `/parse` routes. Checked on league 5848's live home page:
+  12 rosters with 15 status badges, the week's matchup table, the transactions.
+  **Bookmarks dragged before 9/30/2026 cannot do this** — the steps say to drag
+  again.
 
 ## Accounts (temporary)
 
@@ -1702,7 +1747,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, and the routes |
-| `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
+| `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
 
