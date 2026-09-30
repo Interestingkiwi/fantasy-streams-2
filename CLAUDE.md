@@ -6,7 +6,25 @@ Guidance for working in the **Fantasy Streams** repo.
 
 A Flask web app that gives Head-to-Head fantasy hockey managers advanced analytics,
 draft prep, lineup/streaming help, and (planned) automated Yahoo waiver transactions.
-Previously deployed on Render.com. Author: Jason Druckenmiller.
+Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason Druckenmiller.
+
+## Where things stand (9/30/2026)
+
+- **The 2026-27 season is under way** (opened 9/29). Render's nightly cron is
+  live: `player_game_stats` and `team_stats` fill each morning at 08:30 UTC.
+- **Yahoo's Fantasy API is still gated**, so League Home (`/standalone/`) is the
+  product: leagues are scraped or typed in and live in the browser, optionally
+  in a temporary username/password account. Everything Yahoo would have synced
+  comes from **Update from Yahoo** — rosters (with player status), the score so
+  far, transactions and bench points — read by the server for public leagues
+  and by the bookmarklet for private ones.
+- **Yahoo's public read-only API** (`pub-api-ro`) serves a *public* league's
+  settings, rosters, scoreboards, transactions and day-by-day rosters with
+  stats. It is how public leagues are read; see *Season History*.
+- **Test league**: `ROSTER_SCRAPE_TEST` (on outside production) reads the
+  completed public 2025-26 league 22705 — which is the previous season of the
+  user's own league, **5848** (public, "Albany Hockey Hooligans").
+- **Next up: the player modal** — see *Next up: the player modal* near the end.
 
 ## Tech stack
 
@@ -63,7 +81,7 @@ Previously deployed on Render.com. Author: Jason Druckenmiller.
 | `opponent_strength.py` | Per-category nudge for which NHL team a player is facing. See *Lineups* below |
 | `scrape_team_stats.py` | Scrapes every team's strength and home/road splits into `team_stats`; feeds `opponent_strength.py` |
 | `derive_venue_prior.py` | Re-measures home ice's long-run size (`VENUE_PRIOR`) and how fast a season's own split overrides it. Not a job — it prints constants to copy by hand. See *Home ice* |
-| `scrape_game_results.py` | Nightly per-game player results into `player_game_stats`, including power-play time; also backfills any historical range (`--pp-only` for just the PP columns) |
+| `scrape_game_results.py` | Nightly per-game player results into `player_game_stats` from five NHL.com reports (summary, realtime, time on ice incl. power play, faceoffs, goalies); also backfills any historical range (`--pp-only` / `--faceoffs-only` for just those columns) |
 | `preseason_db_build/` | Offline pipeline that builds the `final_projections` table (see below) |
 | `preseason_db_build/aging.py` | The age curve. Restates a past season as what it would be worth at the age being projected. See *Ageing* |
 | `preseason_db_build/derive_aging_curve.py` | Re-measures that curve from the historic tables. Not part of the pipeline — it produces constants, not rows |
@@ -754,7 +772,7 @@ Built to the old site's Lineups roster view. From the top:
   H/A for his next game, his draft-board rank, and his unadjusted per-game line
   shaded against the pool. A goalie's name carries his share of starts. The line
   and PP-unit badges the old site had are not here: nothing collects linemates
-  yet.
+  yet — see *Next up: the player modal*.
 - **The nightly grid**, one table, which can now be **edited by hand**.
 
 The server supplies all of it. `plan_week` gives every player his `nights`
@@ -822,7 +840,9 @@ or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
 (below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
 `fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits`,
-`fs_standaloneGoalieStats`, `fs_leagueTransactions` and `fs_fantasyWeeks`. The older `fs_standaloneRoster` /
+`fs_standaloneGoalieStats`, `fs_leagueTransactions` and `fs_fantasyWeeks` — all
+synced to an account — plus `fs_benchLineups`, a private league's daily
+lineups, kept on the device only (see *Season History: left on the bench*). The older `fs_standaloneRoster` /
 `fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
@@ -1116,8 +1136,11 @@ Yahoo link follows the same switch.
 build this will not open tabs from automated input, so the opener post, the ack
 and the `?rosters=receive` path were each tested in halves — the bookmarklet on
 Yahoo's real page, and the receiving page with messages from a Yahoo origin —
-but never joined by a real bookmark click. Check it by hand in desktop Chrome
-before relying on it.
+but never joined by a real bookmark click. That holds for every mode added
+since (Matchup, Transactions, everything, bench lineups): each page-reading
+step was run on Yahoo's live pages and each receiving step checked, never the
+two joined. Check it by hand in desktop Chrome, with a private league, before
+relying on it.
 
 **Editing the page's JS through a shell heredoc mangles backslashes** — a regex
 word boundary (backslash-b) became a literal backspace byte and shipped. Use the
@@ -1929,6 +1952,40 @@ nowhere in the markup: the vendored CDN build generates it only once it notices
 it, so it is missing when first needed (a `pb-28` set on the first tick measured
 0px). Put that rule in `styles.css` instead, as `body.has-selection` is.
 
+## Next up: the player modal
+
+Bring back the old site's player modals (`Interestingkiwi/fantasy-streams` —
+read how it built them before designing anything here), opened by tapping a
+player anywhere League Home lists one: the Lineups roster view, the Free Agents
+table, the League tab's rosters, and the Season History lists. One modal,
+shared, following *Phone layout* (full screen below `sm`).
+
+What it shows, and where each piece stands:
+
+- **Trends** — `player_form.forms()` already computes L20/L10/L5 against the
+  player's season mean (standard-error test) and H/A. Early in the season
+  there are no trends yet; say so rather than showing arrows off two games.
+  It reads the latest season present in `player_game_stats` — 2026-27 on
+  Render, and locally too since opening night was loaded on 9/30 — so its
+  early-season answers are thin by nature, not broken.
+- **PP utilization** — `player_form` has PP share of team PP time over the
+  last 5 games and the last game (`ppTimeOnIce` / `teamPpTimeOnIce`). The old
+  site also showed the PP unit; that needs line data (next point).
+- **Line number and linemates** — **not collected by anything here yet.** The
+  old site had them; find its source in the old repo first (a line-combination
+  scrape) and port it as a nightly or on-demand job, keyed on NHL `playerId`.
+  This is the one piece that needs a new data source.
+- **New: this season's stats** — the player's 2026-27 totals and per-game line
+  from `player_game_stats` (G, A, P, PPP, SOG, HIT, BLK, FW/FL, TOI; W, GA,
+  SV, SA, SHO and the ratios for goalies), in the league's categories first.
+  All of it is already collected nightly, faceoffs included. The same per-player
+  aggregation is the first half of *Season to date* Stat Sourcing (see *Known
+  issues*), so build it as a reusable server function, not inside the route.
+
+The server side is one route (say `/standalone/api/player/<playerId>`) that
+returns form, PP share, season stats and — once collected — line data for one
+NHL `playerId`; the page already carries `playerId` on every player it lists.
+
 ## Porting the old app
 
 `docs/MIGRATION.md` is the plan for bringing the pages from the old repo
@@ -1982,6 +2039,14 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 - Token refresh has no lock: two concurrent requests on an expired token both
   refresh, and the later write wins. Harmless now; revisit with the Phase 2 worker.
 - Automated transactions are stubs. Standalone mode plans add/drops but executes nothing.
+- **The bookmarklet has never run end to end by a real click** — see *Scraping
+  rosters from Yahoo*. Every private-league feature rests on it.
+- **Bench points for private leagues reads ~180 pages on a first catch-up**
+  (about a minute) and keeps the lineups per device; a second device reads them
+  again. Points leagues get bench totals but no swaps.
+- **Stat Sourcing is still Projected only**, though games are now being played
+  — *Season to date* waits on per-player rates from `player_game_stats`, which
+  the player modal's season stats (below) will build the first half of.
 - The accounts are temporary and store one copy of a league per member —
   retire them with the Yahoo sync (*When Yahoo API access is granted*). The
   Yahoo `/logout` does `session.clear()`, which signs out of an account too;
