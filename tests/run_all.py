@@ -13,7 +13,7 @@ Exits non-zero if any suite fails, so it is usable as a CI step.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/16/2026
+Updated - 10/1/2026
 """
 
 import subprocess
@@ -44,6 +44,8 @@ TESTS = [
     "test_player_form.py",
     "test_goalie_planning.py",
     "test_accounts.py",
+    "test_game_lines.py",
+    "test_player_card.py",
 ]
 
 

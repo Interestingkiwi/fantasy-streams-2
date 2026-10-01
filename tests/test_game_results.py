@@ -13,7 +13,7 @@ guard can be exercised deterministically.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/30/2026
+Updated - 10/1/2026
 """
 
 import os
@@ -198,6 +198,34 @@ try:
     check("and a faceoff row with no player row adds nothing", (9, 10) not in rows)
     check("the table carries the three columns",
           {"faceoffWins", "faceoffLosses", "totalFaceoffs"} <= set(sgr.COLUMNS))
+finally:
+    sgr.fetch = original_fetch
+
+
+# --------------------------------------------------------------------------
+print("\n=== 3c. columns added after the table went live ===")
+
+later = {"evGoals", "evPoints", "missedShots", "shotAttemptsBlocked",
+         "evTimeOnIce", "shTimeOnIce", "otTimeOnIce", "shifts"}
+check("the player card's columns are collected", later <= set(sgr.COLUMNS), later - set(sgr.COLUMNS))
+check("each is added to a table that predates it", later <= set(sgr.LATER_COLUMNS))
+check("and each is one every skater gets, so a gap means a night to re-scrape",
+      later <= set(sgr.FILLED_FOR_EVERY_SKATER))
+check("a team's PP time is not - a game without a power play is None by right",
+      sgr.TEAM_PP_COLUMN not in sgr.FILLED_FOR_EVERY_SKATER)
+shaped = sgr.shape(row(1, 10, "2026-10-01", evGoals=1, evPoints=2), sgr.SKATER)
+check("even-strength scoring comes from the summary report", shaped["evGoals"] == 1 and shaped["evPoints"] == 2)
+
+original_fetch = sgr.fetch
+try:
+    sgr.fetch = lambda kind, start, end, kind_path=None, sort=None: (
+        [{"playerId": 1, "gameId": 10, "ppTimeOnIce": 90, "evTimeOnIce": 900, "shTimeOnIce": 30,
+          "otTimeOnIce": 0, "shifts": 22}] if kind_path == 'skater/timeonice' else [])
+    rows = {(1, 10): {"playerId": 1, "gameId": 10, "opponentTeamAbbrev": "MTL"}}
+    sgr._merge_power_play(rows, "2026-10-01", "2026-10-01")
+    check("ice time by strength lands with the power-play time, from the same report",
+          rows[(1, 10)]["evTimeOnIce"] == 900 and rows[(1, 10)]["shifts"] == 22
+          and rows[(1, 10)]["otTimeOnIce"] == 0, rows[(1, 10)])
 finally:
     sgr.fetch = original_fetch
 

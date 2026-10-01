@@ -12,7 +12,7 @@
  *
  * Author - Jason Druckenmiller
  * Created - 7/3/2026
- * Updated - 9/29/2026
+ * Updated - 10/1/2026
  */
 
 :root {
@@ -216,6 +216,47 @@ input.terminal {
     background-color: #2563EB;
 }
 
+/* --- Player card links ------------------------------------------------------- */
+/* A player's name - or a cell about him - that opens his card on League Home.
+   A button, for the keyboard and screen readers, dressed as the text it
+   replaces; the underline on hover is the only hint it does anything. */
+
+.player-link {
+    font: inherit;
+    color: inherit;
+    text-align: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+.player-link:hover,
+.player-link:focus-visible {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+/* "L1 · PP1" beside a name: his line last game and his power-play unit, as
+   the old site's red pill had it. */
+.line-badge {
+    margin-left: 0.375rem;
+    padding: 0 0.25rem;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1rem;
+    border-radius: 0.25rem;
+    background-color: #7F1D1D;
+    color: #FECACA;
+    white-space: nowrap;
+}
+
+.line-badge:hover,
+.line-badge:focus-visible {
+    background-color: #991B1B;
+    text-decoration: none;
+}
+
 /* --- Sticky table header --------------------------------------------------- */
 /* A draft board is read by scrolling, and a category column means nothing
    without its heading. The header cells carry the background themselves rather
@@ -307,6 +348,11 @@ tr[data-tag="dnd"] > .col-sticky { background-color: rgb(69, 36, 45); }
     .data-table input[type="checkbox"] {
         width: 1.25rem;
         height: 1.25rem;
+    }
+
+    /* A name is a thumb's target on League Home - it opens his card */
+    .player-link {
+        padding: 0.25rem 0;
     }
 
     /* Room at the foot of the page while draft-prep's selection bar is up, so

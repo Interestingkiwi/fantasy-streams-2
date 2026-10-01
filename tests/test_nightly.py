@@ -1,5 +1,5 @@
 """
-Tests for the nightly update's season gate.
+Tests for the nightly update's season gate, and the order of its steps.
 
 The gate is what lets the cron be created months before it has anything to do,
 so the cases that matter are the boundaries: silent before opening night, live
@@ -12,7 +12,7 @@ they fetch.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/30/2026
+Updated - 10/1/2026
 """
 
 import os
@@ -64,20 +64,27 @@ def stub_teams(**kwargs):
     return 32
 
 
-faceoff_windows = []
+fill_windows = []
 
 
-def stub_faceoffs(since, until):
-    faceoff_windows.append((since, until))
+def stub_fill(since, until):
+    fill_windows.append((since, until))
+    return 0
+
+
+def stub_lines(since, until):
+    calls.append(("lines", since, until))
     return 0
 
 
 original = (nightly.scrape_game_results.run, nightly.scrape_team_stats.run,
-            nightly.season_first_game, nightly.scrape_game_results.fill_missing_faceoffs)
+            nightly.season_first_game, nightly.scrape_game_results.fill_missing,
+            nightly.game_lines.fill_missing)
 try:
     nightly.scrape_game_results.run = stub_results
     nightly.scrape_team_stats.run = stub_teams
-    nightly.scrape_game_results.fill_missing_faceoffs = stub_faceoffs
+    nightly.scrape_game_results.fill_missing = stub_fill
+    nightly.game_lines.fill_missing = stub_lines
     nightly.season_first_game = lambda: OPENING
 
     calls.clear()
@@ -86,20 +93,22 @@ try:
 
     calls.clear()
     did = nightly.run(date(2026, 9, 20), force=True)
-    check("--force overrides the gate", did is True and len(calls) == 2, calls)
+    check("--force overrides the gate", did is True and len(calls) == 3, calls)
 
     calls.clear()
     did = nightly.run(OPENING)
-    check("opening night runs both scrapers", did is True and len(calls) == 2, calls)
+    check("opening night runs results, team stats and lines", did is True and len(calls) == 3, calls)
     check("results are scraped for exactly that one night",
           calls[0] == ("results", "2026-09-29", "2026-09-29"), calls[0])
     check("results come before team stats, which roll up from them",
           calls[0][0] == "results" and calls[1][0] == "teams", calls)
     check("the trailing windows end on the night just scraped",
           calls[1][1] == OPENING, calls[1])
-    check("and earlier games missing faceoffs are looked for over a short look-back",
-          faceoff_windows and faceoff_windows[-1] == (OPENING - nightly.timedelta(days=14), OPENING),
-          faceoff_windows)
+    check("and earlier nights missing a column are looked for over a short look-back",
+          fill_windows and fill_windows[-1] == (OPENING - nightly.timedelta(days=14), OPENING),
+          fill_windows)
+    check("lines come last, over the same look-back - a shift chart not posted yet costs only the lines",
+          calls[2] == ("lines", OPENING - nightly.timedelta(days=14), OPENING), calls)
 
     # A missing schedule must not raise - the cron would alert nightly.
     nightly.season_first_game = lambda: None
@@ -108,7 +117,8 @@ try:
           nightly.run(date(2027, 1, 1)) is False and not calls, calls)
 finally:
     (nightly.scrape_game_results.run, nightly.scrape_team_stats.run,
-     nightly.season_first_game, nightly.scrape_game_results.fill_missing_faceoffs) = original
+     nightly.season_first_game, nightly.scrape_game_results.fill_missing,
+     nightly.game_lines.fill_missing) = original
 
 
 # --------------------------------------------------------------------------

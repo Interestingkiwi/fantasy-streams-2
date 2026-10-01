@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/30/2026
+Updated - 10/1/2026
 """
 
 import logging
@@ -26,8 +26,10 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 import bench_lineups
 import bench_points
 import daily_value as dv
+import game_lines
 import opponent_strength as ops
 import goalie_planning
+import player_card
 import player_form
 import week_planner
 import yahoo_matchup
@@ -675,8 +677,9 @@ def plan_week():
     games in it).
 
     Every player on either side also gets `seasonRank` (the draft board's, as
-    the free-agent drops use) and `form` (`player_form`: PP share, trends,
-    home/road) - both for the roster view on League Home's Lineups tab.
+    the free-agent drops use), `form` (`player_form`: PP share, trends,
+    home/road) and `line` (`game_lines.latest`: his line and PP unit) - all for
+    the roster view on League Home's Lineups tab.
     """
     try:
         body = request.get_json(silent=True) or {}
@@ -696,11 +699,13 @@ def plan_week():
         ids = [p['playerId'] for side in sides for p in side.get('players', [])]
         season = _season_values(week, body)
         forms, form_season = player_form.forms(ids, week.points or week.flat)
+        lines = game_lines.latest(ids, form_season)
         for side in sides:
             for player in side.get('players', []):
                 key = str(player['playerId'])
                 player['seasonRank'] = (season.get(key) or {}).get('rank')
                 player['form'] = forms.get(key)
+                player['line'] = lines.get(key)
         result['formSeason'] = _season_label(form_season)
         return jsonify({"status": "success", **result})
     except BadRequest as exc:
@@ -969,8 +974,8 @@ def free_agent_pool():
     Body as `_request_plan`, plus rostered (every playerId on any team) and
     optionally next_start / next_end. Each player comes back with his games
     this week and next, his per-game line and its shading, the draft board's
-    rank, his form and any injury on file - the same line the Lineups roster
-    view shows, so one table renders both.
+    rank, his form, his line and PP unit and any injury on file - the same
+    line the Lineups roster view shows, so one table renders both.
     """
     try:
         body = request.get_json(silent=True) or {}
@@ -990,11 +995,13 @@ def free_agent_pool():
         season = _season_values(week, body)
         forms, form_season = player_form.forms([p['playerId'] for p in players],
                                                week.points or week.flat)
+        lines = game_lines.latest([p['playerId'] for p in players], form_season)
         injuries, injury_date = _injuries()
         for player in players:
             key = str(player['playerId'])
             player['seasonRank'] = (season.get(key) or {}).get('rank')
             player['form'] = forms.get(key)
+            player['line'] = lines.get(key)
             if key in injuries:
                 player['injury'] = injuries[key]
 
@@ -1007,6 +1014,69 @@ def free_agent_pool():
         return _error(str(exc), 400)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Standalone free agent pool failed.")
+        return _error(str(exc), 500)
+
+
+def _names(player_ids):
+    """{playerId: name} for players in `player_game_stats` - linemates, mostly."""
+    ids = sorted({int(i) for i in player_ids})
+    if not ids:
+        return {}
+    rows = fetch_all('SELECT DISTINCT ON ("playerId") "playerId", "fullName" FROM player_game_stats '
+                     'WHERE "playerId" = ANY(:ids) ORDER BY "playerId", "gameDate" DESC', {'ids': ids})
+    return {r['playerId']: r['fullName'] for r in rows}
+
+
+def _scraped_through():
+    """The last night in `player_game_stats`, or None before the first scrape."""
+    try:
+        return fetch_all('SELECT max("gameDate") AS through FROM player_game_stats')[0]['through']
+    except Exception:                             # noqa: BLE001 - no table yet
+        return None
+
+
+@standalone_bp.route('/api/player/<int:player_id>')
+def player_detail(player_id):
+    """
+    One player's card for League Home's player modal (`player_card`): his
+    season so far and his last 20, 10 and 5 games, the game log, his line and
+    power-play unit or a goalie's starts, and his team's games in a week.
+
+    Query: start and end (YYYY-MM-DD), the week whose games to show; without
+    them the card has no schedule. Needs no league - it is the same card in
+    every league, and the page orders the stats by the league's categories.
+    """
+    try:
+        start, end = request.args.get('start'), request.args.get('end')
+        if start or end:
+            try:
+                _dates_between(str(start), str(end))
+            except ValueError as exc:
+                return _error(f"Bad week: {exc}", 400)
+
+        projection = fetch_all('SELECT * FROM final_projections WHERE "playerId" = :id',
+                               {'id': player_id})
+        games, season = player_form.load([player_id], columns=None)
+        games = games.get(str(player_id), [])
+        if not projection and not games:
+            return _error("No player with that id.", 404)
+
+        line_rows = game_lines.recent([player_id], season, games=player_card.LINE_HISTORY)
+        line_rows = line_rows.get(str(player_id), [])
+        mates = {p for r in line_rows for p in [*(r.get('lineMates') or []), *(r.get('ppMates') or []),
+                                                 *(m[0] for m in r.get('mates') or [])]}
+        schedule = [(r["gameDate"], r["homeTeam"], r["awayTeam"]) for r in fetch_all(
+            'SELECT "gameDate", "homeTeam", "awayTeam" FROM nhl_schedule')]
+        injuries, injury_date = _injuries()
+
+        card = player_card.card(
+            player_id, projection[0] if projection else None, games, line_rows, _names(mates),
+            schedule, _team_stats(), date.today(), start=start, end=end,
+            injury=injuries.get(str(player_id)), through=_scraped_through())
+        return jsonify({"status": "success", "season": _season_label(season),
+                        "injuryDate": injury_date, **card})
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Player card failed.")
         return _error(str(exc), 500)
 
 

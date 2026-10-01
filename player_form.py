@@ -33,7 +33,7 @@ five games are noisy enough that most of what a percentage flags is noise.
 
 Author - Jason Druckenmiller
 Created - 9/21/2026
-Updated - 9/21/2026
+Updated - 10/1/2026
 """
 
 import logging
@@ -81,16 +81,21 @@ def latest_season():
     return int(latest) // 1_000_000 if latest else None
 
 
-def load(player_ids, season=None):
-    """{playerId: [game rows, oldest first]} for one season."""
+def load(player_ids, season=None, columns=COLUMNS):
+    """
+    ({playerId: [game rows, oldest first]}, season) for one season. `columns`
+    None reads every column, which the player card's full stat line needs.
+    """
     ids = sorted({int(i) for i in player_ids if str(i).lstrip('-').isdigit()})
     season = season or latest_season()
     if not ids or not season:
         return {}, season
-    quoted = ', '.join(f'"{c}"' for c in COLUMNS)
+    selected = '*' if columns is None else (
+        '"playerId", "gameId", "gameDate", "homeRoad", "positionCode", '
+        + ', '.join(f'"{c}"' for c in columns))
     try:
         rows = fetch_all(
-            f'SELECT "playerId", "gameId", "gameDate", "homeRoad", "positionCode", {quoted} '
+            f'SELECT {selected} '
             'FROM player_game_stats WHERE "playerId" = ANY(:ids) '
             'AND "gameId" >= :first AND "gameId" < :next ORDER BY "gameDate", "gameId"',
             {'ids': ids, 'first': season * 1_000_000, 'next': (season + 1) * 1_000_000})

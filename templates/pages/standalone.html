@@ -557,6 +557,26 @@
         </div>
     </div>
 
+    <!-- One player's card, opened by tapping a player anywhere on the page.
+         Above the other modals, since a name inside one opens it too. -->
+    <div id="player-modal" class="hidden fixed inset-0 z-50 bg-gray-900/80 p-0 sm:p-4 flex items-center justify-center">
+        <div class="bg-gray-800 border border-gray-700 w-full sm:max-w-4xl h-full sm:h-auto sm:max-h-[90vh] sm:rounded-lg flex flex-col shadow-xl"
+             role="dialog" aria-modal="true" aria-labelledby="player-modal-title">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <h2 id="player-modal-title" class="text-lg font-semibold text-white">Player</h2>
+                    <p id="player-modal-sub" class="text-sm text-gray-400 mt-0.5"></p>
+                </div>
+                <button type="button" class="player-modal-close px-3 py-2 text-gray-400 hover:text-white text-xl leading-none" aria-label="Close">&times;</button>
+            </div>
+            <div id="player-tabs" class="shrink-0 px-3 sm:px-4 py-2 border-b border-gray-700 flex gap-2 overflow-x-auto whitespace-nowrap" role="tablist" aria-label="Player card"></div>
+            <div id="player-body" class="flex-1 overflow-y-auto p-3 sm:p-4 text-sm"></div>
+            <div class="p-3 sm:p-4 border-t border-gray-700 text-right">
+                <button type="button" class="player-modal-close px-4 py-2 text-sm text-gray-300 border border-gray-600 rounded-md hover:bg-gray-700">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     document.addEventListener('DOMContentLoaded', () => {
         const $ = id => document.getElementById(id);
@@ -1001,7 +1021,7 @@
                             const wasted = plan?.benchedGames || 0;
                             return `
                             <tr class="table-row-hover ${entry.out ? 'opacity-60' : ''}">
-                                <td class="col-sticky px-4 py-2 text-white font-medium">${player ? esc(player.fullName)
+                                <td class="col-sticky px-4 py-2 text-white font-medium">${player ? playerLink(entry.id, esc(player.fullName))
                                     : `<span class="text-gray-500">Unknown player ${esc(entry.id)}</span>`}${statusBadge(entry.status)}</td>
                                 <td class="px-4 py-2 text-gray-300">${esc(player?.eligiblePositions || player?.positionCode || '')}</td>
                                 <td class="px-4 py-2 text-gray-300">${esc(player?.teamAbbrevs || '')}</td>
@@ -1779,7 +1799,7 @@
                             return `
                             <tr data-index="${index}" class="${c.loading ? 'opacity-50' : ''}">
                                 <td class="col-sticky px-3 py-2">
-                                    <div class="text-white font-medium whitespace-nowrap">${esc(c.player.fullName)}</div>
+                                    <div class="text-white font-medium whitespace-nowrap">${playerLink(c.player.playerId, esc(c.player.fullName))}</div>
                                     <div class="text-xs text-gray-400 whitespace-nowrap">${esc(c.player.eligiblePositions)} · ${esc(c.player.teamAbbrevs)}${rank ? ` · season ${esc(rank)}` : ''}</div>
                                 </td>
                                 <td class="px-3 py-2 text-right text-gray-300">${esc(c.gamesLeft)}</td>
@@ -2446,7 +2466,7 @@
         function txPlayer(saved, id) {
             const [name, nhl, positions] = saved.players[id] || ['Unknown player', '', ''];
             const detail = [nhl, positions].filter(Boolean).join(' · ');
-            return `<span class="text-white">${esc(name)}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
+            return `<span class="text-white">${playerLink(saved.players[id] ? nhlIdFor(name, nhl, positions) : null, esc(name))}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
         }
 
         const txTeam = (saved, id) => saved.teams[id] || (id ? `Team ${id}` : '');
@@ -2647,7 +2667,7 @@
         function benchPlayer(id) {
             const [name, nhl, positions] = benchData.players[id] || ['Unknown player', '', ''];
             const detail = [nhl, positions].filter(Boolean).join(' · ');
-            return `<span class="text-white">${esc(name)}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
+            return `<span class="text-white">${playerLink(benchData.players[id] ? nhlIdFor(name, nhl, positions) : null, esc(name))}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
         }
 
         // "wins G, ties PPP" from [[id, 'win' | 'tie' | 'loss']]
@@ -3324,7 +3344,7 @@
             const odds = player.startProbability != null
                 ? ` <span class="${player.startProbability >= 0.5 ? 'text-emerald-400' : 'text-amber-400'}">${pct(player.startProbability)}</span>`
                 : '';
-            return `<div class="text-white whitespace-nowrap">${esc(player.fullName)}</div>
+            return `<div class="text-white whitespace-nowrap">${playerLink(player.playerId, esc(player.fullName))}</div>
                     <div class="text-xs text-gray-400 whitespace-nowrap">${where}${odds}</div>`;
         }
 
@@ -3499,18 +3519,18 @@
                 return `
                 <tr class="table-row-hover ${p.out ? 'opacity-70' : ''}">
                     ${opts.add ? `<td class="px-2 py-2"><button type="button" class="pool-add btn-primary rounded-md text-xs font-medium px-3 py-2" data-id="${esc(p.playerId)}">Add</button></td>` : ''}
-                    <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${esc(p.fullName)}${badge}${injured} ${tags}</td>
+                    <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${playerLink(p.playerId, esc(p.fullName))}${lineBadge(p)}${badge}${injured} ${tags}</td>
                     <td class="px-3 py-2 text-gray-300">${esc(p.teamAbbrevs || '')}</td>
                     <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${esc(p.eligiblePositions || p.positionCode || '')}</td>
                     <td class="px-3 py-2 whitespace-nowrap">${weekNights(p)}</td>
-                    <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${(p.nights || []).map(n => `${n.home ? '' : '@'}${esc(n.opponent)}`).join(', ') || '&mdash;'}</td>
+                    <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${p.nights?.length ? playerLink(p.playerId, p.nights.map(n => `${n.home ? '' : '@'}${esc(n.opponent)}`).join(', '), 'schedule') : '&mdash;'}</td>
                     <td class="px-3 py-2 text-right text-gray-300">${esc(p.games)}</td>
                     ${opts.starts ? `<td class="px-3 py-2 text-right text-white font-semibold">${esc(round1(p.starts))}</td>` : ''}
                     <td class="px-3 py-2 text-gray-400 whitespace-nowrap">${(p.nextWeek || []).map(g => esc(weekday(g.date))).join(', ') || '&mdash;'}</td>
                     ${goalies ? '' : `<td class="px-3 py-2 text-right whitespace-nowrap">${pp && pp.recent != null
-                        ? `<span class="text-gray-200">${pct(pp.recent)}</span>${pp.last != null ? ` <span class="text-xs text-gray-500">last ${pct(pp.last)}</span>` : ''}`
+                        ? playerLink(p.playerId, `<span class="text-gray-200">${pct(pp.recent)}</span>${pp.last != null ? ` <span class="text-xs text-gray-500">last ${pct(pp.last)}</span>` : ''}`, 'lines')
                         : '<span class="text-gray-600">&mdash;</span>'}</td>`}
-                    <td class="px-3 py-2 whitespace-nowrap text-center">${trendMark(trends.L20)} ${trendMark(trends.L10)} ${trendMark(trends.L5)} <span class="ml-1">${venueMark(p)}</span></td>
+                    <td class="px-3 py-2 whitespace-nowrap text-center">${playerLink(p.playerId, `${trendMark(trends.L20)} ${trendMark(trends.L10)} ${trendMark(trends.L5)} <span class="ml-1">${venueMark(p)}</span>`, 'stats')}</td>
                     <td class="px-3 py-2 text-right text-blue-300 font-semibold">${p.seasonRank ?? '&mdash;'}</td>
                     ${categories.map(code => `<td class="px-3 py-2 text-right text-white" style="${heatStyle(p.heat?.[code])}">${esc(statText(code, p.perGame?.[code]))}</td>`).join('')}
                 </tr>`;
@@ -3782,8 +3802,435 @@
             if (event.target === $(id)) closeModal(id);
         }));
         document.addEventListener('keydown', event => {
-            if (event.key === 'Escape') { closeModal('move-modal'); closeModal('fa-modal'); }
+            if (event.key !== 'Escape') return;
+            // The card sits above the others; Escape closes it first
+            if (!$('player-modal').classList.contains('hidden')) { closeModal('player-modal'); return; }
+            closeModal('move-modal'); closeModal('fa-modal');
         });
+
+        // --- Player card -----------------------------------------------------
+        // One modal for every player the page lists, in place of the old site's
+        // five (line, trend, PP, goalie, opponents). A name opens it on his
+        // stats; the trend, PP% and opponents cells of a roster table open it on
+        // their own tab, as their modals did, and the line badge on Line & PP.
+        // The server builds the card (`player_card`); the page orders the stats
+        // by the league's categories and formats them.
+        const CARD_TABS = { stats: 'Stats & trends', log: 'Game log', lines: 'Line & PP', starts: 'Starts', schedule: 'Schedule' };
+        let playerCard = null;      // the open card, as /api/player returned it
+        let cardTab = 'stats';
+        let cardPerGame = false;    // the stats table in totals or per game
+        let cardRequest = 0;        // so a slow answer cannot replace a later player's card
+        const NONE = '<span class="text-gray-600">&mdash;</span>';
+
+        const clockText = seconds => {
+            if (seconds == null) return '';
+            const s = Math.round(seconds);
+            return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        };
+        const lineLabel = (unit, line) => (line == null ? '' : `${unit === 'D' ? 'D' : 'L'}${line}`);
+
+        // "L1 · PP2" for a player line from game_lines.latest, as a button that
+        // opens his card on Line & PP. Nothing when there is nothing to say.
+        function lineBadge(player) {
+            const line = player.line;
+            const parts = [lineLabel(line?.unit, line?.line), line?.ppUnit ? `PP${line.ppUnit}` : ''].filter(Boolean);
+            if (!parts.length) return '';
+            const title = [line.line != null ? `${line.unit === 'D' ? 'Pair' : 'Line'} ${line.line} last game` : '',
+                line.ppUnit ? `power-play unit ${line.ppUnit} the last game his team had one` : ''].filter(Boolean).join('; ');
+            return `<button type="button" class="player-link line-badge" data-player="${esc(player.playerId)}" data-card-tab="lines"
+                            title="${esc(title)}">${parts.join(' &middot; ')}</button>`;
+        }
+
+        // A tappable name (or cell). `label` is HTML, already escaped.
+        const playerLink = (id, label, tab = '') => (id == null || id === ''
+            ? label
+            : `<button type="button" class="player-link" data-player="${esc(id)}"${tab ? ` data-card-tab="${esc(tab)}"` : ''}>${label}</button>`);
+
+        // Season History lists Yahoo's players by name, team and positions; the
+        // card wants an NHL id. A unique name is taken, then team and position
+        // settle look-alikes, as the roster scrape does. A player they cannot
+        // settle stays plain text rather than opening the wrong card.
+        let nameIndex = null;
+        function nhlIdFor(name, team, positions) {
+            if (!nameIndex?.size) {
+                nameIndex = new Map();
+                setup.players.forEach(p => {
+                    const key = fold(p.fullName);
+                    if (!nameIndex.has(key)) nameIndex.set(key, []);
+                    nameIndex.get(key).push(p);
+                });
+            }
+            const codes = value => String(value || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+            let found = nameIndex.get(fold(name)) || [];
+            if (found.length > 1 && team) {
+                const same = found.filter(p => codes(p.teamAbbrevs).includes(String(team).toUpperCase()));
+                if (same.length) found = same;
+            }
+            if (found.length > 1 && positions) {
+                const wanted = codes(positions);
+                const same = found.filter(p => codes(p.eligiblePositions || p.positionCode).some(c => wanted.includes(c)));
+                if (same.length) found = same;
+            }
+            return found.length === 1 ? found[0].playerId : null;
+        }
+
+        // What the page already has on him - the plan's or the pool's line
+        function pagePlayer(id) {
+            const key = String(id);
+            return [...(lastPlan?.players || []), ...(lastPlan?.opponent?.players || []), ...(pool?.players || [])]
+                .find(p => String(p.playerId) === key) || null;
+        }
+
+        async function openPlayerCard(playerId, tab) {
+            const request = ++cardRequest;
+            cardTab = CARD_TABS[tab] ? tab : 'stats';
+            playerCard = null;
+            $('player-modal-title').textContent = playersById.get(String(playerId))?.fullName || 'Player';
+            $('player-modal-sub').textContent = '';
+            $('player-tabs').innerHTML = '';
+            $('player-body').innerHTML = '<p class="text-gray-400">Loading&hellip;</p>';
+            $('player-modal').classList.remove('hidden');
+            const week = selectedWeek();
+            const query = week ? `?start=${encodeURIComponent(week.start)}&end=${encodeURIComponent(week.end)}` : '';
+            try {
+                const data = await getJSON(`/standalone/api/player/${encodeURIComponent(playerId)}${query}`);
+                if (request !== cardRequest) return;
+                playerCard = data;
+                if (cardTab === (playerCard.player.goalie ? 'lines' : 'starts')) cardTab = playerCard.player.goalie ? 'starts' : 'lines';
+                renderCard();
+            } catch (error) {
+                if (request !== cardRequest) return;
+                $('player-body').innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
+            }
+        }
+
+        function renderCard() {
+            const p = playerCard.player;
+            const known = pagePlayer(p.playerId);
+            const fantasy = teamOf(p.playerId);
+            const yahoo = fantasy?.players.find(e => String(e.id) === String(p.playerId))?.status;
+            const injury = p.injury
+                ? ` <span class="text-[10px] font-semibold uppercase px-1 rounded bg-amber-800 text-white">${esc(INJURY_CODES[p.injury.status] || 'INJ')}</span>` : '';
+            $('player-modal-title').innerHTML = `${esc(p.fullName || 'Player')}${statusBadge(yahoo)}${injury}`;
+            const rank = known?.seasonRank ? `draft board #${known.seasonRank}` : '';
+            $('player-modal-sub').innerHTML = [
+                esc(p.eligiblePositions || p.positionCode || ''), esc(p.team || ''),
+                fantasy ? `on ${esc(fantasy.name)}` : 'free agent', esc(rank),
+            ].filter(Boolean).join(' &middot; ');
+
+            const tabs = ['stats', 'log', p.goalie ? 'starts' : 'lines', 'schedule'];
+            $('player-tabs').innerHTML = tabs.map(t => `
+                <button type="button" role="tab" class="page-tab" data-card-select="${t}" aria-selected="${t === cardTab}">${CARD_TABS[t]}</button>`).join('');
+            const body = { stats: cardStats, log: cardLog, lines: cardLines, starts: cardStarts, schedule: cardSchedule }[cardTab]();
+            const note = p.injury ? injuryNote(p.injury) : '';
+            $('player-body').innerHTML = note + body;
+            $('player-body').scrollTop = 0;
+        }
+
+        // The injury feed is the preseason scrape, and it goes stale: say when
+        // he has played since, rather than present it as today's news.
+        function injuryNote(injury) {
+            const last = playerCard.log?.[0]?.date;
+            const back = injury.returnDate ? `, expected back ${fmt(injury.returnDate, { month: 'short', day: 'numeric' })}` : '';
+            const fed = playerCard.injuryDate;
+            const since = last && (!fed || last > fed)
+                ? ` He has played since${fed ? ` the feed was last updated (${fmt(fed, { month: 'short', day: 'numeric' })})` : ''}, most recently ${fmt(last, { month: 'short', day: 'numeric' })}.` : '';
+            return `<p class="mb-3 text-xs text-amber-300">Injury feed: ${esc(injury.status || 'injured')}${injury.type ? ` (${esc(injury.type)})` : ''}${esc(back)}.${esc(since)}</p>`;
+        }
+
+        function cardFormat(row, value, perGame) {
+            if (value == null) return '';
+            if (row.kind === 'time') return clockText(value);
+            if (row.kind === 'rate') {
+                if (row.code === 'SVpct') return value.toFixed(3).replace(/^0/, '');
+                if (row.code === 'GAA') return value.toFixed(2);
+                return `${value.toFixed(1)}%`;
+            }
+            if (perGame) return value.toFixed(2);
+            return Number.isInteger(value) ? String(value) : value.toFixed(1);
+        }
+
+        // Season, his projection, the trend windows, home and road. League
+        // categories first, in the league's order; a stat the league does not
+        // score is hidden while it is nothing in every column.
+        function cardStats() {
+            const stats = playerCard.stats;
+            if (!stats) return `<p class="text-gray-400">No games yet in ${esc(playerCard.season || 'this season')}.</p>`;
+            const perGame = cardPerGame;
+            const seasonGames = stats.columns[0].games;
+            const columns = [stats.columns[0], { key: 'proj', label: 'Proj', games: seasonGames },
+                ...stats.columns.slice(1)];
+            const league = activeCategories().map(c => c.code);
+            const byCode = new Map(stats.rows.map(r => [r.code, r]));
+            const blank = r => Object.values(r.values).every(v => !v || !(perGame ? v.perGame : v.total));
+            const groups = [];
+            const leagueRows = league.map(code => byCode.get(code)).filter(Boolean);
+            if (leagueRows.length) groups.push(['Your league', leagueRows]);
+            const rest = stats.rows.filter(r => !league.includes(r.code) && !blank(r));
+            [...new Set(rest.map(r => r.group))].forEach(g => groups.push([g, rest.filter(r => r.group === g)]));
+
+            const projected = row => {
+                const value = playerCard.projection?.[row.code];
+                if (value == null) return null;
+                return perGame || row.kind === 'rate' ? value : value * seasonGames;
+            };
+            const cell = (row, key) => {
+                if (key === 'proj') {
+                    const value = projected(row);
+                    return value == null ? NONE : `<span class="text-gray-400">${esc(cardFormat(row, value, perGame))}</span>`;
+                }
+                const v = row.values[key];
+                const value = v ? (perGame ? v.perGame : v.total) : null;
+                if (value == null) return NONE;
+                const mark = row.marks?.[key];
+                // A league scoring PIM against you wants fewer of them
+                const lower = row.lowerIsBetter || (row.code === 'PIM' && pimNegative());
+                const good = mark && ((mark === 'up') !== lower);
+                const arrow = mark ? ` <span class="${good ? 'text-emerald-400' : 'text-red-400'}" title="${mark === 'up' ? 'Above' : 'Below'} his season">${mark === 'up' ? '&#9650;' : '&#9660;'}</span>` : '';
+                return `<span class="${key === 'season' ? 'text-white font-semibold' : 'text-gray-200'}">${esc(cardFormat(row, value, perGame))}</span>${arrow}`;
+            };
+            const head = c => {
+                const games = c.key === 'home' || c.key === 'road' ? ` <span class="normal-case text-gray-500">(${c.games})</span>` : '';
+                const title = c.key === 'proj' ? (perGame ? 'His projection per game' : `His projection over the same ${seasonGames} games`) : '';
+                return `<th class="px-3 py-2 font-medium text-right whitespace-nowrap" ${title ? `title="${esc(title)}"` : ''}>${esc(c.label)}${games}</th>`;
+            };
+            const windows = stats.columns.filter(c => c.key.startsWith('L')).map(c => c.games);
+            const early = seasonGames < 5
+                ? `He has played ${seasonGames} game${seasonGames === 1 ? '' : 's'} this season, too few to read trends into. The last 5, 10 and 20 appear once he has played that many.`
+                : `Arrows mark a window whose per-game rate is at least 1.5 standard errors from his season's &mdash; the test behind the roster view's trend arrows.${windows.length < 3 ? ' The longer windows appear once he has played that many games.' : ''}`;
+
+            return `
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <p class="text-xs text-gray-400">${esc(playerCard.season || '')} &middot; ${seasonGames} game${seasonGames === 1 ? '' : 's'}${stats.goalie ? ' (a goalie&rsquo;s game is an appearance)' : ''}</p>
+                    <div class="flex gap-2" role="group" aria-label="Show stats as">
+                        <button type="button" class="card-mode column-toggle" data-mode="total" aria-pressed="${!perGame}">Totals</button>
+                        <button type="button" class="card-mode column-toggle" data-mode="perGame" aria-pressed="${perGame}">Per game</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr><th class="col-sticky px-3 py-2 font-medium">Stat</th>${columns.map(head).join('')}</tr>
+                        </thead>
+                        <tbody>
+                            ${groups.map(([name, rows]) => `
+                                <tr><td colspan="${columns.length + 1}" class="px-3 pt-3 pb-1 text-xs uppercase tracking-wide font-semibold text-blue-300">${esc(name)}</td></tr>
+                                ${rows.map(row => `
+                                <tr class="table-row-hover border-t border-gray-700">
+                                    <td class="col-sticky px-3 py-1.5 text-gray-200 whitespace-nowrap">${esc(row.label)} <span class="text-xs text-gray-500">${esc(row.code === 'SVpct' ? 'SV%' : row.code)}</span></td>
+                                    ${columns.map(c => `<td class="px-3 py-1.5 text-right whitespace-nowrap">${cell(row, c.key)}</td>`).join('')}
+                                </tr>`).join('')}`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-3 text-xs text-gray-500">${early} Proj is his preseason projection${perGame ? ' per game' : ' over the games he has played'}${stats.goalie ? ', per start' : ''}.</p>`;
+        }
+
+        function cardLog() {
+            const games = playerCard.log || [];
+            if (!games.length) return `<p class="text-gray-400">No games yet in ${esc(playerCard.season || 'this season')}.</p>`;
+            const goalie = playerCard.player.goalie;
+            const scored = new Set(playerCard.stats?.rows.map(r => r.code));
+            const league = activeCategories().filter(c => c.goalie === goalie).map(c => c.code).filter(code => scored.has(code));
+            const codes = [...(league.length ? league : goalie ? ['W', 'GA', 'SA', 'SV', 'SVpct'] : ['G', 'A', 'P', 'SOG', 'HIT', 'BLK']),
+                ...(goalie ? ['TOI'] : ['TOI', 'PPTOI'])].filter((c, i, all) => all.indexOf(c) === i);
+            const rows = new Map(playerCard.stats.rows.map(r => [r.code, r]));
+            const label = code => ({ SVpct: 'SV%', PPTOI: 'PP TOI' }[code] || code);
+            return `
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="col-sticky px-3 py-2 font-medium">Date</th>
+                                <th class="px-3 py-2 font-medium">Opp</th>
+                                ${goalie ? '' : '<th class="px-3 py-2 font-medium">Line</th>'}
+                                ${codes.map(c => `<th class="px-3 py-2 font-medium text-right">${esc(label(c))}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700">
+                            ${games.map(g => `
+                            <tr class="table-row-hover">
+                                <td class="col-sticky px-3 py-1.5 text-gray-200 whitespace-nowrap">${esc(fmt(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</td>
+                                <td class="px-3 py-1.5 text-gray-300 whitespace-nowrap">${g.home ? 'vs' : '@'} ${esc(g.opponent)}</td>
+                                ${goalie ? '' : `<td class="px-3 py-1.5 text-gray-300 whitespace-nowrap">${[lineLabel(g.unit, g.line), g.ppUnit ? `PP${g.ppUnit}` : ''].filter(Boolean).join(' &middot; ') || NONE}</td>`}
+                                ${codes.map(c => {
+                                    const row = rows.get(c) || { code: c, kind: 'count' };
+                                    const value = g.stats?.[c];
+                                    return `<td class="px-3 py-1.5 text-right text-white whitespace-nowrap">${value == null ? NONE : esc(cardFormat(row, value, false))}</td>`;
+                                }).join('')}
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-3 text-xs text-gray-500">His last ${games.length} game${games.length === 1 ? '' : 's'}, newest first${league.length ? ', in your league&rsquo;s categories' : ''}.</p>`;
+        }
+
+        const mateList = mates => mates.map(m => playerLink(m.playerId, esc(m.name))
+            + (m.seconds != null ? ` <span class="text-xs text-gray-500">${esc(clockText(m.seconds))}</span>` : '')).join(', ');
+
+        function cardLines() {
+            const lines = playerCard.lines;
+            if (!lines) {
+                return `<p class="text-gray-400">No lines for him yet in ${esc(playerCard.season || 'this season')}. They are worked out each night from the NHL&rsquo;s shift charts, from his first game on.</p>`;
+            }
+            const when = (date, opponent) => `${fmt(date, { weekday: 'short', month: 'short', day: 'numeric' })}${opponent ? ` against ${opponent}` : ''}`;
+            const kind = lines.unit === 'D' ? 'pair' : 'line';
+            const headline = lines.line != null
+                ? `<span class="text-2xl font-semibold text-white">${esc(lineLabel(lines.unit, lines.line))}</span>
+                   <span class="text-gray-300">${lines.unit === 'D' ? 'Defence pair' : 'Forward line'} ${esc(lines.line)}</span>`
+                : `<span class="text-gray-300">No settled ${kind} &mdash; he was moved around, or was the extra skater.</span>`;
+            const pp = lines.pp;
+            const ppBlock = !pp
+                ? '<p class="text-gray-400">His team has not had a power play in his games yet.</p>'
+                : pp.unit
+                    ? `<p><span class="text-2xl font-semibold text-white">PP${esc(pp.unit)}</span>
+                         <span class="text-gray-400 text-xs">${esc(when(pp.date, pp.opponent))}</span></p>
+                       <p class="mt-1 text-gray-300">With ${mateList(pp.mates) || NONE}</p>
+                       <p class="mt-1 text-xs text-gray-500">${esc(clockText(pp.seconds))} of his team&rsquo;s ${esc(clockText(pp.teamSeconds))} on the power play.</p>`
+                    : `<p class="text-gray-300">Not on either unit ${esc(when(pp.date, pp.opponent))} &mdash; ${esc(clockText(pp.seconds))} of his team&rsquo;s ${esc(clockText(pp.teamSeconds))} on the power play.</p>`;
+            return `
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="rounded-md border border-gray-700 p-3">
+                        <h3 class="text-xs uppercase tracking-wide font-semibold text-blue-300 mb-2">Last game &middot; ${esc(when(lines.date, lines.opponent))}</h3>
+                        <p class="flex items-baseline gap-2">${headline}</p>
+                        ${lines.lineMates.length ? `<p class="mt-1 text-gray-300">With ${mateList(lines.lineMates)}</p>
+                            <p class="mt-1 text-xs text-gray-500">All ${lines.unit === 'D' ? 'two' : 'three'} on together for ${esc(clockText(lines.lineSeconds))} at 5-on-5, of his ${esc(clockText(lines.evenSeconds))}.</p>` : ''}
+                        ${lines.others.length ? `<p class="mt-2 text-xs text-gray-400">Also at 5-on-5 with ${mateList(lines.others)}</p>` : ''}
+                    </div>
+                    <div class="rounded-md border border-gray-700 p-3">
+                        <h3 class="text-xs uppercase tracking-wide font-semibold text-blue-300 mb-2">Power play</h3>
+                        ${ppBlock}
+                    </div>
+                </div>
+                <h3 class="mt-4 mb-1 text-xs uppercase tracking-wide font-semibold text-gray-400">Game by game</h3>
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr><th class="col-sticky px-3 py-2 font-medium">Date</th><th class="px-3 py-2 font-medium">Opp</th>
+                                <th class="px-3 py-2 font-medium">Line</th><th class="px-3 py-2 font-medium">With</th><th class="px-3 py-2 font-medium">PP</th></tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700">
+                            ${lines.history.map(h => `
+                            <tr>
+                                <td class="col-sticky px-3 py-1.5 text-gray-200 whitespace-nowrap">${esc(fmt(h.date, { month: 'short', day: 'numeric' }))}</td>
+                                <td class="px-3 py-1.5 text-gray-300">${esc(h.opponent || '')}</td>
+                                <td class="px-3 py-1.5 text-white font-semibold">${esc(lineLabel(h.unit, h.line)) || NONE}</td>
+                                <td class="px-3 py-1.5 text-gray-300 whitespace-nowrap">${mateList(h.mates) || NONE}</td>
+                                <td class="px-3 py-1.5 text-gray-300">${h.ppUnit ? `PP${esc(h.ppUnit)}` : h.teamPp ? NONE : '<span class="text-gray-600" title="His team had no power play">no PP</span>'}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-3 text-xs text-gray-500">From the NHL&rsquo;s shift charts: linemates are who he shared the most 5-on-5 time with, and line 1 is the group with the most even-strength and power-play time. Units are who shared the most power-play time. Line numbers can differ from Daily Faceoff&rsquo;s, which order lines partly by judgement.</p>`;
+        }
+
+        function cardStarts() {
+            const s = playerCard.starts;
+            if (!s) return '<p class="text-gray-400">No team to read his starts against.</p>';
+            const share = part => (part.teamGames
+                ? `${part.starts} of ${part.teamGames} <span class="text-gray-400">(${pct(part.starts / part.teamGames)})</span>`
+                : `<span class="text-sm text-gray-400">No ${esc(s.team)} games yet</span>`);
+            const recentGames = s.recent.teamGames;
+            const next = s.next;
+            const rest = next?.rest == null ? '' : next.rest === 0 ? 'no rest &mdash; he played the night before' : `${next.rest} day${next.rest === 1 ? '' : 's'}&rsquo; rest`;
+            const record = r => (r.games
+                ? `<td class="px-3 py-1.5 text-right">${r.games}</td><td class="px-3 py-1.5 text-right">${esc(r.wins ?? 0)}</td>
+                   <td class="px-3 py-1.5 text-right">${r.svpct == null ? NONE : esc(r.svpct.toFixed(3).replace(/^0/, ''))}</td>
+                   <td class="px-3 py-1.5 text-right">${r.gaa == null ? NONE : esc(r.gaa.toFixed(2))}</td>`
+                : `<td class="px-3 py-1.5 text-right text-gray-500">0</td><td colspan="3"></td>`);
+            const split = [['On no rest', s.byRest['0']], ['One day', s.byRest['1']], ['Two or more', s.byRest['2+']],
+                ['Home', s.byVenue.home], ['Road', s.byVenue.road]];
+            return `
+                <div class="grid gap-3 sm:grid-cols-3">
+                    <div class="rounded-md border border-gray-700 p-3">
+                        <h3 class="text-xs uppercase tracking-wide font-semibold text-blue-300 mb-1">${recentGames && recentGames < 10 ? `${esc(s.team)}&rsquo;s ${recentGames} game${recentGames === 1 ? '' : 's'}` : 'Last 10 team games'}</h3>
+                        <p class="text-lg text-white">${share(s.recent)}</p>
+                    </div>
+                    <div class="rounded-md border border-gray-700 p-3">
+                        <h3 class="text-xs uppercase tracking-wide font-semibold text-blue-300 mb-1">Season starts</h3>
+                        <p class="text-lg text-white">${share(s.season)}</p>
+                    </div>
+                    <div class="rounded-md border border-gray-700 p-3">
+                        <h3 class="text-xs uppercase tracking-wide font-semibold text-blue-300 mb-1">Next ${esc(s.team)} game</h3>
+                        ${next ? `<p class="text-white">${esc(fmt(next.date, { weekday: 'short', month: 'short', day: 'numeric' }))} ${next.home ? 'vs' : '@'} ${esc(next.opponent)}</p>
+                            ${rest ? `<p class="text-xs text-gray-400">${rest}</p>` : ''}
+                            ${next.teamBackToBack ? '<p class="text-xs text-amber-300">Second night of a back-to-back for his team.</p>' : ''}` : '<p class="text-gray-400">None scheduled.</p>'}
+                    </div>
+                </div>
+                <h3 class="mt-4 mb-1 text-xs uppercase tracking-wide font-semibold text-gray-400">This season by rest and venue</h3>
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr><th class="col-sticky px-3 py-2 font-medium"></th><th class="px-3 py-2 font-medium text-right">GP</th>
+                                <th class="px-3 py-2 font-medium text-right">W</th><th class="px-3 py-2 font-medium text-right">SV%</th>
+                                <th class="px-3 py-2 font-medium text-right">GAA</th></tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700 text-gray-200">
+                            ${split.map(([label, r]) => `<tr><td class="col-sticky px-3 py-1.5 whitespace-nowrap">${label}</td>${record(r)}</tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-3 text-xs text-gray-500">Rest is days since his previous appearance, so his first game of the season is in no rest row. A split over a handful of games says very little; his start odds in the plan come from the whole team&rsquo;s projections, not from these.</p>`;
+        }
+
+        function cardSchedule() {
+            const week = playerCard.week;
+            const chosen = selectedWeek();
+            if (!week || !chosen) return '<p class="text-gray-400">Pick a fantasy week to see his games.</p>';
+            const goalie = playerCard.player.goalie;
+            const nights = new Map((pagePlayer(playerCard.player.playerId)?.nights || []).map(n => [n.date, n.status]));
+            const measures = goalie
+                ? [['gf', 'GF/G', v => v.toFixed(2)], ['sf', 'SF/G', v => v.toFixed(1)], ['pp', 'PP%', v => `${(v * 100).toFixed(1)}%`]]
+                : [['ga', 'GA/G', v => v.toFixed(2)], ['sa', 'SA/G', v => v.toFixed(1)], ['pk', 'PK%', v => `${(v * 100).toFixed(1)}%`]];
+            const windows = [['season', 'Season'], ['last-2w', 'Last 2 weeks']];
+            // A rank in the kindest quarter of the league is green, the hardest red
+            const tone = (rank, count) => (rank <= count / 4 ? 'text-emerald-400' : rank > count * 3 / 4 ? 'text-red-400' : 'text-gray-500');
+            const cell = (stats, [key, , format], count) => (stats?.[key] == null ? `<td class="px-3 py-1.5 text-right">${NONE}</td>`
+                : `<td class="px-3 py-1.5 text-right whitespace-nowrap">${esc(format(stats[key]))} <span class="text-xs ${tone(stats[`${key}Rank`], count)}">${esc(stats[`${key}Rank`])}</span></td>`);
+            const status = date => {
+                const s = nights.get(date);
+                return s === 'start' ? '<span class="text-amber-300 font-semibold">start</span>'
+                    : s === 'bench' ? '<span class="text-gray-400">bench</span>' : s === 'out' ? '<span class="text-red-400">out</span>' : '';
+            };
+            return `
+                <p class="mb-2 text-xs text-gray-400">Week ${esc(chosen.week)} &middot; ${esc(fmt(chosen.start, { month: 'short', day: 'numeric' }))} &ndash; ${esc(fmt(chosen.end, { month: 'short', day: 'numeric' }))}: ${week.games.length} game${week.games.length === 1 ? '' : 's'} for ${esc(playerCard.player.team || 'his team')}</p>
+                ${week.games.length ? `
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr><th class="col-sticky px-3 py-2 font-medium" rowspan="2">Night</th><th class="px-3 py-2 font-medium" rowspan="2">Opp</th>
+                                ${nights.size ? '<th class="px-3 py-2 font-medium" rowspan="2">Plan</th>' : ''}
+                                ${windows.map(([, label]) => `<th class="px-3 pt-2 font-medium text-center normal-case" colspan="3">${label}</th>`).join('')}</tr>
+                            <tr>${windows.map(() => measures.map(([, label]) => `<th class="px-3 pb-2 font-medium text-right">${label}</th>`).join('')).join('')}</tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700 text-gray-200">
+                            ${week.games.map(g => `
+                            <tr>
+                                <td class="col-sticky px-3 py-1.5 whitespace-nowrap">${esc(fmt(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</td>
+                                <td class="px-3 py-1.5 whitespace-nowrap">${g.home ? 'vs' : '@'} ${esc(g.opponent)}</td>
+                                ${nights.size ? `<td class="px-3 py-1.5">${status(g.date)}</td>` : ''}
+                                ${windows.map(([key]) => measures.map(m => cell(g[key], m, week.teams[key])).join('')).join('')}
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>` : ''}
+                <p class="mt-3 text-xs text-gray-500">The opponent&rsquo;s ${goalie ? 'goals and shots per game and power play' : 'goals and shots allowed per game and penalty kill'}, each with its rank among ${week.teams.season} teams: 1 is the kindest to ${goalie ? 'a goalie &mdash; fewest goals, but most shots, since shots are saves' : 'a skater'}. Early in a season every window is a few games.</p>`;
+        }
+
+        document.addEventListener('click', event => {
+            const link = event.target.closest('[data-player]');
+            if (!link) return;
+            event.preventDefault();
+            openPlayerCard(link.dataset.player, link.dataset.cardTab);
+        });
+        $('player-modal').addEventListener('click', event => {
+            const tab = event.target.closest('[data-card-select]');
+            if (tab && playerCard) { cardTab = tab.dataset.cardSelect; renderCard(); return; }
+            const mode = event.target.closest('.card-mode');
+            if (mode && playerCard) { cardPerGame = mode.dataset.mode === 'perGame'; renderCard(); return; }
+            if (event.target === $('player-modal')) closeModal('player-modal');
+        });
+        document.querySelectorAll('.player-modal-close').forEach(b => b.addEventListener('click', () => closeModal('player-modal')));
 
         $('fa-recommend').addEventListener('click', () => {
             $('fa-modal').classList.remove('hidden');

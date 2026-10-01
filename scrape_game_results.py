@@ -51,6 +51,14 @@ summary report carries only the win percentage. The old repo collected them;
 this port had left the report out until bench points needed them.
 `--faceoffs-only` fills just those columns over a range already scraped.
 
+**The player card's columns cost no extra request** (10/1/2026): ice time by
+strength and shifts from `skater/timeonice`, missed shots and attempts blocked
+from `skater/realtime`, even-strength goals and points from the summary - all
+reports already fetched. `fill_missing` re-scrapes any night in a look-back
+whose skater rows lack one of the columns every skater gets
+(`FILLED_FOR_EVERY_SKATER`), which is how the nightly job catches a deployment
+up on a new column without a manual backfill.
+
 Pages are capped at 100 rows however large a limit is asked for, so a full
 season is roughly 670 requests and takes about twenty minutes. Re-running a
 range replaces it rather than duplicating, so an interrupted backfill can
@@ -58,7 +66,7 @@ simply be run again.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/30/2026
+Updated - 10/1/2026
 """
 
 import argparse
@@ -128,18 +136,28 @@ SKATER = {
     'shots': 'shots',
     'gameWinningGoals': 'gameWinningGoals',
     'timeOnIcePerGame': 'timeOnIce',
+    'evGoals': 'evGoals',
+    'evPoints': 'evPoints',
 }
 # hits and blocks live on skater/realtime rather than skater/summary, so they
-# need their own pass, merged onto the same (playerId, gameId).
+# need their own pass, merged onto the same (playerId, gameId). Missed shots
+# and attempts blocked by the other team are the rest of a player's shot
+# attempts, which the player card shows beside his shots on goal.
 REALTIME = {
     'hits': 'hits',
     'blockedShots': 'blockedShots',
     'takeaways': 'takeaways',
     'giveaways': 'giveaways',
+    'missedShots': 'missedShots',
+    'shotAttemptsBlocked': 'shotAttemptsBlocked',
 }
-# A skater's power-play ice time, from skater/timeonice - a fourth pass.
+# A skater's ice time by strength, from skater/timeonice - a fourth pass.
 TIMEONICE = {
     'ppTimeOnIce': 'ppTimeOnIce',
+    'evTimeOnIce': 'evTimeOnIce',
+    'shTimeOnIce': 'shTimeOnIce',
+    'otTimeOnIce': 'otTimeOnIce',
+    'shifts': 'shifts',
 }
 # Faceoffs, from skater/faceoffwins - a fifth. Yahoo scores FW and FL; the
 # summary report carries only the percentage, not the counts.
@@ -181,6 +199,18 @@ def _columns():
 
 COLUMNS = _columns()
 
+# Columns added after the table first went live, which CREATE IF NOT EXISTS
+# will not add to a table that already exists.
+LATER_COLUMNS = [*REALTIME.values(), *TIMEONICE.values(), *FACEOFFS.values(),
+                 TEAM_PP_COLUMN, 'evGoals', 'evPoints']
+
+# Skater columns every report row fills, so a skater row without one of them
+# was scraped before it was collected. The nightly job re-scrapes such nights
+# (`fill_missing`). TEAM_PP_COLUMN is not here: a team with no power play in a
+# game is None by right.
+FILLED_FOR_EVERY_SKATER = [*REALTIME.values(), *TIMEONICE.values(),
+                           *FACEOFFS.values(), 'evGoals', 'evPoints']
+
 CREATE = '''
 CREATE TABLE IF NOT EXISTS player_game_stats (
     "playerId"           BIGINT NOT NULL,
@@ -220,6 +250,14 @@ CREATE TABLE IF NOT EXISTS player_game_stats (
     "faceoffWins"        DOUBLE PRECISION,
     "faceoffLosses"      DOUBLE PRECISION,
     "totalFaceoffs"      DOUBLE PRECISION,
+    "evGoals"            DOUBLE PRECISION,
+    "evPoints"           DOUBLE PRECISION,
+    "missedShots"        DOUBLE PRECISION,
+    "shotAttemptsBlocked" DOUBLE PRECISION,
+    "evTimeOnIce"        DOUBLE PRECISION,
+    "shTimeOnIce"        DOUBLE PRECISION,
+    "otTimeOnIce"        DOUBLE PRECISION,
+    "shifts"             DOUBLE PRECISION,
     PRIMARY KEY ("playerId", "gameId")
 )
 '''
@@ -317,9 +355,7 @@ def write(rows, start, end):
     with engine.begin() as conn:
         conn.execute(text(CREATE))
         conn.execute(text(INDEX))
-        # The table predates the realtime columns; CREATE IF NOT EXISTS will
-        # not add them to one that already exists.
-        for column in [*REALTIME.values(), *TIMEONICE.values(), *FACEOFFS.values(), TEAM_PP_COLUMN]:
+        for column in LATER_COLUMNS:
             conn.execute(text(f'ALTER TABLE player_game_stats '
                               f'ADD COLUMN IF NOT EXISTS "{column}" DOUBLE PRECISION'))
         conn.execute(text('DELETE FROM player_game_stats '
@@ -383,7 +419,7 @@ def team_power_play(start, end):
 
 
 def _merge_power_play(merged, start, end):
-    """Put each skater's PP time, and his team's, onto the rows in `merged`."""
+    """Put each skater's ice time by strength, and his team's PP time, onto the rows in `merged`."""
     for raw in fetch('skater', start, end, kind_path='skater/timeonice'):
         row = merged.get((raw.get('playerId'), raw.get('gameId')))
         if row is not None:
@@ -479,24 +515,34 @@ def _backfill_faceoffs(start, end):
     return len(updates)
 
 
-def fill_missing_faceoffs(since, until):
+def fill_missing(since, until):
     """
-    Backfill faceoffs on skater rows between `since` and `until` that lack
-    them - games scraped before the report was collected. Called nightly over
-    a short look-back, so a deployment that started without faceoffs catches up
-    by itself, and a player the report never lists cannot make every night
-    re-fetch the whole season. Returns the rows filled.
+    Re-scrape the nights between `since` and `until` whose skater rows lack a
+    column every skater gets - nights scraped before that column was collected.
+    Called nightly over a short look-back, so a deployment catches up on a new
+    column by itself, and a player some report never lists cannot make every
+    night re-fetch the whole season. Returns the rows written.
+
+    A whole re-scrape rather than a column-by-column update: `run` replaces
+    the range, so it is safe to repeat, and a look-back's worth of nights is a
+    few dozen requests.
     """
-    with engine.connect() as conn:
+    missing = ' OR '.join(f'"{c}" IS NULL' for c in FILLED_FOR_EVERY_SKATER)
+    with engine.begin() as conn:
+        # A deployment's table may predate a column, and a missing column is
+        # missing data too; adding it lets the query below find those rows.
+        for column in LATER_COLUMNS:
+            conn.execute(text(f'ALTER TABLE player_game_stats '
+                              f'ADD COLUMN IF NOT EXISTS "{column}" DOUBLE PRECISION'))
         found = conn.execute(text(
             'SELECT min("gameDate") AS lo, max("gameDate") AS hi FROM player_game_stats'
-            ' WHERE "positionCode" IS NOT NULL AND "faceoffWins" IS NULL'
+            f' WHERE "positionCode" IS NOT NULL AND ({missing})'
             ' AND "gameDate" BETWEEN :since AND :until'),
             {'since': str(since), 'until': str(until)}).fetchone()
     if not found or not found.lo:
         return 0
-    log.info('Skater rows without faceoffs %s..%s - filling them.', found.lo, found.hi)
-    return backfill_faceoffs(found.lo, found.hi)
+    log.info('Skater rows missing columns %s..%s - re-scraping them.', found.lo, found.hi)
+    return run(found.lo, found.hi)
 
 
 def _existing(start, end):

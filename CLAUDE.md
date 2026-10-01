@@ -8,10 +8,11 @@ A Flask web app that gives Head-to-Head fantasy hockey managers advanced analyti
 draft prep, lineup/streaming help, and (planned) automated Yahoo waiver transactions.
 Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason Druckenmiller.
 
-## Where things stand (9/30/2026)
+## Where things stand (10/1/2026)
 
 - **The 2026-27 season is under way** (opened 9/29). Render's nightly cron is
-  live: `player_game_stats` and `team_stats` fill each morning at 08:30 UTC.
+  live: `player_game_stats`, `team_stats` and (from 10/1) `player_game_lines`
+  fill each morning at 08:30 UTC.
 - **Yahoo's Fantasy API is still gated**, so League Home (`/standalone/`) is the
   product: leagues are scraped or typed in and live in the browser, optionally
   in a temporary username/password account. Everything Yahoo would have synced
@@ -24,7 +25,11 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 - **Test league**: `ROSTER_SCRAPE_TEST` (on outside production) reads the
   completed public 2025-26 league 22705 — which is the previous season of the
   user's own league, **5848** (public, "Albany Hockey Hooligans").
-- **Next up: the player modal** — see *Next up: the player modal* near the end.
+- **The player card is built** (10/1/2026) — tap any player on League Home.
+  See *The player card*. It needed one new data source, lines from the NHL's
+  shift charts (`game_lines.py`), checked against Daily Faceoff.
+- **A natural next step: *Season to date* Stat Sourcing.** `season_stats.totals()`
+  is its first half — every player's season so far in Yahoo codes.
 
 ## Tech stack
 
@@ -69,6 +74,9 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
 | `goalie_planning.py` | Whether one more goalie start is worth the risk: outcomes, minutes and the limits. See *The Goalie Planning tab* |
 | `player_form.py` | PP share, L20/L10/L5 trends and home/road splits from `player_game_stats`, for the Lineups roster view. See *The Lineups tab* |
+| `season_stats.py` | A player's season so far and his L20/L10/L5 and home/road windows, in Yahoo codes, ratios rebuilt from their parts. `totals()` is the reusable piece for *Season to date* sourcing. See *The player card* |
+| `player_card.py` | Pure: one player's card for League Home's player modal — stats windows, game log, line and PP unit or a goalie's starts, the week's opponents. See *The player card* |
+| `game_lines.py` | Lines and power-play units from the NHL's shift charts into `player_game_lines`; run by the nightly job, or `--start/--end` to backfill. See *The player card* |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
 | `static/fantasy-weeks.js` | The weeks every page numbers by: standard weeks plus a league's edits (`fs_fantasyWeeks`), and the edit operations. See *Fantasy weeks* |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
@@ -92,7 +100,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid |
+| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid; every player opens the player card modal |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell. Carries the account button, and includes `partials/account.html` (the account modal and the boot data) |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -455,8 +463,11 @@ game results — `nhl_schedule` holds fixtures only, with no scores.
 
 `scrape_game_results` for one night, then `scrape_team_stats` for all six
 windows — in that order, since the team windows roll up from games that have to
-be in already. Deployed as a **Render cron** (`render.yaml`, 08:30 UTC =
-04:30 EDT / 03:30 EST, after even a late west-coast game in either offset).
+be in already — then `game_lines` for every game in the 14-day look-back that
+has no lines. Lines go last so a shift chart not yet posted costs only the
+lines, which the next night picks up. Deployed as a **Render cron**
+(`render.yaml`, 08:30 UTC = 04:30 EDT / 03:30 EST, after even a late
+west-coast game in either offset).
 
 **Not an `enqueue()` job, deliberately.** It runs on a wall clock rather than in
 response to a user, needs no cross-process dedup, and an always-on RQ worker to
@@ -506,13 +517,25 @@ also helps the nightly run.
 collected them; the port had left the report out (the summary carries only a
 percentage) until bench points needed them on 9/30/2026. `--faceoffs-only`
 fills just those columns over a range already scraped, the same way as
-`--pp-only`. **The nightly job fills the gap itself**:
-`fill_missing_faceoffs` looks back 14 days (`FACEOFF_LOOKBACK_DAYS`) for skater
-rows without faceoffs and backfills that range, so Render's opening-night rows
-were caught up by the first run after deploy with no manual write. The
-look-back is short on purpose — a player the report never listed would
-otherwise make every night re-fetch the season. Checked against Yahoo's own
-FW/FL for 23 centres on one night: identical.
+`--pp-only`. Checked against Yahoo's own FW/FL for 23 centres on one night:
+identical.
+
+**The player card's columns came free** (10/1/2026): even-strength, shorthanded
+and overtime ice time and shifts (`skater/timeonice`), missed shots and
+attempts blocked (`skater/realtime`), and even-strength goals and points (the
+summary) — all reports already fetched, so no extra request.
+
+**The nightly job fills a gap in any column itself**: `fill_missing` looks
+back 14 days (`LOOKBACK_DAYS`) for skater rows missing a column every skater
+gets (`FILLED_FOR_EVERY_SKATER`) and re-scrapes those nights. That is how
+Render's opening nights got faceoffs (on 10/1, confirmed: every skater row on
+9/29 and 9/30, wins equal to losses each night) and will get the card's
+columns on the first run after deploy, with no manual write. The look-back is
+short on purpose — a player some report never listed would otherwise make
+every night re-fetch the season. A team's PP time is not on the list: a game
+without a power play is None by right. **Locally, 2025-26 lacks the 10/1
+columns** — the card reads only the latest season, so it does not matter; a
+full re-scrape of that range would fill them.
 
 **Two ways this endpoint corrupts data silently, both hit during the port.**
 
@@ -770,9 +793,11 @@ Built to the old site's Lineups roster view. From the top:
   through when he is out), who he plays, games and expected starts, and his
   games next week. Then PP%, trend arrows for his last 20, 10 and 5 games plus
   H/A for his next game, his draft-board rank, and his unadjusted per-game line
-  shaded against the pool. A goalie's name carries his share of starts. The line
-  and PP-unit badges the old site had are not here: nothing collects linemates
-  yet — see *Next up: the player modal*.
+  shaded against the pool. A goalie's name carries his share of starts, and a
+  skater's the old site's `L1 · PP1` badge (`game_lines.latest`: his line last
+  game, and his unit the last game his team had a power play).
+- **Every name opens his card**, and so do the trend, PP% and opponents cells
+  and the line badge, each on its own tab — see *The player card*.
 - **The nightly grid**, one table, which can now be **edited by hand**.
 
 The server supplies all of it. `plan_week` gives every player his `nights`
@@ -1387,6 +1412,101 @@ bookmarklet's everything mode. It is shown to everyone, signed in or not.
   **Bookmarks dragged before 9/30/2026 cannot do this** — the steps say to drag
   again.
 
+### The player card (`player_card.py`, `season_stats.py`, `game_lines.py`)
+
+**One modal for every player League Home lists**, in place of the old site's
+five (`Interestingkiwi/fantasy-streams`, `static/home.js`): a last-game line
+pill, a goalie-starts pill, a trend table, a PP modal and an opponents modal,
+each opened from its own cell. Here a name opens the card on its stats, and
+the roster table's trend, PP% and opponents cells and the `L1 · PP1` badge open
+it on their own tab, as those modals did. Names are tappable in the Lineups
+roster view, the Free Agents table and recommendations, the League tab's
+rosters, the nightly grid, Season History's transactions and bench lists, and
+inside the card itself (a linemate opens his card). Full screen below `sm`;
+checked at 375px. The modal sits at `z-50`, above the other modals, since a
+name inside one opens it.
+
+`GET /standalone/api/player/<playerId>?start=&end=` builds it (`player_card.card`,
+pure; the route loads rows). It needs no league: the page orders the stats by
+the league's categories and formats them. `start`/`end` are the selected
+fantasy week, for the Schedule tab.
+
+- **Stats & trends** — his season to date and the same stats over his last
+  20, 10 and 5 games (`player_form.TREND_WINDOWS`) and at home and on the road,
+  with a **Totals / Per game** toggle and his projection beside the season
+  (per game, or over the same games in totals). League categories first, then
+  the rest by group; a stat the league does not score is hidden while it is
+  nothing in every column. A window appears once he has played that many
+  games. Arrows are `player_form.trend`'s standard-error test **per stat**,
+  counting stats only; a ratio over five games is mostly noise.
+- **Game log** — his last 10 games in the league's categories, ice time and
+  PP time, with his line and unit each night.
+- **Line & PP** (skaters) — last game's line, linemates and their time
+  together at 5-on-5, who else he skated with, his PP unit with its mates and
+  his share of the power play, then game by game.
+- **Starts** (goalies) — his starts against his team's last 10 games and the
+  season, the rest he would have for the next game (back-to-back flagged), and
+  his record by rest and venue. Splits carry their game counts; the card says
+  how little a handful of starts means, and that start odds come from the
+  team's projections, not from these.
+- **Schedule** — his team's games in the week, the plan's start/bench/out for
+  each if he is in the plan, and each opponent's season and last-two-weeks
+  goals and shots allowed and penalty kill (a goalie: goals and shots for and
+  power play), each ranked so 1 is the kindest to him — for a goalie the
+  fewest goals but the most shots, since shots are saves.
+
+**`season_stats` is the reusable half.** Every stat is a definition: how to
+read one game row, and whether it is counted or a ratio. A ratio — shooting,
+faceoff and save percentage, GAA, PP share — is rebuilt from its summed parts
+over the window, never averaged game by game, and a goalie's GAA is over his
+own seconds. A stat whose column a window's games were scraped without is None,
+not zero. `totals(player_ids)` gives every player's season so far in Yahoo
+codes — the input *Season to date* Stat Sourcing needs.
+
+**The injury feed is named for what it is.** The card shows the preseason ESPN
+feed's status with its date and says when he has played since — Matthews was
+"Out, back 9/15" in the feed while playing both opening nights.
+
+#### Lines from shift charts (`game_lines.py`)
+
+The one piece that needed a new data source. The old site worked lines out of
+`api.nhle.com/stats/rest/en/shiftcharts` (every shift of a game: who, which
+team, which period, from when to when) by summing shared ice time at every
+strength, and called a team's top five by PP time PP1. Here every shift is
+laid onto a per-second grid, so the **strength is counted** — the chart does
+not say it:
+
+- **Lines are 5-on-5 time together only.** Both sides at five skaters; an empty
+  net (six against five) is neither 5-on-5 nor a power play. Every trio of
+  forwards and pair of defencemen is scored by pairwise shared seconds and taken
+  greedily — four lines, three pairs — and a group whose weakest pair shared
+  under two minutes is not a line. The extra skater on an 11-and-7 night ends
+  with no line, but still with the teammates he played most with.
+- **Numbered by offence, not by time together.** Line 1 is the group whose
+  members have the most 5-on-5 plus power-play time — a shutdown pair can lead
+  its team in time together. Measured against Daily Faceoff: numbering by time
+  together put 30 of 51 forward lines and 16 of 42 pairs in their slot, by
+  offensive time 39 and 23.
+- **PP units are power-play time together**: PP1 is the player with the most
+  of it and the four who shared most with him, PP2 the same from those left. A
+  team with under a minute of power play that night has no units, and the badge
+  reads the unit from his last game that had a power play.
+
+**Checked against Daily Faceoff** for all 16 teams that had played by
+10/1/2026, both reading the same last game: the same groups for 52 of 59
+forward lines, 42 of 45 pairs and 25 of 30 PP units, PP units in the same slot
+24 times. Toronto matched exactly but for lines 3 and 4 swapped. Their pair
+order looks partly editorial, so line numbers will keep differing there.
+Scoring trios by the time all three were on at once grouped no better (111 of
+125) and split an 11-forward night differently from them.
+
+Only the result is stored — one row per skater per game in `player_game_lines`
+(line, linemates, time together, top 5-on-5 mates, PP unit and mates, his and
+his team's PP seconds), not the ~730 shifts behind it. The nightly job fills
+any game in the look-back without lines, so a chart not posted yet is tried
+again the next night; `python game_lines.py --start --end` backfills.
+`game_lines.latest()` gives the roster badge; `recent()` the card.
+
 ## Accounts (temporary)
 
 With Yahoo's API gated for the season, every league is scraped or typed in by
@@ -1874,8 +1994,10 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_matchup_weights.py` | category weighting: that a contested category outweighs a settled one, that inverse categories keep their sign, and that the same margin is less settled the more is still to come |
 | `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), that the adjustment breaks ties without reordering tiers, and home ice held at its long-run size until a season's games earn their weight — an opening night read raw is wild, blended it barely moves |
-| `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly; faceoffs from the fifth report landing on the right rows, never zeroed where the report is silent |
-| `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded; and the faceoff look-back each night |
+| `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly; faceoffs from the fifth report landing on the right rows, never zeroed where the report is silent; the card's later columns collected, added to an older table, and on the list a gap re-scrapes - team PP time not |
+| `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded; the missing-column look-back each night, and lines last |
+| `test_game_lines.py` | lines from a game built shift by shift: 5-on-5 and power-play seconds counted from the skaters on the ice (an empty net is neither, goalies never in a set), line 1 the offensive line even when the checking line is out longer together, PP units from shared power-play time, a skater with no position on no line, the badge's unit from the last game with a power play; then that every game this season has lines and no line or unit is oversized |
+| `test_player_card.py` | the card with no database for the maths: ratios rebuilt from summed parts (and a goalie's GAA over his own seconds), an uncollected column missing rather than zero, windows only once played and arrows by `player_form`'s test on counting stats only, a goalie's starts against scraped team games with rest since his last appearance, opponent ranks kindest-first (a goalie's shots the other way); then the route's 404, 400 and both kinds of card |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
 | `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; and the key lists in Python and JS not drifting. **It deletes every `zztest*` account** — do not use that prefix by hand |
@@ -1952,40 +2074,6 @@ nowhere in the markup: the vendored CDN build generates it only once it notices
 it, so it is missing when first needed (a `pb-28` set on the first tick measured
 0px). Put that rule in `styles.css` instead, as `body.has-selection` is.
 
-## Next up: the player modal
-
-Bring back the old site's player modals (`Interestingkiwi/fantasy-streams` —
-read how it built them before designing anything here), opened by tapping a
-player anywhere League Home lists one: the Lineups roster view, the Free Agents
-table, the League tab's rosters, and the Season History lists. One modal,
-shared, following *Phone layout* (full screen below `sm`).
-
-What it shows, and where each piece stands:
-
-- **Trends** — `player_form.forms()` already computes L20/L10/L5 against the
-  player's season mean (standard-error test) and H/A. Early in the season
-  there are no trends yet; say so rather than showing arrows off two games.
-  It reads the latest season present in `player_game_stats` — 2026-27 on
-  Render, and locally too since opening night was loaded on 9/30 — so its
-  early-season answers are thin by nature, not broken.
-- **PP utilization** — `player_form` has PP share of team PP time over the
-  last 5 games and the last game (`ppTimeOnIce` / `teamPpTimeOnIce`). The old
-  site also showed the PP unit; that needs line data (next point).
-- **Line number and linemates** — **not collected by anything here yet.** The
-  old site had them; find its source in the old repo first (a line-combination
-  scrape) and port it as a nightly or on-demand job, keyed on NHL `playerId`.
-  This is the one piece that needs a new data source.
-- **New: this season's stats** — the player's 2026-27 totals and per-game line
-  from `player_game_stats` (G, A, P, PPP, SOG, HIT, BLK, FW/FL, TOI; W, GA,
-  SV, SA, SHO and the ratios for goalies), in the league's categories first.
-  All of it is already collected nightly, faceoffs included. The same per-player
-  aggregation is the first half of *Season to date* Stat Sourcing (see *Known
-  issues*), so build it as a reusable server function, not inside the route.
-
-The server side is one route (say `/standalone/api/player/<playerId>`) that
-returns form, PP share, season stats and — once collected — line data for one
-NHL `playerId`; the page already carries `playerId` on every player it lists.
-
 ## Porting the old app
 
 `docs/MIGRATION.md` is the plan for bringing the pages from the old repo
@@ -2045,8 +2133,13 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   (about a minute) and keeps the lineups per device; a second device reads them
   again. Points leagues get bench totals but no swaps.
 - **Stat Sourcing is still Projected only**, though games are now being played
-  — *Season to date* waits on per-player rates from `player_game_stats`, which
-  the player modal's season stats (below) will build the first half of.
+  — *Season to date* waits on per-player rates from `player_game_stats`.
+  `season_stats.totals()` is the first half (every player's season in Yahoo
+  codes); what is left is turning a handful of games into a rate worth
+  planning on, and *Combined*'s blend with the projection.
+- **Line numbers differ from Daily Faceoff's** for about a third of forward
+  lines and half the pairs, though the groups themselves agree ~90% of the
+  time — see *Lines from shift charts*. Their order is partly editorial.
 - The accounts are temporary and store one copy of a league per member —
   retire them with the Yahoo sync (*When Yahoo API access is granted*). The
   Yahoo `/logout` does `session.clear()`, which signs out of an account too;

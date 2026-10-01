@@ -7,7 +7,10 @@ The nightly NHL update: last night's results, then every team-strength window.
 
 Runs `scrape_game_results` for one date and then `scrape_team_stats` for all
 six windows, in that order - the team windows are rolled up from games that
-have to be in already.
+have to be in already. Then `game_lines` works out lines and power-play units
+from the shift charts of every game in the look-back that has none - last, so
+a shift chart that is not posted yet costs nothing but the lines, which the
+next night picks up.
 
 **It waits for the season, so it can be scheduled now.** Before the season's
 first game the job exits cleanly having done nothing, so the cron can be
@@ -32,7 +35,7 @@ alerting on non-zero does not fire every night before the season starts.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 9/30/2026
+Updated - 10/1/2026
 """
 
 import argparse
@@ -40,14 +43,15 @@ import logging
 import sys
 from datetime import date, timedelta
 
+import game_lines
 import scrape_game_results
 import scrape_team_stats
 from db import engine, text
 
 log = logging.getLogger("nightly")
 
-# How far back each night looks for games missing faceoffs
-FACEOFF_LOOKBACK_DAYS = 14
+# How far back each night looks for games missing a late-added column, or lines
+LOOKBACK_DAYS = 14
 
 
 def season_first_game():
@@ -102,19 +106,23 @@ def run(target, force=False):
     games = scrape_game_results.run(stamp, stamp)
     log.info("Game results: %d rows.", games)
 
-    # Faceoffs were collected from 9/30/2026; games scraped before that - or
-    # on any night the report came back short - are filled in over a short
-    # look-back, so a deployment catches up without a manual backfill.
-    filled = scrape_game_results.fill_missing_faceoffs(
-        target - timedelta(days=FACEOFF_LOOKBACK_DAYS), target)
+    # Columns collected after a deployment went live (faceoffs from 9/30/2026,
+    # ice time by strength and shot attempts from 10/1/2026) are filled in
+    # over a short look-back, so a deployment catches up without a manual
+    # backfill.
+    since = target - timedelta(days=LOOKBACK_DAYS)
+    filled = scrape_game_results.fill_missing(since, target)
     if filled:
-        log.info("Faceoffs filled on %d earlier rows.", filled)
+        log.info("Re-scraped %d earlier rows missing a column.", filled)
 
     # Team windows are rolled up from games, so they follow rather than lead.
     # week_end is the night just scraped, which keeps the trailing windows
     # aligned with the data behind them.
     teams = scrape_team_stats.run(week_end=target)
     log.info("Team stats: %d rows.", teams)
+
+    lines = game_lines.fill_missing(since, target)
+    log.info("Lines: %d rows.", lines)
     return True
 
 
