@@ -36,13 +36,14 @@
                 </div>
 
                 <label for="stat-source" class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Stat Sourcing</label>
-                <!-- Only the preseason projections exist until games are played;
-                     the other two follow the old site and open with the season. -->
+                <!-- Season to date opens once every team has played a few games
+                     (stat_sourcing.opens_on); the script labels it with the date.
+                     Combined, a blend of the two, is still to come. -->
                 <select id="stat-source" class="form-select p-2 text-sm w-full sm:w-56"
                         aria-describedby="stat-source-help">
                     <option value="projected" selected>Projected</option>
-                    <option value="todate" disabled>Season to date (from opening night)</option>
-                    <option value="combined" disabled>Combined (from opening night)</option>
+                    <option value="todate" disabled>Season to date</option>
+                    <option value="combined" disabled>Combined (coming)</option>
                 </select>
 
                 <!-- Every Yahoo scrape in one go: rosters, the score so far,
@@ -578,6 +579,8 @@
     </div>
 
     <script>
+    // Whether Season to date can be chosen yet, and when it opens
+    window.FS_STAT_SOURCING = {{ stat_sourcing | tojson }};
     document.addEventListener('DOMContentLoaded', () => {
         const $ = id => document.getElementById(id);
         const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -617,6 +620,9 @@
             // points. Kept on this device only - ~3 KB a day, too much to sync -
             // and read again from Yahoo on another.
             benchLineups: 'fs_benchLineups',
+            // Projected or Season to date - a way of looking, so per device
+            // and not part of the league an account carries
+            statSource: 'fs_statSource',
         };
 
         function read(key, fallback) {
@@ -2117,6 +2123,38 @@
             schedulePlan();
         });
 
+        // --- Stat Sourcing ---------------------------------------------------
+        // Projected, or each player's rate so far this season. Season to date
+        // opens once every team has played a few games (the server says when),
+        // so a rate over a game or two is never planned on; before then the
+        // option names the date. Every request carries the choice in planBody.
+        const sourcing = window.FS_STAT_SOURCING || { open: false, opensOn: null, preview: false };
+        let statSource = sourcing.open && localStorage.getItem(KEYS.statSource) === 'todate' ? 'todate' : 'projected';
+        const SOURCE_HELP = {
+            projected: 'Preseason projections, adjusted for age and injury.',
+            todate: 'Each player&rsquo;s rate so far this season: per game, per start for a goalie. A player yet to play keeps his projection. Season ranks stay the draft board&rsquo;s.',
+        };
+
+        function renderStatSource() {
+            const option = $('stat-source').querySelector('option[value="todate"]');
+            const opens = sourcing.opensOn ? fmt(sourcing.opensOn, { month: 'short', day: 'numeric' }) : null;
+            option.disabled = !sourcing.open;
+            option.textContent = sourcing.preview ? 'Season to date (preview)'
+                : sourcing.open ? 'Season to date' : `Season to date${opens ? ` (from ${opens})` : ''}`;
+            $('stat-source').value = statSource;
+            const preview = sourcing.preview && opens ? ` Preview: opens to everyone on ${esc(opens)}.` : '';
+            $('stat-source-help').innerHTML = SOURCE_HELP[statSource] + (statSource === 'todate' ? preview : '');
+        }
+
+        $('stat-source').addEventListener('change', event => {
+            statSource = event.target.value === 'todate' && sourcing.open ? 'todate' : 'projected';
+            write(KEYS.statSource, statSource);
+            renderStatSource();
+            markPoolStale();
+            schedulePlan();
+        });
+        renderStatSource();
+
         // --- Score so far ----------------------------------------------------
         const weekBanked = () => banked[$('week-select').value] || {};
 
@@ -3167,6 +3205,7 @@
                 points: Object.fromEntries(cats.map(c => [c.column, pointWeights[c.column]])),
                 pim_positive: !pimNegative(),
                 slots,
+                source: statSource,
                 banked: weekBanked(),
                 moves: weekMoves(),
                 lineups: activeLineupEdits(),
@@ -3489,6 +3528,12 @@
         function rosterTable(players, categories, goalies, opts = {}) {
             if (!players.length) return '';
             const sortable = Boolean(opts.sortable);
+            // Season to date: the games each line is over, or that he has none
+            // and is on his projection
+            const sourced = players.some(p => p.statSource);
+            const gpCell = p => (p.statSource === 'projection'
+                ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-gray-600 text-white" title="No games yet this season - his projection">proj</span>'
+                : esc(p.seasonGames ?? ''));
             const head = (label, key, extra = '') => {
                 const on = sortable && poolSort.key === key;
                 const arrow = on ? (poolSort.dir === 1 ? ' &uarr;' : ' &darr;') : '';
@@ -3532,6 +3577,7 @@
                         : '<span class="text-gray-600">&mdash;</span>'}</td>`}
                     <td class="px-3 py-2 whitespace-nowrap text-center">${playerLink(p.playerId, `${trendMark(trends.L20)} ${trendMark(trends.L10)} ${trendMark(trends.L5)} <span class="ml-1">${venueMark(p)}</span>`, 'stats')}</td>
                     <td class="px-3 py-2 text-right text-blue-300 font-semibold">${p.seasonRank ?? '&mdash;'}</td>
+                    ${sourced ? `<td class="px-3 py-2 text-right text-gray-300">${gpCell(p)}</td>` : ''}
                     ${categories.map(code => `<td class="px-3 py-2 text-right text-white" style="${heatStyle(p.heat?.[code])}">${esc(statText(code, p.perGame?.[code]))}</td>`).join('')}
                 </tr>`;
             }).join('');
@@ -3552,6 +3598,7 @@
                                     ${goalies ? '' : head('PP%', 'pp', 'text-right')}
                                     <th class="px-3 py-2 font-medium whitespace-nowrap text-center" title="Last 20, 10 and 5 games against his season; then his next game's venue">L20 L10 L5 H/A</th>
                                     ${head('Rank', 'rank', 'text-right')}
+                                    ${sourced ? head('GP', 'gp', 'text-right') : ''}
                                     ${categories.map(code => head(esc(code), `cat:${code}`, 'text-right')).join('')}
                                 </tr>
                             </thead>
@@ -3596,6 +3643,7 @@
             if (key === 'pp') return player.form?.pp?.recent ?? -1;
             // An unranked player sorts last whichever way the table is pointing
             if (key === 'rank') return player.seasonRank ?? Number.MAX_SAFE_INTEGER;
+            if (key === 'gp') return player.statSource === 'projection' ? -1 : (player.seasonGames ?? -1);
             if (key.startsWith('cat:')) return player.perGame?.[key.slice(4)] ?? -Infinity;
             return 0;
         }

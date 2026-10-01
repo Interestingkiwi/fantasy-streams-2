@@ -54,7 +54,7 @@ optimiser overruling them.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/27/2026
+Updated - 10/1/2026
 """
 
 import bisect
@@ -126,12 +126,19 @@ class Week:
     scrape rather than an error - but home ice still applies, at its long-run
     size (`opponent_strength.VENUE_PRIOR`), since that is known before a game
     is played.
+
+    `values` are the rows players are valued on, when that is not the
+    projections themselves - Season to date's (`stat_sourcing.season_rows`).
+    The category scales always come from `pool`, the projections: a few weeks'
+    rates spread wider than the true ones and would re-weight the league.
     """
 
     def __init__(self, pool, categories, roster_slots, dates, schedule,
-                 team_stats=None, peripheral=None, points=None, pim_positive=False):
+                 team_stats=None, peripheral=None, points=None, pim_positive=False,
+                 values=None):
         self.slots = starting_slots(roster_slots)
         self.schedule = schedule
+        self.projections = pool
 
         if points:
             self.flat = dv.points_weights(points, categories)
@@ -148,8 +155,8 @@ class Week:
         self.categories = categories
         _scored, self.rates, self.missing = dv.supported(categories)
         self.polarity = dv.category_polarity(categories, pim_positive=pim_positive)
-        self.valued = dv.value_players(pool, categories, weights=self.flat,
-                                       pim_positive=pim_positive)
+        self.valued = dv.value_players(pool if values is None else values, categories,
+                                       weights=self.flat, pim_positive=pim_positive)
         self.by_id = {str(row.get('playerId')): row for row in self.valued}
 
         self.dates = sorted({str(d) for d in dates})
@@ -1020,6 +1027,11 @@ def _public(player):
         fields['value'] = round(float(player['value'] or 0.0), DISPLAY_PLACES)
     if 'startProbability' in player:
         fields['startProbability'] = round(player['startProbability'], DISPLAY_PLACES)
+    # Season to date: how many games his line is over, and whether he has none
+    # and is on his projection instead
+    for key in ('statSource', 'seasonGames'):
+        if key in player:
+            fields[key] = player[key]
     return fields
 
 

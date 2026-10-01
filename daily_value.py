@@ -45,7 +45,7 @@ start probability.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 10/1/2026
 """
 
 import logging
@@ -146,7 +146,7 @@ def per_game(player, categories):
     the result rather than zero, which is what keeps him out of that
     category's σ pool.
     """
-    games = _games_for(player)
+    games = games_for(player)
     values = {}
 
     for category in categories:
@@ -174,7 +174,7 @@ def category_scales(players, categories):
     samples = {category: [] for category in categories}
 
     for player in players:
-        games = _games_for(player)
+        games = games_for(player)
         values = per_game(player, categories)
         for category, value in values.items():
             floor = (GOALIE_BASELINE_STARTS if category in GOALIE_CATEGORIES
@@ -262,7 +262,7 @@ def value_players(players, categories, weights=None, pim_positive=False,
     return valued
 
 
-def _games_for(player):
+def games_for(player):
     """
     Projected games, or projected starts for a goalie.
 

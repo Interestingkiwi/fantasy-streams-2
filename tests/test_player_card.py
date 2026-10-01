@@ -123,9 +123,6 @@ check("a window as long as his season is not compared with itself",
 check("lower-is-better stats say so, for the arrow's colour",
       {r['code'] for r in ss.windows(pulled)['rows'] if r['lowerIsBetter']} >= {'GA', 'GAA', 'L'})
 
-totals, _season = ss.totals([])
-check("season totals for nobody are empty, not an error", totals == {})
-
 
 # --------------------------------------------------------------------------
 print("\n=== 3. the projection beside them ===")

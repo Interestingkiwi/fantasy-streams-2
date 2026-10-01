@@ -31,6 +31,7 @@ import opponent_strength as ops
 import goalie_planning
 import player_card
 import player_form
+import stat_sourcing
 import week_planner
 import yahoo_matchup
 import yahoo_rosters
@@ -130,12 +131,34 @@ def _dates_between(start, end):
             for n in range((last - first).days + 1)]
 
 
+def _schedule():
+    """The season's schedule as [(date, home, away)]."""
+    return [(r["gameDate"], r["homeTeam"], r["awayTeam"]) for r in fetch_all(
+        'SELECT "gameDate", "homeTeam", "awayTeam" FROM nhl_schedule')]
+
+
+def _sourcing_status(schedule=None):
+    """
+    Whether Season to date can be chosen yet, and when it opens - for the page
+    and for the plan routes, which refuse it until then. Never raises: no
+    schedule means it is simply not open.
+    """
+    preview = current_app.config.get("STAT_SOURCING_PREVIEW", False)
+    try:
+        return stat_sourcing.status(schedule if schedule is not None else _schedule(),
+                                    date.today(), preview=preview)
+    except Exception:                             # noqa: BLE001
+        log.warning("No schedule - Season to date stays closed.")
+        return {'open': bool(preview), 'opensOn': None, 'preview': bool(preview)}
+
+
 @standalone_bp.route('/')
 def page():
     """The standalone lineup planner. No sign-in required."""
     test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
     return render_template(
         'pages/standalone.html',
+        stat_sourcing=_sourcing_status(),
         roster_scrape_test=test,
         roster_test_league=yahoo_rosters.TEST_LEAGUE_ID,
         roster_test_url=yahoo_rosters.TEST_ROSTERS_URL,
@@ -539,8 +562,10 @@ def _season_values(week, body):
         num_teams = int(body.get('num_teams') or 0) or None
     except (TypeError, ValueError):
         num_teams = None
+    # The projections, whatever the Stat Sourcing: this is the draft board's
+    # rank, which prices the rest of a season
     ranked = calculate_player_ranks(
-        [dict(p) for p in week.valued], active, league_mode=mode,
+        [dict(p) for p in week.projections], active, league_mode=mode,
         goalie_stat_keywords=goalie_stats, num_teams=num_teams,
         roster_slots=body.get('draft_slots') or None,
         roster_mode='group' if body.get('roster_mode') == 'group' else 'split',
@@ -603,8 +628,9 @@ def _request_plan(body):
     ({column or code: points}), pim_positive, slots ({slot: count}), start,
     end. Optionally opponent and opponent_out (playerIds), which add the
     matchup; banked ({category: {mine, theirs}}), the score so far - keyed by
-    column name or Yahoo code, like the categories; and moves
-    ([{add, drop, date}]), planned add/drops on your roster.
+    column name or Yahoo code, like the categories; moves ([{add, drop,
+    date}]), planned add/drops on your roster; and source, the Stat Sourcing
+    ('projected', the default, or 'todate' once it has opened).
     """
     roster = list(body.get('roster') or [])[:MAX_ROSTER]
     if not roster:
@@ -638,8 +664,7 @@ def _request_plan(body):
         if not categories:
             raise BadRequest("Choose at least one scoring category.")
 
-    schedule = [(r["gameDate"], r["homeTeam"], r["awayTeam"]) for r in fetch_all(
-        'SELECT "gameDate", "homeTeam", "awayTeam" FROM nhl_schedule')]
+    schedule = _schedule()
     if not schedule:
         raise BadRequest("No NHL schedule loaded. Run the preseason pipeline.")
 
@@ -649,10 +674,12 @@ def _request_plan(body):
         if mapped and isinstance(entry, dict):
             banked[mapped[0]] = entry
 
+    projections = fetch_all('SELECT * FROM final_projections')
     week = week_planner.Week(
-        fetch_all('SELECT * FROM final_projections'), categories, slots, dates, schedule,
+        projections, categories, slots, dates, schedule,
         team_stats=_team_stats(), peripheral=_peripheral_venue(),
-        points=points, pim_positive=bool(body.get('pim_positive')))
+        points=points, pim_positive=bool(body.get('pim_positive')),
+        values=_sourced(body.get('source'), projections, schedule))
 
     return week, {
         'roster': roster,
@@ -662,6 +689,25 @@ def _request_plan(body):
         'banked': banked,
         'moves': _moves(body.get('moves')),
     }, unmapped
+
+
+def _sourced(source, projections, schedule):
+    """
+    The rows to value players on for this Stat Sourcing: None for the
+    projections themselves, or each player's season rate (`stat_sourcing`).
+    Raises BadRequest for Season to date before it opens.
+    """
+    if source in (None, '', stat_sourcing.PROJECTED):
+        return None
+    if source != stat_sourcing.SEASON:
+        raise BadRequest(f"Unknown stat sourcing '{source}'.")
+    state = _sourcing_status(schedule)
+    if not state['open']:
+        opens = state['opensOn']
+        raise BadRequest("Season to date opens once every team has played a few games"
+                         + (f", on {date.fromisoformat(opens):%B} {date.fromisoformat(opens).day}." if opens else "."))
+    season = stat_sourcing.schedule_season(schedule)
+    return stat_sourcing.season_rows(projections, stat_sourcing.season_sums(season))
 
 
 def _season_label(season):
@@ -843,9 +889,10 @@ def goalie_planning_view():
         # own categories may not include GA or SA and this cannot be read off
         # a plan that never projected them. Same pool, same adjustments.
         goalie_week = week_planner.Week(
-            fetch_all('SELECT * FROM final_projections'), GOALIE_STATS, {'G': 2},
+            week.projections, GOALIE_STATS, {'G': 2},
             week.dates, week.schedule, team_stats=_team_stats(),
-            peripheral=_peripheral_venue())
+            peripheral=_peripheral_venue(),
+            values=_sourced(body.get('source'), week.projections, week.schedule))
 
         def per_start(player_id, day):
             player = goalie_week.by_id.get(str(player_id))
@@ -1065,8 +1112,7 @@ def player_detail(player_id):
         line_rows = line_rows.get(str(player_id), [])
         mates = {p for r in line_rows for p in [*(r.get('lineMates') or []), *(r.get('ppMates') or []),
                                                  *(m[0] for m in r.get('mates') or [])]}
-        schedule = [(r["gameDate"], r["homeTeam"], r["awayTeam"]) for r in fetch_all(
-            'SELECT "gameDate", "homeTeam", "awayTeam" FROM nhl_schedule')]
+        schedule = _schedule()
         injuries, injury_date = _injuries()
 
         card = player_card.card(

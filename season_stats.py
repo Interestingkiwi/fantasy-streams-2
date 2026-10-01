@@ -1,12 +1,12 @@
 """
 A player's season so far, from `player_game_stats`, in Yahoo's category codes.
 
-Two uses. The player card on League Home shows a player's season-to-date line
-and the same stats over his last 20, 10 and 5 games and at home and on the
-road - the windows `player_form` judges trends over, so an arrow on the roster
-view can be read off the card as numbers. And it is the first half of *Season
-to date* Stat Sourcing (see CLAUDE.md), which needs exactly these per-player
-totals and per-game rates; `totals()` is the piece that will feed it.
+The player card on League Home shows a player's season-to-date line and the
+same stats over his last 20, 10 and 5 games and at home and on the road - the
+windows `player_form` judges trends over, so an arrow on the roster view can
+be read off the card as numbers. (Season to date Stat Sourcing needs every
+player's totals at once, in projection columns rather than Yahoo codes, and
+reads them with one SQL aggregate in `stat_sourcing` instead.)
 
 **Every stat is a definition, not a column.** Each entry in `SKATER_STATS` /
 `GOALIE_STATS` says how to read one game row and whether the stat is counted
@@ -208,20 +208,3 @@ def game_line(game):
     return {code: (cell or {}).get('total')
             for code, cell in line([game], stats_for(not game.get('positionCode'))).items()}
 
-
-def totals(player_ids, season=None):
-    """
-    ({playerId: {'games', 'totals': {code}, 'perGame': {code}}}, season) - each
-    player's season to date, the input *Season to date* Stat Sourcing will
-    turn into per-game rates. A player with no games is left out.
-    """
-    games, season = player_form.load(player_ids, season, columns=None)
-    result = {}
-    for player, rows in games.items():
-        cells = line(rows, stats_for(is_goalie(rows)))
-        result[player] = {
-            'games': len(rows),
-            'totals': {c: v['total'] for c, v in cells.items() if v is not None},
-            'perGame': {c: v['perGame'] for c, v in cells.items() if v is not None},
-        }
-    return result, season

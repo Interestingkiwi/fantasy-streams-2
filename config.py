@@ -11,7 +11,7 @@ connection and reads it directly.
 
 Author - Jason Druckenmiller
 Created - 9/6/2026
-Updated - 9/16/2026
+Updated - 10/1/2026
 """
 
 import logging
@@ -98,6 +98,12 @@ class Config:
     # sign-in. On by default everywhere but production; ROSTER_SCRAPE_TEST=0
     # tries a real League ID locally.
     ROSTER_SCRAPE_TEST = _bool("ROSTER_SCRAPE_TEST", not IS_PRODUCTION)
+
+    # League Home's Season to date Stat Sourcing opens once every team has
+    # played a few games (stat_sourcing.opens_on - 2026-10-14 for 2026-27).
+    # This opens it early, for building and checking it; on by default
+    # everywhere but production, so production waits for the date.
+    STAT_SOURCING_PREVIEW = _bool("STAT_SOURCING_PREVIEW", not IS_PRODUCTION)
 
 
 def check_config(cfg=Config):

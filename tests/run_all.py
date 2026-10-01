@@ -46,6 +46,7 @@ TESTS = [
     "test_accounts.py",
     "test_game_lines.py",
     "test_player_card.py",
+    "test_stat_sourcing.py",
 ]
 
 
