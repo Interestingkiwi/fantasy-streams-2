@@ -14,7 +14,7 @@ minutes recovered from his own GAA rather than assumed to be an hour.
 
 Author - Jason Druckenmiller
 Created - 9/30/2026
-Updated - 9/30/2026
+Updated - 10/3/2026
 """
 
 import os
@@ -232,9 +232,11 @@ try:
     client = app_module.app.test_client()
     real = api.season
 
-    def fake_season(league_id, test=False):
+    def fake_season(league_id, test=False, fetched=None):
         if league_id == "4":
             raise api.RosterPageError("private", "private")
+        if fetched is not None:
+            fetched.append(DAYS[-1]["date"])     # one day read from Yahoo, the rest cached
         return INFO, DAYS, WEEKS
 
     api.season = fake_season
@@ -243,6 +245,8 @@ try:
         data = answer.get_json()
         check("bench points come back for a public league", answer.status_code == 200
               and data["season"]["1"]["appearances"] == 2 and data["asOf"] == "2026-10-06", data.get("message"))
+        check("and say how many days were read from Yahoo this time, not from the cache",
+              data.get("newDays") == 1, data.get("newDays"))
         private = client.post("/standalone/api/bench", json={"league_id": "4"})
         check("a private league is a 403 that points at the bookmarklet", private.status_code == 403
               and "bookmarklet" in private.get_json()["message"], private.get_json())

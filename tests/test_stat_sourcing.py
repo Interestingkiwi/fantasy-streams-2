@@ -1,5 +1,6 @@
 """
-Tests for Stat Sourcing (stat_sourcing.py) and the plan routes that take it.
+Tests for Stat Sourcing (stat_sourcing.py) - Season to date and Combined -
+and the plan routes that take it.
 
 What is pinned is what would be easy to get quietly wrong:
 
@@ -15,7 +16,7 @@ What is pinned is what would be easy to get quietly wrong:
 
 Author - Jason Druckenmiller
 Created - 10/1/2026
-Updated - 10/1/2026
+Updated - 10/3/2026
 """
 
 import os
@@ -108,6 +109,46 @@ check("a goalie with only relief outings (no counted games) keeps his projection
 
 
 # --------------------------------------------------------------------------
+print("\n=== 2b. Combined ===")
+
+blended = {r['playerId']: r for r in ss.combined_rows([skater, goalie, idle], sums)}
+line = dv.per_game(blended[1], ['G', 'A', 'P', 'SOG', 'FW'])
+expected_g = (ss.PRIOR_GAMES['G'] * 0.5 + 4 * 0.75) / (ss.PRIOR_GAMES['G'] + 4)
+check("a stat is its projection and his season weighted k to n",
+      abs(line['G'] - expected_g) < 1e-9, (line['G'], expected_g))
+check("four games barely move goals, whose k is large",
+      0.5 < line['G'] < 0.55, line['G'])
+moved = ss.combined_rows([dict(skater, proj_totalFaceoffWins=400)],
+                         {'1': {'games': 4, 'goals': 3, 'faceoffWins': 60}})[0]
+faceoffs = dv.per_game(moved, ['FW'])['FW']
+check("but move faceoffs, whose projection is weak, a good part of the way",
+      abs(faceoffs - (ss.PRIOR_GAMES['FW'] * 5 + 4 * 15) / (ss.PRIOR_GAMES['FW'] + 4)) < 1e-9
+      and (faceoffs - 5) / (15 - 5) > 0.3, faceoffs)
+check("points are the blended goals and assists, so they cannot disagree",
+      abs(line['P'] - (line['G'] + line['A'])) < 1e-9, line)
+long_run = ss.combined_rows([skater], {'1': {'games': 5000, 'goals': 5000, 'assists': 0,
+                                             'shots': 0, 'hits': 0}})[0]
+check("a long enough season outweighs any projection",
+      abs(dv.per_game(long_run, ['G'])['G'] - 1.0) < 0.02)
+gline = dv.per_game(blended[2], ['W', 'GA', 'SA', 'SV', 'SVpct', 'GAA'])
+check("a goalie's saves are his blended shots less his blended goals against",
+      abs(gline['SV'] - (gline['SA'] - gline['GA'])) < 1e-9, gline)
+check("and his save percentage and GAA are built from the same parts",
+      abs(gline['SVpct'] - (1 - gline['GA'] / gline['SA'])) < 1e-9
+      and abs(blended[2]['proj_goalsAgainstAverage']
+              - blended[2]['proj_goalsAgainst'] * 3600 / blended[2]['proj_timeOnIce']) < 1e-9)
+check("each row says it is the blend", blended[1]['statSource'] == 'combined'
+      and blended[3]['statSource'] == 'projection' and blended[3]['proj_goals'] == 7)
+check("every measured stat is used, and every blended column has its k",
+      set(ss.BLEND_CODES.values()) == set(ss.PRIOR_GAMES)
+      and set(ss.BLEND_CODES) <= set(ss.SOURCE_COLUMNS))
+season_only = ss.combined_rows([{'playerId': 9, 'positionCode': 'C', 'projectedGames': 60,
+                                 'proj_goals': None}], {'9': {'games': 2, 'goals': 1}})[0]
+check("with no projected value for a stat, the season stands alone",
+      dv.per_game(season_only, ['G'])['G'] == 0.5)
+
+
+# --------------------------------------------------------------------------
 print("\n=== 3. the weights stay on the projections ===")
 
 import week_planner                                         # noqa: E402
@@ -182,6 +223,11 @@ try:
               refused.status_code == 400 and 'January 1' in refused.get_json()['message'],
               refused.get_json())
         check("and Projected still plans", client.post('/standalone/api/week', json=body).status_code == 200)
+        combined = client.post('/standalone/api/week', json={**body, 'source': 'combined'})
+        check("Combined plans from the start - a game or two barely moves it",
+              combined.status_code == 200
+              and all(p.get('statSource') in ('combined', 'projection')
+                      for p in combined.get_json()['players']), combined.get_json().get('message'))
     finally:
         ss.opens_on = original
         app.config['STAT_SOURCING_PREVIEW'] = True

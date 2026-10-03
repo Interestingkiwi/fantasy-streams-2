@@ -17,7 +17,7 @@ times read in the right zone, and commissioner settings changes kept out.
 
 Author - Jason Druckenmiller
 Created - 9/29/2026
-Updated - 9/29/2026
+Updated - 10/3/2026
 """
 
 import json
@@ -176,6 +176,18 @@ check("pages are asked for by start and count, for the current season's league",
 check("test mode reads the completed test league instead",
       yt.league_key("anything", test=True) == yt.TEST_LEAGUE_KEY)
 
+# An update knows the newest transaction it holds, and reads down to it only
+session = FakeSession(league_page(yt.API_PAGE), league_page(yt.API_PAGE, yt.API_PAGE))
+league, raw = yt.fetch_api("5848", session=session, since="7")
+check("given a transaction it already has, one page is read however long the season",
+      len(session.urls) == 1 and len(raw) == yt.API_PAGE, (len(raw), session.urls))
+check("and the whole page comes back, so a claim settled late on it is not missed",
+      "7" in yt.transaction_ids(raw) and "0" in yt.transaction_ids(raw))
+session = FakeSession(league_page(yt.API_PAGE), league_page(3, yt.API_PAGE))
+league, raw = yt.fetch_api("5848", session=session, since="999999")
+check("one it cannot find means every page - the whole season, to replace what is held",
+      len(session.urls) == 2 and "999999" not in yt.transaction_ids(raw))
+
 error = {"error": {"description": "You must be logged in to view this league."}}
 check("a private league is 'private', which sends the page to the bookmarklet",
       raises("private", lambda: yt.fetch_api("5848", session=FakeSession(FakeResponse(401, error)))))
@@ -318,7 +330,7 @@ try:
     real_fetch = yt.fetch_api
     asked = []
 
-    def fake_fetch(league_id, test=False, session=None):
+    def fake_fetch(league_id, test=False, session=None, since=None):
         asked.append((league_id, test))
         if str(league_id) == "4":
             raise RosterPageError("private", "This league is private.")
@@ -332,6 +344,16 @@ try:
         check("a public league scrapes through the API, in the stored shape",
               ok.status_code == 200 and body["source"] == "api" and len(body["transactions"]) == 4
               and body["teams"] == {"3": "Alpha", "7": "Bravo"}, body)
+        check("a scrape without a known transaction is the whole season, to replace",
+              body["incremental"] is False)
+        known = RAW[1]["transaction"]["transaction_id"]
+        merged = client.post("/standalone/api/transactions/scrape",
+                             json={"league_id": "5848", "since": known}).get_json()
+        check("one that names a transaction it found says to merge",
+              merged["incremental"] is True, merged.get("incremental"))
+        missing = client.post("/standalone/api/transactions/scrape",
+                              json={"league_id": "5848", "since": "nope"}).get_json()
+        check("and one it did not find says to replace", missing["incremental"] is False)
         private = client.post("/standalone/api/transactions/scrape", json={"league_id": "4"})
         check("a private one is a 403 pointing at its Transactions page, for the bookmarklet",
               private.status_code == 403 and private.get_json()["code"] == "private"

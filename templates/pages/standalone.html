@@ -38,12 +38,12 @@
                 <label for="stat-source" class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Stat Sourcing</label>
                 <!-- Season to date opens once every team has played a few games
                      (stat_sourcing.opens_on); the script labels it with the date.
-                     Combined, a blend of the two, is still to come. -->
+                     Combined, a blend of the two, is open from the start. -->
                 <select id="stat-source" class="form-select p-2 text-sm w-full sm:w-56"
                         aria-describedby="stat-source-help">
                     <option value="projected" selected>Projected</option>
                     <option value="todate" disabled>Season to date</option>
-                    <option value="combined" disabled>Combined (coming)</option>
+                    <option value="combined">Combined</option>
                 </select>
 
                 <!-- Every Yahoo scrape in one go: rosters, the score so far,
@@ -1182,6 +1182,12 @@
             // Bench points: the days and weeks of lineups League Home still lacks
             var benchDays = location.hash.match(/[#&]bench=(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})/);
             var benchWeeks = location.hash.match(/[#&]weeks=(\d+)-(\d+)/);
+            // Transactions: League Home already has everything from this day
+            // (M-D) back, so reading stops at the first page reaching past it.
+            // Ordered within a season, which runs from autumn into spring.
+            var txSince = location.hash.match(/[#&]tx=(\d{1,2})-(\d{1,2})/);
+            function seasonDay(month, day) { return (month < 7 ? month + 12 : month) * 100 + day; }
+            var txCutoff = txSince ? seasonDay(+txSince[1], +txSince[2]) : null;
             if (!onYahoo || !(rosters || matchup || transactions || everything)) {
                 alert('Open your league on Yahoo - its home, Starting Rosters, Matchup or Transactions page - signed in, then select this bookmark again.');
                 return;
@@ -1266,7 +1272,13 @@
                         if (table) tables.push(table.outerHTML);
                         var more = table && Array.prototype.some.call(page.querySelectorAll('a[href*="count="]'),
                             function (link) { return /Next/.test(link.textContent); });
-                        if (more && tables.length < 150) {
+                        // The page's oldest row, "Oct 3, 2:15 pm", against what is already held
+                        var stamps = table ? table.querySelectorAll('.F-timestamp') : [];
+                        var oldest = stamps.length ? stamps[stamps.length - 1].textContent.match(/([A-Z][a-z]{2})\s+(\d{1,2}),/) : null;
+                        var month = oldest ? 'JanFebMarAprMayJunJulAugSepOctNovDec'.indexOf(oldest[1]) / 3 + 1 : 0;
+                        var caughtUp = txCutoff !== null && month % 1 === 0 && month >= 1
+                            && seasonDay(month, +oldest[2]) < txCutoff;
+                        if (more && !caughtUp && tables.length < 150) {
                             offset += 25;
                             setTimeout(readPage, 300);
                             return;
@@ -1630,11 +1642,16 @@
                 if (!fields.every(key => typeof data[key] === 'string')) return;
                 if (event.source) event.source.postMessage({ type: 'fs-received' }, event.origin);
                 // Lineups for bench points, when the link asked for any
+                let benchDays = 0;
                 if (typeof data.bench === 'string') {
-                    try { mergeBench(JSON.parse(data.bench)); } catch (error) { /* read as nothing */ }
+                    try {
+                        const bench = JSON.parse(data.bench);
+                        benchDays = Object.values(bench.dates || {}).filter(teams => teams && Object.keys(teams).length).length;
+                        mergeBench(bench);
+                    } catch (error) { /* read as nothing */ }
                 }
                 runUpdate(pageSource({ ...Object.fromEntries(fields.map(key => [key, data[key]])),
-                    timeZone: String(data.timeZone || '') }));
+                    timeZone: String(data.timeZone || ''), benchDays }));
                 return;
             }
             if (!data || !['fs-yahoo-page', 'fs-rosters'].includes(data.type) || typeof data.html !== 'string') return;
@@ -2124,15 +2141,20 @@
         });
 
         // --- Stat Sourcing ---------------------------------------------------
-        // Projected, or each player's rate so far this season. Season to date
-        // opens once every team has played a few games (the server says when),
-        // so a rate over a game or two is never planned on; before then the
-        // option names the date. Every request carries the choice in planBody.
+        // Projected; each player's rate so far this season; or Combined, the
+        // two blended stat by stat. Season to date opens once every team has
+        // played a few games (the server says when), so a rate over a game or
+        // two is never planned on; before then the option names the date.
+        // Combined is open from the start - a game or two barely moves it.
+        // Every request carries the choice in planBody.
         const sourcing = window.FS_STAT_SOURCING || { open: false, opensOn: null, preview: false };
-        let statSource = sourcing.open && localStorage.getItem(KEYS.statSource) === 'todate' ? 'todate' : 'projected';
+        const sourceAllowed = value => value === 'combined' || (value === 'todate' && sourcing.open);
+        const storedSource = localStorage.getItem(KEYS.statSource);
+        let statSource = sourceAllowed(storedSource) ? storedSource : 'projected';
         const SOURCE_HELP = {
             projected: 'Preseason projections, adjusted for age and injury.',
             todate: 'Each player&rsquo;s rate so far this season: per game, per start for a goalie. A player yet to play keeps his projection. Season ranks stay the draft board&rsquo;s.',
+            combined: 'His projection and his season blended stat by stat, the season counting for more as his games pile up: after 20 games, about half for shots and hits, a quarter for goals. Season ranks stay the draft board&rsquo;s.',
         };
 
         function renderStatSource() {
@@ -2147,7 +2169,7 @@
         }
 
         $('stat-source').addEventListener('change', event => {
-            statSource = event.target.value === 'todate' && sourcing.open ? 'todate' : 'projected';
+            statSource = sourceAllowed(event.target.value) ? event.target.value : 'projected';
             write(KEYS.statSource, statSource);
             renderStatSource();
             markPoolStale();
@@ -2406,19 +2428,66 @@
             showTxPanel(`<p class="text-red-400 font-medium">${esc(message)}</p>${TX_CLOSE}`);
         }
 
-        function storeTransactions(data) {
+        // One transaction's identity: Yahoo's id from the API; from the pages,
+        // which carry none, what it did and when
+        const txKey = t => (t.id ? `id:${t.id}` : JSON.stringify([t.type, t.time, t.moves, t.picks || []]));
+
+        // The stored transactions, when they are this league's and this
+        // season's from the same kind of read - the only ones an update may
+        // add to rather than replace
+        function storedTransactions(source) {
+            const saved = read(KEYS.transactions, null);
+            if (!saved?.transactions?.length || saved.source !== source || !!saved.test !== ROSTER_TEST_MODE) return null;
+            if (!ROSTER_TEST_MODE && String(saved.leagueId || '') !== String(savedLeagueId() || '')) return null;
+            return saved;
+        }
+
+        // Update from Yahoo reads only what is newer than this: the newest id
+        // for the API, and for the bookmarklet the day before the newest
+        // stored (MM-DD, in this browser's zone, as Yahoo's pages are), a day
+        // of overlap for anything settled late
+        function txSince() {
+            return storedTransactions('api')?.transactions.find(t => t.id)?.id || null;
+        }
+
+        function txHash() {
+            const saved = storedTransactions('browser');
+            const newest = Math.max(0, ...(saved?.transactions || []).map(t => t.time || 0));
+            if (!newest) return '';
+            const day = new Date((newest - 86400) * 1000);
+            return `&tx=${day.getMonth() + 1}-${day.getDate()}`;
+        }
+
+        // A full read replaces what is stored; an update's partial read is
+        // merged into it, newest first. Returns {total, fresh, merged}.
+        function storeTransactions(data, { merge = false } = {}) {
+            const previous = merge ? storedTransactions(data.source) : null;
+            let transactions = data.transactions || [];
+            let fresh = transactions.length;
+            if (previous) {
+                const known = new Set(previous.transactions.map(txKey));
+                const incoming = new Set(transactions.map(txKey));
+                fresh = transactions.filter(t => !known.has(txKey(t))).length;
+                transactions = [...transactions, ...previous.transactions.filter(t => !incoming.has(txKey(t)))]
+                    .sort((a, b) => (b.time || 0) - (a.time || 0));
+            }
             const saved = {
                 scrapedAt: Date.now(), source: data.source, test: !!data.test,
-                league: data.league || {}, teams: data.teams || {}, players: data.players || {},
-                transactions: data.transactions || [],
+                leagueId: ROSTER_TEST_MODE ? null : savedLeagueId(),
+                league: data.league || previous?.league || {},
+                teams: { ...(previous?.teams || {}), ...(data.teams || {}) },
+                players: { ...(previous?.players || {}), ...(data.players || {}) },
+                transactions,
             };
             write(KEYS.transactions, saved);
-            const n = saved.transactions.length;
-            showTxPanel(`<p class="text-gray-300">Read ${n.toLocaleString()} transaction${n === 1 ? '' : 's'} from Yahoo`
+            const n = transactions.length;
+            showTxPanel(`<p class="text-gray-300">${previous ? `${fresh.toLocaleString()} new; ` : 'Read '}`
+                + `${n.toLocaleString()} transaction${n === 1 ? '' : 's'}${previous ? ' in all' : ' from Yahoo'}`
                 + `${data.test ? ' <span class="text-amber-300">(test league)</span>' : ''}.</p>${TX_CLOSE}`);
             $('tx-team').value = '';
             $('tx-week').value = '';
             renderTransactions();
+            return { total: n, fresh, merged: Boolean(previous) };
         }
 
         async function postTransactions(url, body) {
@@ -2854,7 +2923,12 @@
             $('bench-controls').classList.remove('hidden');
             renderBench();
             const swaps = data.weeks.reduce((n, w) => n + Object.values(w.teams).reduce((m, t) => m + t.swaps.length, 0), 0);
-            return { ok: true, message: `${games} bench game${games === 1 ? '' : 's'}, ${swaps} swap${swaps === 1 ? '' : 's'} that would have changed a category` };
+            // Finished days are read from Yahoo once (the server's cache, or this
+            // device's store for a private league); say what this update added,
+            // then the season's totals, so the totals are not taken for new finds
+            const fresh = data.newDays;
+            const read = fresh == null ? '' : fresh ? `${fresh} new day${fresh === 1 ? '' : 's'} read; ` : 'no new days; ';
+            return { ok: true, message: `${read}${games} bench game${games === 1 ? '' : 's'} and ${swaps} swap${swaps === 1 ? '' : 's'} that would have changed a category, this season` };
         }
 
         function renderBench() {
@@ -3050,10 +3124,12 @@
             {
                 name: 'Transactions',
                 fetch: source => source.transactions(),
+                // Only what is newer than what is stored is read, and merged in
                 apply: data => {
-                    storeTransactions(data);
-                    const n = (data.transactions || []).length;
-                    return { ok: true, message: `${n.toLocaleString()} read` };
+                    const { total, fresh, merged } = storeTransactions(data, { merge: data.incremental });
+                    return { ok: true, message: merged
+                        ? `${fresh ? `${fresh.toLocaleString()} new` : 'nothing new'} (${total.toLocaleString()} this season)`
+                        : `${total.toLocaleString()} read` };
                 },
             },
             {
@@ -3071,7 +3147,7 @@
             matchup: () => postJSON('/standalone/api/matchup/scrape', {
                 league_id: leagueId, week: selectedWeek()?.week, team: teamById(league.mine)?.yahooTeamId,
             }),
-            transactions: () => postJSON('/standalone/api/transactions/scrape', { league_id: leagueId }),
+            transactions: () => postJSON('/standalone/api/transactions/scrape', { league_id: leagueId, since: txSince() }),
             bench: () => postJSON('/standalone/api/bench', { league_id: leagueId }),
         });
 
@@ -3080,17 +3156,22 @@
             kind: 'browser',
             rosters: () => postJSON('/standalone/api/rosters/parse', { html: pages.rosters, url: pages.rostersUrl }),
             matchup: () => postJSON('/standalone/api/matchup/parse', { html: pages.matchup, url: pages.matchupUrl }),
+            // The link asked for transactions since the newest stored (txHash),
+            // so this is the recent pages only - merged, not replacing. A
+            // bookmark dragged before that reads them all, which merges the same.
             transactions: () => postJSON('/standalone/api/transactions/parse', {
                 html: pages.transactions, url: pages.transactionsUrl, timeZone: pages.timeZone,
-            }),
-            bench: () => (benchStored() ? postJSON('/standalone/api/bench/lineups', benchRequest())
+            }).then(answer => (answer.ok ? { ...answer, data: { ...answer.data, incremental: true } } : answer)),
+            bench: () => (benchStored()
+                ? postJSON('/standalone/api/bench/lineups', benchRequest())
+                    .then(answer => (answer.ok ? { ...answer, data: { ...answer.data, newDays: pages.benchDays || 0 } } : answer))
                 : Promise.resolve({ ok: false, data: { message: 'no lineups were read' } })),
         });
 
         function yahooEverythingUrl() {
             const week = selectedWeek()?.week;
             // Bench points: the days and weeks of lineups this device still lacks
-            const hash = `#fs-all${week ? `&week=${week}` : ''}${benchHash()}`;
+            const hash = `#fs-all${week ? `&week=${week}` : ''}${benchHash()}${txHash()}`;
             if (ROSTER_TEST_MODE) return ROSTER_TEST_URL + hash;
             const id = savedLeagueId();
             return id ? `https://hockey.fantasysports.yahoo.com/hockey/${id}/startingrosters${hash}` : null;
@@ -3528,8 +3609,8 @@
         function rosterTable(players, categories, goalies, opts = {}) {
             if (!players.length) return '';
             const sortable = Boolean(opts.sortable);
-            // Season to date: the games each line is over, or that he has none
-            // and is on his projection
+            // Season to date or Combined: the games each line has to go on, or
+            // that he has none and is on his projection
             const sourced = players.some(p => p.statSource);
             const gpCell = p => (p.statSource === 'projection'
                 ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-gray-600 text-white" title="No games yet this season - his projection">proj</span>'

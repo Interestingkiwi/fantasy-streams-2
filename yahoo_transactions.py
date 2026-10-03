@@ -53,7 +53,7 @@ from the page, which does not show one.
 
 Author - Jason Druckenmiller
 Created - 9/29/2026
-Updated - 9/30/2026
+Updated - 10/3/2026
 """
 
 import re
@@ -113,9 +113,14 @@ def api_error(response):
     return RosterPageError("unreachable", f"Yahoo answered {response.status_code}.")
 
 
-def fetch_api(league_id, test=False, session=None):
+def fetch_api(league_id, test=False, session=None, since=None):
     """
-    ({name, season}, [raw transaction]) for a public league, every page of it.
+    ({name, season}, [raw transaction]) for a public league, every page of it
+    - or, given `since` (a transaction id already stored), only the pages down
+    to the one holding it. Newest first, so an update reads one page however
+    long the season has run, and the caller merges by id. Every transaction on
+    those pages comes back, not just the ones newer than `since`, so a claim
+    Yahoo settled late within them is not missed.
     Raises RosterPageError: `private`, `not_found`, `unreachable`.
     """
     session = session or requests.Session()
@@ -137,9 +142,14 @@ def fetch_api(league_id, test=False, session=None):
         league = league or {"name": content.get("name"), "season": content.get("season")}
         batch = content.get("transactions") or []
         found.extend(batch)
-        if len(batch) < API_PAGE:
+        if len(batch) < API_PAGE or (since and since in transaction_ids(batch)):
             break
     return league, found
+
+
+def transaction_ids(raw):
+    """The transaction ids in a list of the API's raw transactions, as strings."""
+    return {str((w.get("transaction") or {}).get("transaction_id")) for w in raw}
 
 
 def _team_number(team_key):

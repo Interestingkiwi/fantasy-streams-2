@@ -31,7 +31,7 @@ value None where Yahoo shows `-`.
 
 Author - Jason Druckenmiller
 Created - 9/30/2026
-Updated - 9/30/2026
+Updated - 10/3/2026
 """
 
 import json
@@ -194,13 +194,18 @@ def scoreboard(key, week, session=None):
     return payload
 
 
-def day(key, when, session=None):
-    """Every team's roster on a date, with each player's stats that day."""
+def day(key, when, session=None, fetched=None):
+    """
+    Every team's roster on a date, with each player's stats that day. A date
+    actually read from Yahoo, rather than the cache, is appended to `fetched`.
+    """
     when = str(when)
     cache_key = f"{key}|day|{when}"
     cached = _cached(cache_key)
     if cached:
         return cached
+    if fetched is not None:
+        fetched.append(when)
     content = get_json(f"/league/{key}/teams/roster;date={when}/players/stats;type=date;date={when}",
                        session)["league"]
     teams, names, players = {}, {}, {}
@@ -230,11 +235,12 @@ def day(key, when, session=None):
     return payload
 
 
-def season(league_id, test=False):
+def season(league_id, test=False, fetched=None):
     """
     ({settings}, [day], [week]) for everything finished so far: each day from
     opening night to yesterday (or the season's end), and each week that has
-    begun. Days are read a few at a time; cached ones cost nothing.
+    begun. Days are read a few at a time; cached ones cost nothing, and those
+    that were not are appended to `fetched`.
     """
     info = settings(league_id, test)
     key = info["key"]
@@ -244,6 +250,6 @@ def season(league_id, test=False):
     last_week = min(info["currentWeek"], info["endWeek"])
     weeks_wanted = list(range(info["startWeek"], last_week + 1))
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        days = list(pool.map(lambda d: day(key, d.isoformat()), dates))
+        days = list(pool.map(lambda d: day(key, d.isoformat(), fetched=fetched), dates))
         weeks = list(pool.map(lambda w: scoreboard(key, w), weeks_wanted))
     return info, days, weeks

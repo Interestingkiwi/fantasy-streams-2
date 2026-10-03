@@ -28,11 +28,14 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 - **The player card is built** (10/1/2026) — tap any player on League Home.
   See *The player card*. It needed one new data source, lines from the NHL's
   shift charts (`game_lines.py`), checked against Daily Faceoff.
-- **Season to date Stat Sourcing is built and waiting** (10/1/2026). It opens
-  by itself on **2026-10-14**, the day after every team's fifth game, read from
-  the schedule; until then production offers it greyed out with the date, and
-  local development opens it as a preview (`STAT_SOURCING_PREVIEW`). See
-  *Stat Sourcing*. *Combined* is still to come.
+- **Stat Sourcing has all three** (10/3/2026): Projected; *Combined*, a blend
+  weighted per stat by measured games of trust in the projection, open now;
+  and *Season to date*, which opens by itself on **2026-10-14**, the day after
+  every team's fifth game - until then greyed out with the date in production,
+  a preview locally (`STAT_SOURCING_PREVIEW`). See *Stat Sourcing*.
+- **Update from Yahoo reads only what is new** (10/3/2026): transactions down
+  to the newest one held, bench lineups for days not yet read, and each step
+  says what it added rather than the season's totals. See *Update from Yahoo*.
 
 ## Tech stack
 
@@ -80,7 +83,8 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `season_stats.py` | A player's season so far and his L20/L10/L5 and home/road windows, in Yahoo codes, ratios rebuilt from their parts. See *The player card* |
 | `player_card.py` | Pure: one player's card for League Home's player modal — stats windows, game log, line and PP unit or a goalie's starts, the week's opponents. See *The player card* |
 | `game_lines.py` | Lines and power-play units from the NHL's shift charts into `player_game_lines`; run by the nightly job, or `--start/--end` to backfill. See *The player card* |
-| `stat_sourcing.py` | League Home's Stat Sourcing: projection rows rewritten to each player's season rate, and the date Season to date opens. See *Stat Sourcing* |
+| `stat_sourcing.py` | League Home's Stat Sourcing: projection rows rewritten to each player's season rate or Combined's blend, and the date Season to date opens. See *Stat Sourcing* |
+| `derive_combined_weights.py` | Measures Combined's games of trust in the projection per stat (`stat_sourcing.PRIOR_GAMES`) on a finished season. Not a job — it prints constants to copy by hand. See *Stat Sourcing* |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
 | `static/fantasy-weeks.js` | The weeks every page numbers by: standard weeks plus a league's edits (`fs_fantasyWeeks`), and the edit operations. See *Fantasy weeks* |
 | `db.py` | **Canonical** SQLAlchemy Core engine + query helpers for the web app (`from db import engine, text`) |
@@ -741,10 +745,9 @@ are still to come.
 - **The opponent is picked on the Matchup tab**, as it was on the old site.
   Both dropdowns write `league.mine` / `league.opponent`; the team editor no
   longer has role buttons.
-- **Stat Sourcing: Projected, or Season to date once it opens** (2026-10-14
-  for 2026-27) — see *Stat Sourcing* below. *Combined* is listed but disabled,
-  and the old site's *Show Raw Data* toggle waits on the rank display it
-  switched.
+- **Stat Sourcing: Projected, Combined, or Season to date once it opens**
+  (2026-10-14 for 2026-27) — see *Stat Sourcing* below. The old site's *Show
+  Raw Data* toggle waits on the rank display it switched.
 - Planned moves live on the Free Agents tab, and the Matchup tab notes when its
   projections count them, like the old Simulated Moves Log.
 
@@ -1253,7 +1256,8 @@ team pages by date through the bookmarklet — 12 a day — which is the harder 
 from inside the signed-in Yahoo tab, keeps only each page's
 `table.Tst-transaction-table`, and posts them with the browser's time zone to
 `/api/transactions/parse`. Measured live on the test league: 46 pages, 1.4 MB,
-30 seconds, with the tab title counting pages. **The bookmarklet now opens the
+30 seconds, with the tab title counting pages - for a full read. **Update from
+Yahoo reads only the recent pages** (see *Update from Yahoo*). **The bookmarklet now opens the
 Fantasy Streams tab at the click**, not after reading - a tab opened once the
 fetches finish is no longer a user gesture and is blocked as a pop-up. A
 bookmark dragged before 9/29/2026 refuses Transactions pages; the steps say to
@@ -1417,6 +1421,35 @@ bookmarklet's everything mode. It is shown to everyone, signed in or not.
   **Bookmarks dragged before 9/30/2026 cannot do this** — the steps say to drag
   again.
 
+**It reads only what is new, and says so** (10/3/2026). Everything Yahoo
+returns for a finished day or week is read once, so the update stays a few
+requests however long the season runs:
+
+- **Bench points** were already incremental: a public league's finished days
+  and weeks are cached server-side (`yahoo_public_cache` - checked on Render,
+  one row per day of league 5848, each fetched once), and a private league's
+  link asks the bookmarklet only for the days its store lacks. The step used
+  to print the season's totals ("2 swaps"), which read as a fresh scrape; it
+  now leads with the days read this time (`newDays`) - "no new days" - and then
+  the totals.
+- **Transactions are read down to the newest one held.** A public league sends
+  `since`, the newest stored id; `fetch_api` stops at the API page holding it
+  (one page of 500 covers weeks), returns that whole page - so a claim Yahoo
+  settled late inside it is not missed - and `incremental: true`, and the page
+  merges by id. A private league's link carries `&tx=M-D`, the day before the
+  newest stored, and the bookmarklet stops at the first Transactions page whose
+  oldest row is older than that; the page merges by content (type, time,
+  moves), since page rows have no ids. Checked on the test league's live pages:
+  a Mar 20 cutoff read 4 pages of the season's ~46. The step says "3 new
+  (1,140 this season)" or "nothing new".
+- **Merging needs the same league and kind of read**: stored transactions
+  carry the League ID (`leagueId`) and source; anything else - another league,
+  data stored before 10/3/2026 - gets a full read that replaces it. Season
+  History's **Scrape transactions** button is always a full read and
+  replaces, so the store can be reset from there. A bookmark dragged before
+  10/3/2026 ignores `tx` and reads every page; it still works, the merge
+  dedupes it, and dragging again makes it fast.
+
 ### The player card (`player_card.py`, `season_stats.py`, `game_lines.py`)
 
 **One modal for every player League Home lists**, in place of the old site's
@@ -1514,14 +1547,15 @@ again the next night; `python game_lines.py --start --end` backfills.
 
 The settings bar's **Stat Sourcing** chooses what players are valued on:
 **Projected** (the preseason projections), **Season to date** (each player's
-rate so far, per game, per start for a goalie), and **Combined** (not built).
+rate so far, per game, per start for a goalie), and **Combined** (the two
+blended, below).
 The choice is `fs_statSource`, per device, and rides in `planBody` as
 `source`, so the plan, the free agent pool and search, and goalie planning all
 take it. An unknown source is a 400, never a silent fallback.
 
-**The seam is a projection-shaped row.** `season_rows()` rewrites each
-`final_projections` row so its counting columns are his season rate times his
-projected games (starts, for a goalie) — exactly what `daily_value` divides
+**The seam is a projection-shaped row.** `season_rows()` and `combined_rows()`
+rewrite each `final_projections` row so its counting columns are the rate being
+valued times his projected games (starts, for a goalie) — exactly what `daily_value` divides
 by, so it reads his rate back and nothing downstream knows the difference.
 Totals come from one SQL aggregate (`season_sums`) per request; a goalie's are
 over his **starts only**, since a relief outing is not a start. Projected
@@ -1539,7 +1573,41 @@ Three things deliberately stay on the projections:
   and his games for everyone else. An injured starter would otherwise be
   planned at nothing.
 
-**It opens itself.** Not on opening night — a rate over a game or two is
+**Combined: `(k × projected rate + n × season rate) / (k + n)`** after n
+games (starts), the projection counting as k games of evidence. k is measured
+per stat by `derive_combined_weights.py` - the k whose blend after a player's
+first 5-40 games best predicts the rest of his season - and kept, rounded
+inside each stat's within-1% band, in `stat_sourcing.PRIOR_GAMES`. On 2025-26
+(566 skaters, 54 goalies):
+
+| | k | | k |
+|---|---|---|---|
+| G / A | 60 / 65 | PIM / +/- | 130 / 100 |
+| PPG / PPP / SHP | 45 / 50 / 90 | FW / FL | 7 / 6 |
+| SOG / HIT / BLK | 20 / 15 / 40 | W / L / OTL / SHO | 30 / 30 / 25 / 30 |
+| goalie GA / SA / TOI | 30 / 7 / 10 | | |
+
+So after 20 games shots and hits are about half season, goals a quarter,
+PIM and plus/minus barely moved. After 10 games the blend's error beat both
+the projection alone and the season alone on every stat (goals .081 against
+.082 and .151; shots .325 against .371 and .468). Faceoffs and a goalie's
+shots against are the exceptions to "trust the projection": a role or a
+team changes year to year, and last season says less than three weeks.
+Points, total faceoffs and saves are built from their blended parts, and save
+percentage and GAA from blended GA, SA and minutes, so none can disagree with
+its parts.
+
+**The measurement's prior is weaker than the real projections**: rebuilt from
+the three seasons before 2025-26 the pipeline's way (60/30/10 per game), but
+without the age curve - no birthdates are stored - or the goalie regression.
+So k is somewhat low, and Combined leans on the season a little sooner than
+it strictly should. Re-measure between seasons (`python
+derive_combined_weights.py`), never mid-season.
+
+**Combined is open from opening night** - a game or two barely moves it, which
+is its point.
+
+**Season to date opens itself.** Not on opening night — a rate over a game or two is
 noise a lineup would chase — but the day after every NHL team has played
 `OPEN_AFTER_TEAM_GAMES` (5) games, read from `nhl_schedule` like the nightly
 job's season gate: **2026-10-14** for 2026-27 (four games would have been the
@@ -2040,14 +2108,14 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded; the missing-column look-back each night, and lines last |
 | `test_game_lines.py` | lines from a game built shift by shift: 5-on-5 and power-play seconds counted from the skaters on the ice (an empty net is neither, goalies never in a set), line 1 the offensive line even when the checking line is out longer together, PP units from shared power-play time, a skater with no position on no line, the badge's unit from the last game with a power play; then that every game this season has lines and no line or unit is oversized |
 | `test_player_card.py` | the card with no database for the maths: ratios rebuilt from summed parts (and a goalie's GAA over his own seconds), an uncollected column missing rather than zero, windows only once played and arrows by `player_form`'s test on counting stats only, a goalie's starts against scraped team games with rest since his last appearance, opponent ranks kindest-first (a goalie's shots the other way); then the route's 404, 400 and both kinds of card |
-| `test_stat_sourcing.py` | Stat Sourcing: opening the day after the last team's fifth game (and the preview opening it early), rewritten rows reading back through `daily_value` as the season rate (per start, GAA over seconds), no-game players kept on their projection, no goalie column on a skater, weights and draft-board rank left on the projections; then a goalie's relief outings left out of the sums, and the routes - planning with it, refusing it before it opens with the date, and refusing an unknown source |
+| `test_stat_sourcing.py` | Stat Sourcing: opening the day after the last team's fifth game (and the preview opening it early), rewritten rows reading back through `daily_value` as the season rate (per start, GAA over seconds), no-game players kept on their projection, no goalie column on a skater, weights and draft-board rank left on the projections; Combined weighting each stat k to n (goals barely moved by four games, faceoffs a good part of the way, a long season outweighing any projection), points and saves built from their blended parts, every measured k used; then a goalie's relief outings left out of the sums, and the routes - planning with each, refusing Season to date before it opens with the date while Combined plans, and refusing an unknown source |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
 | `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; and the key lists in Python and JS not drifting. **It deletes every `zztest*` account** — do not use that prefix by hand |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
-| `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, and the routes |
+| `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, an update reading one page down to the transaction it holds (the whole page, for claims settled late) and every page when it holds none Yahoo knows, and the routes, saying when to merge and when to replace |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
 | `test_aging.py` | the age curve: that it is a re-basing rather than a haircut (old down, young up, peak untouched), that decline accelerates, that peripherals outlast scoring, that `plusMinus` is never scaled, and the 1-February birthday arithmetic. Pure maths — the only suite needing no database |
@@ -2176,9 +2244,10 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   (about a minute) and keeps the lineups per device; a second device reads them
   again. Points leagues get bench totals but no swaps.
 - **Season to date is closed until 2026-10-14**, by design (*Stat Sourcing*).
-  *Combined* — a blend of season rate and projection — is not built; the
-  principled version shrinks each stat toward the projection by how fast it
-  stabilises, which wants measuring on a past season first.
+- **Combined's k was measured against a stand-in prior** (no age curve, no
+  goalie regression), so it trusts the season slightly sooner than the real
+  projections deserve. Storing birthdates in the historic tables would let
+  `derive_combined_weights.py` age its prior the pipeline's way.
 - **A player with games but no projection** (an unprojected call-up) is not in
   `final_projections`, so no source can value him or match him on a roster.
 - **Line numbers differ from Daily Faceoff's** for about a third of forward

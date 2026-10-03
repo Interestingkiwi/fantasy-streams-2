@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 10/1/2026
+Updated - 10/3/2026
 """
 
 import logging
@@ -338,7 +338,11 @@ def parse_matchup():
 def scrape_transactions():
     """
     Every add, drop and trade in a league this season, from Yahoo's public
-    read-only API (see `yahoo_transactions`). Body: league_id.
+    read-only API (see `yahoo_transactions`). Body: league_id, and optionally
+    since - the newest transaction id the page already holds. Then only the
+    API pages down to it are read, and `incremental` says the page should
+    merge what comes back rather than replace what it has; it is false when
+    `since` was not found, and the list is the whole season.
 
     Public leagues only. A private one answers 403 `private` with the
     `yahooUrl` of its Transactions page, where the bookmarklet reads every
@@ -350,8 +354,11 @@ def scrape_transactions():
     try:
         body = request.get_json(silent=True) or {}
         page_url = yahoo_transactions.page_url(body.get('league_id'), test=test)
-        league, raw = yahoo_transactions.fetch_api(body.get('league_id'), test=test)
+        since = str(body.get('since') or '') or None
+        league, raw = yahoo_transactions.fetch_api(body.get('league_id'), test=test, since=since)
+        incremental = bool(since) and since in yahoo_transactions.transaction_ids(raw)
         return jsonify({"status": "success", "source": "api", "test": test,
+                        "incremental": incremental,
                         **yahoo_transactions.from_api(league, raw)})
     except yahoo_rosters.RosterPageError as exc:
         return _roster_error(exc, yahoo_url=page_url)
@@ -374,8 +381,11 @@ def bench():
     test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
     try:
         body = request.get_json(silent=True) or {}
-        info, days, weeks = yahoo_league_api.season(body.get('league_id'), test=test)
+        fetched = []
+        info, days, weeks = yahoo_league_api.season(body.get('league_id'), test=test, fetched=fetched)
         return jsonify({"status": "success", "source": "api", "test": test,
+                        # Days read from Yahoo this time; the rest came from the cache
+                        "newDays": len(fetched),
                         "league": {"name": info.get("name"), "season": info.get("season"),
                                    "currentWeek": info.get("currentWeek")},
                         "asOf": days[-1]["date"] if days else None,
@@ -694,19 +704,23 @@ def _request_plan(body):
 def _sourced(source, projections, schedule):
     """
     The rows to value players on for this Stat Sourcing: None for the
-    projections themselves, or each player's season rate (`stat_sourcing`).
-    Raises BadRequest for Season to date before it opens.
+    projections themselves, each player's season rate, or Combined's blend of
+    the two (`stat_sourcing`). Raises BadRequest for Season to date before it
+    opens, and for a source it does not know.
     """
     if source in (None, '', stat_sourcing.PROJECTED):
         return None
-    if source != stat_sourcing.SEASON:
+    if source not in stat_sourcing.SOURCES:
         raise BadRequest(f"Unknown stat sourcing '{source}'.")
+    season = stat_sourcing.schedule_season(schedule)
+    if source == stat_sourcing.COMBINED:
+        # Open from opening night: a game or two barely moves its blend
+        return stat_sourcing.combined_rows(projections, stat_sourcing.season_sums(season))
     state = _sourcing_status(schedule)
     if not state['open']:
         opens = state['opensOn']
         raise BadRequest("Season to date opens once every team has played a few games"
                          + (f", on {date.fromisoformat(opens):%B} {date.fromisoformat(opens).day}." if opens else "."))
-    season = stat_sourcing.schedule_season(schedule)
     return stat_sourcing.season_rows(projections, stat_sourcing.season_sums(season))
 
 

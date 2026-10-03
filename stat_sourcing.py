@@ -6,12 +6,13 @@ The settings bar offers three, as the old site did:
 - **Projected** - the preseason projections in `final_projections`.
 - **Season to date** - each player's rate so far this season, from
   `player_game_stats`: per game for a skater, per start for a goalie.
-- **Combined** - a blend of the two; not built yet.
+- **Combined** - the two blended stat by stat, the season counting for more
+  as his games pile up.
 
-**The seam is a projection-shaped row.** `season_rows()` rewrites each
-`final_projections` row so its counting columns hold the player's season rate
-times his projected games (projected starts, for a goalie). `daily_value`
-divides by exactly those, so it reads back his rate so far - and nothing
+**The seam is a projection-shaped row.** `season_rows()` and `combined_rows()`
+rewrite each `final_projections` row so its counting columns hold the rate
+being valued times his projected games (projected starts, for a goalie).
+`daily_value` divides by exactly those, so it reads the rate back - and nothing
 downstream, the lineup matcher, matchup weighting, the free-agent search or
 goalie planning, needs to know which source it is reading. Projected games
 and starts are left as they are: goalie start odds are balanced against them,
@@ -31,18 +32,29 @@ season of no games tells the source nothing about him. A goalie's relief
 outings are left out of his per-start line - twenty minutes in mop-up is not
 a start - so a goalie with only relief appearances keeps his projection too.
 
-**When it opens.** Not on opening night: a rate over a game or two is noise,
-and a lineup planned on it would chase it. Season to date opens the day after
-every NHL team has played `OPEN_AFTER_TEAM_GAMES` games - the shortest trend
-window - read from `nhl_schedule` the way the nightly job finds opening night,
-so next season opens the same way with nothing to change. For 2026-27 that is
-Wednesday 2026-10-14 (four games would have been the 11th, six the 18th).
+**Combined is `(k x projected rate + n x season rate) / (k + n)`** after n
+games: the projection counts as k games of evidence. k is each stat's own,
+measured by `derive_combined_weights.py` - the k whose blend after a player's
+first 5-40 games of 2025-26 best predicted the rest of his season. Shots and
+hits are about half season after 20 games; goals a quarter; PIM and
+plus/minus barely move. On every stat the blend beat both the projection
+alone and the season alone. Points, total faceoffs and saves are built from
+their blended parts, and save percentage and GAA from blended goals against,
+shots against and minutes, so they cannot disagree with them.
+
+**When they open.** Combined from opening night: with a game or two its line
+is nearly all projection, which is the point of it. Season to date not until
+a rate means something - the day after every NHL team has played
+`OPEN_AFTER_TEAM_GAMES` games (the shortest trend window), read from
+`nhl_schedule` the way the nightly job finds opening night, so next season
+opens the same way with nothing to change. For 2026-27 that is Wednesday
+2026-10-14 (four games would have been the 11th, six the 18th).
 `STAT_SOURCING_PREVIEW`, on outside production, opens it early for
 development.
 
 Author - Jason Druckenmiller
 Created - 10/1/2026
-Updated - 10/1/2026
+Updated - 10/3/2026
 """
 
 import logging
@@ -54,8 +66,8 @@ from db import fetch_all
 
 log = logging.getLogger(__name__)
 
-PROJECTED, SEASON = 'projected', 'todate'
-SOURCES = (PROJECTED, SEASON)
+PROJECTED, SEASON, COMBINED = 'projected', 'todate', 'combined'
+SOURCES = (PROJECTED, SEASON, COMBINED)
 
 # Games every team must have played before Season to date opens
 OPEN_AFTER_TEAM_GAMES = 5
@@ -94,6 +106,27 @@ SOURCE_COLUMNS = {
 GOALIE_COLUMNS = frozenset({'proj_wins', 'proj_losses', 'proj_otLosses', 'proj_shutouts',
                             'proj_goalsAgainst', 'proj_shotsAgainst', 'proj_saves',
                             'proj_timeOnIce'})
+
+# Combined's games of trust in the projection, per stat - printed by
+# `derive_combined_weights.py` on 2025-26 and rounded inside each stat's range
+# within 1% of the best fit. Re-measure between seasons, not mid-season.
+PRIOR_GAMES = {
+    'G': 60, 'A': 65, 'PPG': 45, 'PPP': 50, 'SHP': 90, 'SOG': 20, 'HIT': 15,
+    'BLK': 40, 'PIM': 130, '+/-': 100, 'FW': 7, 'FL': 6,
+    'W': 30, 'L': 30, 'OTL': 25, 'SHO': 30, 'GA': 30, 'SA': 7, 'TOI': 10,
+}
+
+# The stat each blended column takes its k from. Short-handed goals share
+# short-handed points' (too rare to measure alone). Columns missing here are
+# built from blended ones instead: points, total faceoffs and saves.
+BLEND_CODES = {
+    'proj_goals': 'G', 'proj_assists': 'A', 'proj_ppGoals': 'PPG', 'proj_ppPoints': 'PPP',
+    'proj_shGoals': 'SHP', 'proj_shPoints': 'SHP', 'proj_shots': 'SOG', 'proj_hits': 'HIT',
+    'proj_blockedShots': 'BLK', 'proj_penaltyMinutes': 'PIM', 'proj_plusMinus': '+/-',
+    'proj_totalFaceoffWins': 'FW', 'proj_totalFaceoffLosses': 'FL',
+    'proj_wins': 'W', 'proj_losses': 'L', 'proj_otLosses': 'OTL', 'proj_shutouts': 'SHO',
+    'proj_goalsAgainst': 'GA', 'proj_shotsAgainst': 'SA', 'proj_timeOnIce': 'TOI',
+}
 
 
 def opens_on(schedule, games=OPEN_AFTER_TEAM_GAMES):
@@ -164,37 +197,77 @@ def season_rows(projections, sums):
     Each carries `statSource` - 'season', or 'projection' for a player with no
     games yet, who keeps his projected line - and `seasonGames`.
     """
-    rows = []
-    for projection in projections:
-        row = dict(projection)
-        found = sums.get(str(projection.get('playerId'))) or {}
-        games = int(found.get('games') or 0)
-        row['seasonGames'] = games
-        if not games:
-            row['statSource'] = 'projection'
-            rows.append(row)
-            continue
+    return [_rewrite(projection, sums, blend=False) for projection in projections]
 
-        row['statSource'] = 'season'
-        goalie = projection.get('positionCode') == 'G'
-        divisor = dv.games_for(projection)
-        if divisor <= 0:
-            # No projected games to scale by: stand his own games in for them
-            divisor = games
-            row['projectedGames'] = games
-            if goalie:
-                row['proj_gamesStarted'] = games
-        for column, source in SOURCE_COLUMNS.items():
-            if (column in GOALIE_COLUMNS) != goalie:
-                continue
-            total = found.get(source)
-            row[column] = None if total is None else float(total) / games * divisor
 
+def combined_rows(projections, sums):
+    """
+    The projection rows rewritten to Combined's blend of projected and season
+    rates (`PRIOR_GAMES`), as new dicts. `statSource` is 'combined', or
+    'projection' for a player with no games yet.
+    """
+    return [_rewrite(projection, sums, blend=True) for projection in projections]
+
+
+def _rewrite(projection, sums, blend):
+    row = dict(projection)
+    found = sums.get(str(projection.get('playerId'))) or {}
+    games = int(found.get('games') or 0)
+    row['seasonGames'] = games
+    if not games:
+        row['statSource'] = 'projection'
+        return row
+
+    row['statSource'] = 'combined' if blend else 'season'
+    goalie = projection.get('positionCode') == 'G'
+    projected = dv.games_for(projection)
+    divisor = projected
+    if divisor <= 0:
+        # No projected games to scale by: stand his own games in for them
+        divisor = games
+        row['projectedGames'] = games
         if goalie:
-            saves, shots = found.get('saves'), found.get('shotsAgainst')
-            allowed, seconds = found.get('goalsAgainst'), found.get('timeOnIce')
-            row['proj_savePct'] = float(saves or 0) / float(shots) if shots else None
-            row['proj_goalsAgainstAverage'] = (float(allowed or 0) * 3600 / float(seconds)
-                                               if seconds else None)
-        rows.append(row)
-    return rows
+            row['proj_gamesStarted'] = games
+
+    for column, source in SOURCE_COLUMNS.items():
+        if (column in GOALIE_COLUMNS) != goalie:
+            continue
+        total = found.get(source)
+        rate = None if total is None else float(total) / games
+        if blend and column in BLEND_CODES:
+            rate = _blend(projection.get(column), projected, rate, games,
+                          PRIOR_GAMES[BLEND_CODES[column]])
+        row[column] = None if rate is None else rate * divisor
+
+    if blend:
+        # Built from their blended parts, so they cannot disagree with them
+        for whole, parts in (('proj_points', ('proj_goals', 'proj_assists')),
+                             ('proj_totalFaceoffs', ('proj_totalFaceoffWins',
+                                                     'proj_totalFaceoffLosses'))):
+            if not goalie and all(row.get(part) is not None for part in parts):
+                row[whole] = sum(row[part] for part in parts)
+        if goalie and row.get('proj_shotsAgainst') is not None \
+                and row.get('proj_goalsAgainst') is not None:
+            row['proj_saves'] = row['proj_shotsAgainst'] - row['proj_goalsAgainst']
+
+    if goalie:
+        allowed, shots, seconds = (row.get('proj_goalsAgainst'), row.get('proj_shotsAgainst'),
+                                   row.get('proj_timeOnIce'))
+        row['proj_savePct'] = 1 - float(allowed or 0) / float(shots) if shots else None
+        row['proj_goalsAgainstAverage'] = (float(allowed or 0) * 3600 / float(seconds)
+                                           if seconds else None)
+    return row
+
+
+def _blend(projected_total, projected_games, season_rate, games, prior_games):
+    """
+    (k x projected rate + n x season rate) / (k + n) per game, or whichever of
+    the two exists when one does not.
+    """
+    projected_rate = (float(projected_total) / projected_games
+                      if projected_total is not None and projected_games > 0 else None)
+    if projected_rate is None:
+        return season_rate
+    if season_rate is None:
+        return projected_rate
+    return (prior_games * projected_rate + games * season_rate) / (prior_games + games)
