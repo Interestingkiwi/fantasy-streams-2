@@ -2,7 +2,7 @@
 app.py for Fantasy Streams
 Author - Jason Druckenmiller
 Created - 7/3/2026
-Updated - 9/29/2026
+Updated - 10/5/2026
 """
 
 
@@ -20,6 +20,8 @@ from routes.league_routes import league_bp
 from routes.schedule_routes import schedule_bp
 from routes.standalone_routes import standalone_bp
 from routes.account_routes import account_bp
+from routes.notification_routes import notification_bp
+import move_reminders
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -39,6 +41,14 @@ app.register_blueprint(league_bp)
 app.register_blueprint(schedule_bp)
 app.register_blueprint(standalone_bp)
 app.register_blueprint(account_bp)
+app.register_blueprint(notification_bp)
+
+# Move reminders go out from a thread in each web process (each gunicorn
+# worker imports this module); an advisory lock lets one send per minute.
+# Off outside production unless PUSH_SENDER=1. Under the dev server's
+# reloader only the child that serves requests starts it.
+if app.config["PUSH_SENDER"] and (not app.config["DEBUG"] or os.environ.get("WERKZEUG_RUN_MAIN")):
+    move_reminders.start()
 
 if __name__ == '__main__':
     # Bind IPv4 explicitly, and say so. Werkzeug listens on one address family

@@ -39,6 +39,14 @@ services:
         sync: false
       - key: YAHOO_CONSUMER_SECRET
         sync: false
+      # Move reminders (web push). Make the pair once with
+      # `python move_reminders.py keys` and set both in the dashboard; without
+      # them League Home says reminders are not set up. A new pair later means
+      # every device has to turn reminders on again.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
       # YAHOO_REDIRECT_URI is intentionally unset: it is then built from the
       # request as https://<service>.onrender.com/callback, which is what has
       # to be registered in the Yahoo developer console.

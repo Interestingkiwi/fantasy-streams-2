@@ -48,6 +48,11 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
   device signing in used to save its own copy, so a scrape on one never
   reached the other. Split accounts converge on the newest copy by themselves.
   See *Accounts (temporary)*.
+- **Move reminders** (10/5/2026): a push notification when a planned move is
+  due, linking Yahoo's player search, since nothing can make the move without
+  write access. They need an account and, on Render, `VAPID_PUBLIC_KEY` /
+  `VAPID_PRIVATE_KEY` set in the dashboard. Not yet received on a real phone.
+  See *Move reminders*.
 
 ## Tech stack
 
@@ -60,7 +65,9 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 - **Frontend:** Jinja templates + Tailwind (vendored `static/tailwind.js`), vanilla ES6,
   dark VS Code-style theme. No build step.
 - **Auth:** Yahoo OAuth2 (authorization-code), hand-rolled on `requests` — see *Auth*
-- **Background:** Redis + RQ (`jobs.py`, `worker.py`); falls back to a thread with no Redis
+- **Background:** Redis + RQ (`jobs.py`, `worker.py`); falls back to a thread with no Redis.
+  Move reminders go out from a thread in each web process (`move_reminders.start`)
+- **Push:** Web Push via `pywebpush` (VAPID), a root-scoped service worker (`static/sw.js`), and a web app manifest so iPhones can install League Home
 - **Planned but not yet wired:** Gevent, the league-sync ETL, `yahoo_fantasy_api` writes
 
 ## Layout
@@ -81,6 +88,10 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `routes/standalone_routes.py` | `/standalone/` Standalone mode — lineups, matchup, planned moves and free agents from a hand-entered league; no session, no Yahoo. See *Standalone mode* below |
 | `routes/account_routes.py` | `/account/` Temporary username/password accounts that keep each user's leagues server-side. See *Accounts (temporary)* |
 | `static/account-sync.js` | Mirrors a league's localStorage keys to and from the signed-in account; drives the account modal. See *Accounts (temporary)* |
+| `move_reminders.py` | Which planned moves are due on which device, the notification, sending them once (a thread each minute), and `keys` / `run` from the command line. See *Move reminders* |
+| `routes/notification_routes.py` | `/sw.js`, `/manifest.webmanifest`, and `/notifications/api/*`: a device turning reminders on, off, its settings and a test |
+| `static/sw.js` | The service worker: shows a pushed reminder and opens its link when tapped. Nothing cached |
+| `static/icons/` | The app icons (gradient + FS), drawn once with Pillow - a dev-time tool, not in `requirements.txt` |
 | `manage_accounts.py` | Dev CLI: `list` / `delete <username>` accounts, `--render` for Render's database |
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
 | `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
@@ -268,7 +279,11 @@ with it every page that reads per-league tables. Carry these into that port:
   `static/account-sync.js`, `partials/account.html` (and its include and the
   button in `page-nav.html`), `manage_accounts.py`, `tests/test_accounts.py`,
   and the account lines in the privacy policy. Nothing migrates; the sync
-  replaces it. Tell users first — anything they entered by hand that Yahoo does
+  replaces it. **Move reminders hang off accounts**: `push_subscriptions`
+  references `local_accounts`, and `move_reminders` reads planned moves from
+  `account_leagues`. Re-point both at `users` and the synced league rather
+  than dropping them, and the reminders' own `stopReminders` in
+  `account-sync.js` moves with them. Tell users first — anything they entered by hand that Yahoo does
   not carry (planned moves, manual lineups, edited weeks) goes with it.
 
 **Local dev:** Yahoo rejects plain `http://` redirect URIs, so a real login
@@ -1082,6 +1097,63 @@ have dropped him.
 
 Not modelled yet: waiver periods, weekly add limits, roster size (a move with
 "No drop" is allowed and assumes an open spot), and anything past this week.
+
+### Move reminders (`move_reminders.py`, `routes/notification_routes.py`)
+
+**A push notification when a planned move is due**, from the Move reminders
+section of the Free Agents tab. Fantasy Streams cannot make the move: that
+needs Yahoo's gated write API, or acting through the user's own Yahoo session
+- holding their credentials, or keeping their browser running for an
+extension - which was considered and ruled out (10/5/2026). So it says when,
+and tapping the notification opens `/hockey/<league>/playersearch?search=<name>`,
+Yahoo's player search, where Yahoo's own Add button asks whom to drop.
+Checked against league 5848: a full name finds the player, accent or not, and
+both Elias Petterssons show (the notification names team and position).
+
+- **Reminders need an account.** The server reads each league's
+  `fs_standaloneMoves` from `account_leagues.state`, so a move planned on the
+  desktop reminds the phone. Every league in the account is watched.
+- **Per device:** each device that turns reminders on is a
+  `push_subscriptions` row, tied to the account, with its own time zone and
+  time - the day of the move or the night before (`remind_day` 0 / -1), at
+  `remind_at`. A reminder is due from then until the end of the move's day in
+  that zone; not before, and not the next day. A move already made (the
+  pickup on your team in the last roster scrape) is never reminded. The key
+  is league + date + add + drop, so a move put on another night is reminded
+  again.
+- **Sent once:** `push_sent` records each one. A thread in each web process
+  (`start`, when `PUSH_SENDER` is on - production - and the keys are set) runs
+  `send_due` every minute. It takes a Postgres advisory lock, so of gunicorn's
+  two workers one sends, and writes its claims before sending. A failure
+  releases the claim to be tried next minute, and 20 in a row drop the device.
+  A 404/410 from the push service drops it at once. No cron service: minute
+  precision from a cron would be a new billable service running 1,440 times a
+  day.
+- **Web Push** via `pywebpush` with VAPID keys from the environment
+  (`python move_reminders.py keys` makes a pair, `run` sends once). The
+  payload is encrypted for the device. `test_move_reminders` sends a real one
+  to a push service stood up locally and decrypts it with the device's key.
+  Subscription keys are checked at subscribe: a 65-byte P-256 point and a
+  16-byte secret, or 400.
+- **iPhone:** web push works only for the site added to the Home Screen (iOS
+  16.4+), so League Home has a manifest (`/manifest.webmanifest`, start URL
+  `/standalone/`), an apple-touch-icon and the icons in `static/icons/`. The
+  section says how on an iPhone that has not installed it. The Home Screen
+  app has its own storage, so you sign in again there.
+- **Signing out turns a device's reminders off** (`stopReminders` in
+  `account-sync.js`). `fs_remindersOn` remembers a device turned them on, so
+  a subscription the server lost is quietly sent again on the next visit.
+- **Player ids are normalised** (`player_id`): stored as 8478483, 8478483.0 or
+  text they are one id. Imported rookies' ids are negative (-4), so only zero
+  and non-integers are refused.
+
+Checked in the browser: the service worker registers for the whole site,
+signed-out and blocked states read correctly, and the browser's permission
+and subscription stubbed (the pane denies notifications), turning on, the
+settings, the upcoming list, turning off and signing out all run through the
+real routes, at 375px too. **Not checked: a notification arriving on a real
+phone.** Do that first after deploy: set the keys on Render, add League Home
+to an iPhone's Home Screen, sign in there, turn reminders on, Send a test.
 
 ### The Goalie Planning tab (`goalie_planning.py`)
 
@@ -2260,6 +2332,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
 | `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; the key lists in Python and JS not drifting; and one Yahoo league on every device - a phone's own copy giving way to the desk's newer one by itself, a copy opened by hand staying open, sign-in listing each league's Yahoo ID. **It deletes every `zztest*` account** — do not use that prefix by hand |
+| `test_move_reminders.py` | move reminders: due from its time until the end of the move's day in the device's own zone, the night-before setting, a move already made never reminded, one listed twice reminded once and one moved to another night again, ids however stored (a rookie's negative one too); the notification's names and Yahoo search link; a real push encrypted, signed with VAPID and decrypted with the device's key on a local push service; sending once through failures, retries, a held lock and a device gone; then the routes - sign-in required, keys no browser would make refused, another account never touching a device, settings clamped, the service worker and manifest served. Under `zztestpush*` accounts |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
@@ -2386,7 +2459,8 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   change.
 - Token refresh has no lock: two concurrent requests on an expired token both
   refresh, and the later write wins. Harmless now; revisit with the Phase 2 worker.
-- Automated transactions are stubs. Standalone mode plans add/drops but executes nothing.
+- Automated transactions are stubs. Standalone mode plans add/drops but executes nothing;
+  move reminders say when to make them (*Move reminders*).
 - **The bookmarklet has never run end to end by a real click** — see *Scraping
   rosters from Yahoo*. Every private-league feature rests on it.
 - **Bench points for private leagues reads ~180 pages on a first catch-up**
@@ -2397,6 +2471,10 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   player would have started in any open spot he fits, and that a benched
   teammate who played would have covered a pickup's start otherwise. Managers
   are not that diligent, and nothing models a different move instead.
+- **Move reminders have not been received on a real phone** yet, and need
+  `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` set on Render first. Planned moves
+  model no waiver periods, so a reminder to add a player on waivers comes too
+  late to claim him.
 - **Accounts split before 10/5/2026 keep their older copies** until deleted
   from the account modal. Every device uses the newest copy, so planned moves
   or lineups entered only in an older one are not shown until it is opened.

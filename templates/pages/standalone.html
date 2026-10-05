@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>League Home - Fantasy Streams</title>
+    <!-- Installable, so an iPhone can add it to the Home Screen: the only way
+         iOS lets a site send move reminders -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+    <meta name="theme-color" content="#1f2937">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Streams">
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
@@ -39,8 +46,7 @@
                 <!-- Season to date opens once every team has played a few games
                      (stat_sourcing.opens_on); the script labels it with the date.
                      Combined, a blend of the two, is open from the start. -->
-                <select id="stat-source" class="form-select p-2 text-sm w-full sm:w-56"
-                        aria-describedby="stat-source-help">
+                <select id="stat-source" class="form-select p-2 text-sm w-full sm:w-56">
                     <option value="projected" selected>Projected</option>
                     <option value="todate" disabled>Season to date</option>
                     <option value="combined">Combined</option>
@@ -50,7 +56,6 @@
                      transactions - and whatever is scraped next -->
                 <span class="text-xs sm:text-sm font-medium text-gray-400 sm:text-right">Yahoo</span>
                 <button id="update-all" type="button" class="btn-primary rounded-md text-sm font-medium px-4 py-2 w-full sm:w-56">Update from Yahoo</button>
-                <p id="stat-source-help" class="text-xs text-gray-500 sm:col-start-2 lg:col-start-auto lg:col-span-2">Preseason projections, adjusted for age and injury.</p>
             </div>
         </div>
         {% set active = 'standalone' %}{% include 'partials/page-nav.html' %}
@@ -358,6 +363,34 @@
                 <p class="text-xs text-gray-500 mt-0.5">An add counts from its night; the player dropped plays until the night before. Change a night to move the transaction.</p>
             </div>
             <ul id="moves-body" class="divide-y divide-gray-700"></ul>
+        </section>
+
+        <!-- Move reminders: a notification on this device when a planned move
+             is due (move_reminders.py), wherever the move was planned -->
+        <section id="reminders" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-start justify-between gap-3">
+                <div class="flex-1 min-w-[14rem]">
+                    <h2 class="text-lg font-semibold text-white">Move reminders</h2>
+                    <p id="reminders-status" class="text-xs text-gray-500 mt-0.5">A notification on this device when a planned move is due, with a link to the player on Yahoo.</p>
+                </div>
+                <button id="reminders-toggle" type="button" class="hidden btn-primary rounded-md text-sm font-medium px-4 py-2 w-full sm:w-auto">Turn on reminders</button>
+            </div>
+            <div id="reminders-settings" class="hidden p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="w-full sm:w-auto">
+                    <label for="reminders-day" class="block mb-1 text-xs font-medium text-gray-400">Remind me</label>
+                    <select id="reminders-day" class="form-select p-2 text-sm w-full sm:w-52">
+                        <option value="0">On the day of the move</option>
+                        <option value="-1">The night before</option>
+                    </select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="reminders-time" class="block mb-1 text-xs font-medium text-gray-400">At</label>
+                    <input id="reminders-time" type="time" value="10:00" class="form-input p-2 text-sm w-full sm:w-36">
+                </div>
+                <button id="reminders-test" type="button" class="column-toggle py-2">Send a test</button>
+                <button id="reminders-off" type="button" class="px-3 py-2 text-sm text-gray-400 hover:text-red-400 border border-gray-600 rounded-md">Turn off on this device</button>
+            </div>
+            <div id="reminders-body" class="hidden p-3 sm:p-4 text-sm"></div>
         </section>
         </div>
 
@@ -1736,6 +1769,7 @@
             markFreeAgentsStale();
             renderMoves();
             schedulePlan();
+            remindersMovesChanged();
         }
 
         function nightOptions(selectedDate, gains) {
@@ -1794,6 +1828,182 @@
             const remove = event.target.closest('.move-remove');
             if (!remove) return;
             saveMoves(weekMoves().filter((_m, i) => i !== Number(remove.dataset.index)));
+        });
+
+        // --- Move reminders --------------------------------------------------
+        // A push notification on this device when a planned move is due
+        // (move_reminders.py). The server reads the moves from the account, so
+        // a move planned on the desktop reminds the phone; each device turns
+        // reminders on for itself. fs_remindersOn records that it did, so a
+        // subscription the server has lost (signed in again, or the browser
+        // rotated it) is quietly sent again.
+        const REMINDERS_ON = 'fs_remindersOn';
+        const remindersState = { status: null, registration: null, subscription: null, busy: false };
+        let remindersTimer = null;
+        const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+        const isIos = () => /iPad|iPhone|iPod/.test(navigator.userAgent)
+            || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isInstalled = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+        const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+
+        function remindersStatus(text, tone = 'text-gray-500') {
+            $('reminders-status').textContent = text;
+            $('reminders-status').className = `text-xs mt-0.5 ${tone}`;
+        }
+
+        function remindersButton(label) {
+            $('reminders-toggle').classList.toggle('hidden', !label);
+            if (label) $('reminders-toggle').textContent = label;
+            $('reminders-toggle').dataset.action = label ? (label === 'Sign in' ? 'signin' : 'on') : '';
+        }
+
+        // The VAPID public key, base64url, as pushManager.subscribe takes it
+        function keyBytes(base64url) {
+            const padded = base64url.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (base64url.length % 4)) % 4);
+            return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+        }
+
+        const reminderSettings = () => ({
+            remindDay: Number($('reminders-day').value), remindAt: $('reminders-time').value || '10:00',
+            timeZone: browserZone(),
+        });
+
+        function renderReminders() {
+            const s = remindersState.status;
+            const on = Boolean(s?.subscribed);
+            $('reminders-settings').classList.toggle('hidden', !on);
+            $('reminders-body').classList.toggle('hidden', !on);
+            if (!pushSupported()) {
+                remindersButton('');
+                return remindersStatus(isIos() && !isInstalled()
+                    ? 'On an iPhone, reminders need League Home on your Home Screen: tap Share, then Add to Home Screen, open it from there and sign in, then turn reminders on.'
+                    : 'This browser cannot show notifications from a website.', 'text-amber-300');
+            }
+            if (!s) return remindersButton('');
+            if (!s.available) {
+                remindersButton('');
+                return remindersStatus('Reminders are not set up on this server yet.', 'text-amber-300');
+            }
+            if (!s.signedIn) {
+                remindersButton('Sign in');
+                return remindersStatus('Reminders need an account: the server reads your planned moves from it, so a move planned on one device reminds another.');
+            }
+            if (Notification.permission === 'denied') {
+                remindersButton('');
+                return remindersStatus('Notifications are blocked for this site. Allow them in the browser’s site settings, then reload.', 'text-amber-300');
+            }
+            if (!on) {
+                remindersButton('Turn on reminders');
+                return remindersStatus(`A notification on this device when a planned move is due, with a link to the player on Yahoo.`
+                    + (s.devices ? ` ${s.devices} other device${s.devices === 1 ? ' has' : 's have'} them on.` : ''));
+            }
+            remindersButton('');
+            remindersStatus(`On for this device${s.devices > 1 ? `, and ${s.devices - 1} other${s.devices === 2 ? '' : 's'}` : ''}. Every league in your account is watched.`, 'text-gray-400');
+            $('reminders-day').value = String(s.settings?.remindDay ?? 0);
+            $('reminders-time').value = s.settings?.remindAt || '10:00';
+            const when = iso => new Date(iso).toLocaleString(undefined,
+                { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+            const upcoming = s.upcoming || [];
+            $('reminders-body').innerHTML = upcoming.length
+                ? `<h3 class="text-sm font-semibold text-gray-300 mb-1">Coming up</h3>
+                   <ul class="divide-y divide-gray-700 border border-gray-700 rounded-md">${upcoming.map(r => `
+                       <li class="p-2 sm:px-3 flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                           <span><span class="text-emerald-400 font-semibold">Add</span> <span class="text-white">${esc(r.add)}</span>${r.drop
+                               ? ` <span class="text-red-400 font-semibold">drop</span> <span class="text-gray-300">${esc(r.drop)}</span>` : ''}</span>
+                           <span class="text-xs text-gray-400">${esc(when(r.at))}</span>
+                       </li>`).join('')}</ul>`
+                : '<p class="text-gray-400">Nothing to remind you of yet. Plan a move and it shows here, a few seconds after it reaches your account.</p>';
+        }
+
+        async function refreshReminders() {
+            const endpoint = remindersState.subscription?.endpoint;
+            const answer = await postJSON('/notifications/api/status', endpoint ? { endpoint } : {});
+            if (!answer.ok) return remindersStatus(answer.data.message || 'Reminders could not be checked.', 'text-amber-300');
+            remindersState.status = answer.data;
+            // Turned on here before, and the server has lost it: send it again
+            if (answer.data.signedIn && answer.data.available && endpoint && !answer.data.subscribed
+                && localStorage.getItem(REMINDERS_ON) === '1' && Notification.permission === 'granted') {
+                const again = await postJSON('/notifications/api/subscribe',
+                    { subscription: remindersState.subscription.toJSON(), ...reminderSettings() });
+                if (again.ok) Object.assign(remindersState.status, { subscribed: true, ...again.data });
+            }
+            renderReminders();
+        }
+
+        async function remindersSetup() {
+            if (!pushSupported()) return renderReminders();
+            try {
+                remindersState.registration = await navigator.serviceWorker.register('/sw.js');
+                remindersState.subscription = await remindersState.registration.pushManager.getSubscription();
+            } catch (error) {
+                return remindersStatus(`Reminders could not start in this browser: ${error.message}`, 'text-amber-300');
+            }
+            await refreshReminders();
+        }
+
+        async function turnRemindersOn() {
+            // Asked first, while this is still the tap: iOS refuses it otherwise
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') return renderReminders();
+            const s = remindersState.status;
+            remindersStatus('Turning reminders on…');
+            try {
+                const registration = remindersState.registration || await navigator.serviceWorker.ready;
+                remindersState.subscription = await registration.pushManager.getSubscription()
+                    || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(s.publicKey) });
+            } catch (error) {
+                return remindersStatus(`This browser would not subscribe: ${error.message}`, 'text-amber-300');
+            }
+            const answer = await postJSON('/notifications/api/subscribe',
+                { subscription: remindersState.subscription.toJSON(), ...reminderSettings() });
+            if (!answer.ok) return remindersStatus(answer.data.message || 'Reminders could not be turned on.', 'text-amber-300');
+            write(REMINDERS_ON, '1');
+            await refreshReminders();
+        }
+
+        async function turnRemindersOff() {
+            const subscription = remindersState.subscription;
+            if (subscription) {
+                await postJSON('/notifications/api/unsubscribe', { endpoint: subscription.endpoint });
+                try { await subscription.unsubscribe(); } catch (error) { /* gone already */ }
+            }
+            remindersState.subscription = null;
+            localStorage.removeItem(REMINDERS_ON);
+            await refreshReminders();
+        }
+
+        // A planned move reaches the server with the account's next save
+        // (account-sync.js, 1.5s after a change), so ask after that
+        function remindersMovesChanged() {
+            if (!remindersState.status?.subscribed) return;
+            clearTimeout(remindersTimer);
+            remindersTimer = setTimeout(refreshReminders, 3000);
+        }
+
+        $('reminders-toggle').addEventListener('click', async () => {
+            if (remindersState.busy) return;
+            if ($('reminders-toggle').dataset.action === 'signin') return $('account-button')?.click();
+            remindersState.busy = true;
+            $('reminders-toggle').disabled = true;
+            try { await turnRemindersOn(); } finally {
+                remindersState.busy = false;
+                $('reminders-toggle').disabled = false;
+            }
+        });
+        $('reminders-off').addEventListener('click', turnRemindersOff);
+        ['reminders-day', 'reminders-time'].forEach(id => $(id).addEventListener('change', async () => {
+            const answer = await postJSON('/notifications/api/settings',
+                { endpoint: remindersState.subscription?.endpoint, ...reminderSettings() });
+            if (!answer.ok) return remindersStatus(answer.data.message || 'That could not be saved.', 'text-amber-300');
+            Object.assign(remindersState.status, answer.data);
+            renderReminders();
+        }));
+        $('reminders-test').addEventListener('click', async () => {
+            $('reminders-test').disabled = true;
+            const answer = await postJSON('/notifications/api/test', { endpoint: remindersState.subscription?.endpoint });
+            $('reminders-test').disabled = false;
+            remindersStatus(answer.ok ? 'Sent - it should arrive in a few seconds.' : (answer.data.message || 'The test could not be sent.'),
+                answer.ok ? 'text-green-400' : 'text-amber-300');
         });
 
         // --- Free agents -----------------------------------------------------
@@ -2196,11 +2406,6 @@
         const sourceAllowed = value => value === 'combined' || (value === 'todate' && sourcing.open);
         const storedSource = localStorage.getItem(KEYS.statSource);
         let statSource = sourceAllowed(storedSource) ? storedSource : 'projected';
-        const SOURCE_HELP = {
-            projected: 'Preseason projections, adjusted for age and injury.',
-            todate: 'Each player&rsquo;s rate so far this season: per game, per start for a goalie. A player yet to play keeps his projection. Season ranks stay the draft board&rsquo;s.',
-            combined: 'His projection and his season blended stat by stat, the season counting for more as his games pile up: after 20 games, about half for shots and hits, a quarter for goals. Season ranks stay the draft board&rsquo;s.',
-        };
 
         function renderStatSource() {
             const option = $('stat-source').querySelector('option[value="todate"]');
@@ -2209,8 +2414,6 @@
             option.textContent = sourcing.preview ? 'Season to date (preview)'
                 : sourcing.open ? 'Season to date' : `Season to date${opens ? ` (from ${opens})` : ''}`;
             $('stat-source').value = statSource;
-            const preview = sourcing.preview && opens ? ` Preview: opens to everyone on ${esc(opens)}.` : '';
-            $('stat-source-help').innerHTML = SOURCE_HELP[statSource] + (statSource === 'todate' ? preview : '');
         }
 
         $('stat-source').addEventListener('change', event => {
@@ -5376,6 +5579,7 @@
                 renderMatchup();
                 renderTransactions();
                 if (!$('tab-history').classList.contains('hidden')) showHistory();
+                remindersSetup();
                 // A first visit has nothing to plan against, so open the form
                 setLeagueOpen(!activeCategories().length);
                 plan();

@@ -11,7 +11,7 @@ connection and reads it directly.
 
 Author - Jason Druckenmiller
 Created - 9/6/2026
-Updated - 10/1/2026
+Updated - 10/5/2026
 """
 
 import logging
@@ -105,6 +105,20 @@ class Config:
     # everywhere but production, so production waits for the date.
     STAT_SOURCING_PREVIEW = _bool("STAT_SOURCING_PREVIEW", not IS_PRODUCTION)
 
+    # Web push for move reminders (move_reminders.py). The key pair identifies
+    # this server to the browsers' push services; make one with
+    # `python move_reminders.py keys` and keep the private half secret. Without
+    # them League Home says reminders are not set up. The subject is how a push
+    # service reaches whoever runs the server - a mailto: or https: address.
+    VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY") or None
+    VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY") or None
+    VAPID_SUBJECT = os.getenv("VAPID_SUBJECT") or "https://fantasystreams.app"
+
+    # Whether this process sends due reminders, from a background thread each
+    # minute. On in production; locally `python move_reminders.py run` sends
+    # once, or PUSH_SENDER=1 runs the thread under the dev server.
+    PUSH_SENDER = _bool("PUSH_SENDER", IS_PRODUCTION)
+
 
 def check_config(cfg=Config):
     """Fail fast on anything that must be set; warn on the rest. Call at startup."""
@@ -119,5 +133,8 @@ def check_config(cfg=Config):
         log.warning("YAHOO_CONSUMER_KEY / _SECRET not set - Yahoo login is disabled.")
     if not cfg.REDIS_URL:
         log.info("REDIS_URL not set - background jobs will run inline.")
+    if not (cfg.VAPID_PUBLIC_KEY and cfg.VAPID_PRIVATE_KEY):
+        log.warning("VAPID_PUBLIC_KEY / _PRIVATE_KEY not set - move reminders are off "
+                    "(python move_reminders.py keys makes a pair).")
 
     log.info("Config loaded (APP_ENV=%s, debug=%s).", cfg.APP_ENV, cfg.DEBUG)

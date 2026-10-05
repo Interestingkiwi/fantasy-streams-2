@@ -46,6 +46,7 @@ TESTS = [
     "test_player_form.py",
     "test_goalie_planning.py",
     "test_accounts.py",
+    "test_move_reminders.py",
     "test_game_lines.py",
     "test_player_card.py",
     "test_stat_sourcing.py",

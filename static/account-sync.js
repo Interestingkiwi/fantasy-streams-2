@@ -456,6 +456,18 @@
         }
     });
 
+    // Move reminders are the account's: a device signing out stops getting them
+    async function stopReminders() {
+        try {
+            remove('fs_remindersOn');
+            const registration = await navigator.serviceWorker?.getRegistration('/');
+            const subscription = await registration?.pushManager?.getSubscription();
+            if (!subscription) return;
+            await send('POST', '/notifications/api/unsubscribe', { endpoint: subscription.endpoint });
+            await subscription.unsubscribe();
+        } catch (error) { /* nothing on, or the server will drop it when the push fails */ }
+    }
+
     $('account-signout').addEventListener('click', async () => {
         busy(true);
         const saved = await flush();
@@ -469,6 +481,7 @@
             busy(false);
             return window.alert(error.message);
         }
+        await stopReminders();
         clearLeague();
         location.reload();
     });

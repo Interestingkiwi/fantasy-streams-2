@@ -13,7 +13,7 @@ eventual path once the schema stabilises.
 
 Author - Jason Druckenmiller
 Created - 9/6/2026
-Updated - 9/30/2026
+Updated - 10/5/2026
 """
 
 import logging
@@ -357,6 +357,40 @@ ACCOUNT_DDL = [
     "CREATE INDEX IF NOT EXISTS account_leagues_account ON account_leagues (account_id)",
 ]
 
+# --- Move reminders (web push) --------------------------------------------------
+# A device's push subscription, tied to the account whose planned moves it is
+# reminded of (move_reminders.py), and when it wants reminding. push_sent
+# records each reminder a device has had, so none is sent twice. Both go with
+# the accounts when Yahoo sync replaces them - the subscriptions would then
+# belong to `users`.
+
+PUSH_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES local_accounts(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        time_zone TEXT NOT NULL DEFAULT 'America/New_York',
+        remind_day INTEGER NOT NULL DEFAULT 0,
+        remind_at TEXT NOT NULL DEFAULT '10:00',
+        failures INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_sent_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS push_subscriptions_account ON push_subscriptions (account_id)",
+    """
+    CREATE TABLE IF NOT EXISTS push_sent (
+        subscription_id INTEGER NOT NULL REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+        reminder_key TEXT NOT NULL,
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (subscription_id, reminder_key)
+    )
+    """,
+]
+
 # --- Yahoo's public API, cached -------------------------------------------------
 # What yahoo_league_api.py reads from Yahoo's public read-only API for public
 # leagues: settings, weekly scoreboards, each day's rosters with stats. Keyed
@@ -374,7 +408,7 @@ PUBLIC_CACHE_DDL = [
     """,
 ]
 
-ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL + ACCOUNT_DDL + PUBLIC_CACHE_DDL
+ALL_TABLES = ADMIN_DDL + LEAGUE_DDL + SHARED_DDL + ACCOUNT_DDL + PUSH_DDL + PUBLIC_CACHE_DDL
 
 
 def init_schema(strict=False):
