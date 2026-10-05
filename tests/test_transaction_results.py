@@ -256,10 +256,25 @@ check("their move won hits - only a win over a tie, since 26 would have played 2
       and sorted(week["costs"]) == sorted([[A, "loss", "tie"], [G, "tie", "win"]]) and week["net"] == -0.5, week)
 check("and says one of its starts a teammate on the bench would have covered", theirs["added"]["covered"] == 1)
 check("a win made of a tie, and a tie made of a win, net to nothing", mine["weeks"][0]["net"] == 0.0)
-check("the season tallies every move: moves, starts, open games, categories won and lost",
-      out["season"]["1"] == {"moves": 2, "starts": 1, "dropGames": 2, "gained": 1, "lost": 1, "net": 0.0}
+check("the season tallies every move: starts, open games, categories won and lost - "
+      "and its lone drop is a move but not an add",
+      out["season"]["1"] == {"moves": 2, "adds": 1, "starts": 1, "dropGames": 2, "gained": 1, "lost": 1,
+                             "net": 0.0}
       and out["season"]["2"]["gained"] == 1 and out["season"]["2"]["lost"] == 2
       and out["season"]["2"]["net"] == -0.5, out["season"])
+check("each week tallies the same, for the adds made in it and the nights in it",
+      out["weekly"]["1"]["1"] == {"moves": 2, "adds": 1, "starts": 1, "dropGames": 2, "gained": 1,
+                                  "lost": 1, "net": 0.0}
+      and out["weekly"]["1"]["2"] == {"moves": 1, "adds": 1, "starts": 2, "dropGames": 2, "gained": 1,
+                                      "lost": 2, "net": -0.5}, out["weekly"])
+two_weeks = tr.results(INFO, DAYS + [{"date": "2026-10-12", "names": DAYS[0]["names"], "teams": {
+    "1": DAYS[3]["teams"]["1"], "2": [["22", "C", C, sk()], ["25", "LW", LW, sk()], ["20", "D", D, sk(0, 0, 1)],
+                                      ["23", "Util", C, sk()], ["24", "G", GOALIE, gl(played=False)]]}}],
+    WEEKS + [{"week": 2, "start": "2026-10-12", "end": "2026-10-18", "status": "midevent", "matchups": []}],
+    TRANSACTIONS, PLAYERS, OUTSIDE, SLOTS, "1")
+check("a pickup made last week still counts his starts this week, but not as an add",
+      two_weeks["weekly"]["2"] == {"2": {"moves": 0, "adds": 0, "starts": 1, "dropGames": 0, "gained": 0,
+                                         "lost": 0, "net": 0.0}}, two_weeks["weekly"].get("2"))
 flipped = tr.swing({G: 2, A: 1}, {G: 1, A: 1}, {G: 2}, {}, [cat(G, "G"), cat(A, "A")])
 check("a loss turned into a win is worth a whole category, and the records say so",
       flipped["net"] == 1.0 and flipped["with"] == [1, 0, 1] and flipped["without"] == [0, 1, 1], flipped)

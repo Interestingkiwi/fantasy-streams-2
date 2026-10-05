@@ -293,6 +293,22 @@ def swing(totals, rival, minus, plus, categories):
 
 # ----------------------------------------------------------------- the season
 
+def _tally():
+    """
+    One team's moves over a season or a week: `moves` (every pairing, a lone
+    drop included), `adds` (only those that picked someone up - what the
+    table counts), the pickups' `starts` and the dropped players' open games
+    (`dropGames`) on that span's nights, and the categories its moves won,
+    cost and were worth (`gained`, `lost`, `net`). A week's adds are those
+    made in it; its starts and swings come from moves made then or before.
+    """
+    return {"moves": 0, "adds": 0, "starts": 0, "dropGames": 0, "gained": 0, "lost": 0, "net": 0.0}
+
+
+def _rounded(tally):
+    return {**tally, "net": round(tally["net"], 1)}
+
+
 def _slim(record):
     """Without the fields that say nothing - None, False, [] - which a season
     of moves would otherwise repeat a thousand times. Zeroes stay."""
@@ -301,7 +317,8 @@ def _slim(record):
 
 def results(info, days, weeks, transactions, players, outside, slots, detail_team=None):
     """
-    {categories, swingsScored, teams, players, asOf, weeks, moves, season}.
+    {categories, swingsScored, teams, players, asOf, weeks, moves, season,
+    weekly} - `season` a `_tally` per team, `weekly` one per team per week.
 
     `players` is {yahooId: [name, nhlTeam, positions]}; `outside` {yahooId:
     {date: game line}} - the dropped players' NHL games, matched by the route;
@@ -310,8 +327,8 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
     line, the kind of spot open to the dropped player, its slot, the dropped
     player's line, [the bench stand-in, his line] or None]); another team's
     only when it changed a week, with games,
-    starts and those weeks. `season` counts every move of every team. Fields
-    that say nothing (None, False, []) are left out.
+    starts and those weeks. `season` and `weekly` count every move of every
+    team. Fields that say nothing (None, False, []) are left out.
     """
     categories = bp.scored_categories(info)
     swings_scored = info.get("scoring") == "head"
@@ -343,12 +360,19 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
             names.update({k: v for k, v in (matchup.get("names") or {}).items() if v})
 
     moves = pair(transactions)
-    out, summary = [], defaultdict(lambda: {"moves": 0, "starts": 0, "dropGames": 0,
-                                            "gained": 0, "lost": 0, "net": 0.0})
+    out, summary = [], defaultdict(_tally)
+    weekly = defaultdict(lambda: defaultdict(_tally))     # {week: {team: tally}}
     for n, move in enumerate(moves):
         team = move["team"]
         added, dropped = move["added"], move["dropped"]
+        made_in = week_of(move["date"])
+        summary[team]["moves"] += 1
+        if made_in:
+            weekly[made_in["week"]][team]["moves"] += 1
         if added:
+            summary[team]["adds"] += 1
+            if made_in:
+                weekly[made_in["week"]][team]["adds"] += 1
             window = season.tenure(added, team, move["date"])
         else:
             # A lone drop: until the team's next pickup filled the spot he left
@@ -373,6 +397,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                 add_line(a_total, row[2])
                 if week:
                     add_line(by_week[week["week"]][0], row[2])
+                    weekly[week["week"]][team]["starts"] += 1
 
             d_line, spot = None, None
             if dropped and not season.on_team(when, dropped, team):
@@ -385,6 +410,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                         add_line(d_total, d_line)
                         if week:
                             add_line(by_week[week["week"]][1], d_line)
+                            weekly[week["week"]][team]["dropGames"] += 1
             # A start the dropped player could not have made would not have
             # gone unfilled: a teammate who played on the bench takes it, and
             # his line belongs to the week without the move
@@ -413,12 +439,13 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                     week_out.append({"week": number, "opponent": rival, **entry})
 
         tally = summary[team]
-        tally["moves"] += 1
         tally["starts"] += a_starts
         tally["dropGames"] += d_open
-        tally["gained"] += sum(len(w.get("gains") or []) for w in week_out)
-        tally["lost"] += sum(len(w.get("costs") or []) for w in week_out)
-        tally["net"] += sum(w["net"] for w in week_out)
+        for entry in week_out:
+            for each in (tally, weekly[entry["week"]][team]):
+                each["gained"] += len(entry["gains"])
+                each["lost"] += len(entry["costs"])
+                each["net"] += entry["net"]
 
         # The team being looked at gets every move, with its lines and nights.
         # The rest of the league only feeds the summary and the weeks a move
@@ -460,6 +487,8 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         "asOf": last,
         "weeks": week_list,
         "moves": out,
-        "season": {team: {**tally, "net": round(tally["net"], 1)} for team, tally in summary.items()},
+        "season": {team: _rounded(tally) for team, tally in summary.items()},
+        "weekly": {str(number): {team: _rounded(tally) for team, tally in teams.items()}
+                   for number, teams in sorted(weekly.items())},
         "detailTeam": detail_team,
     }

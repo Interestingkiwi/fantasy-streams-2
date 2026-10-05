@@ -3290,41 +3290,54 @@
 
         const resultsList = items => `<ul class="divide-y divide-gray-700 border border-gray-700 rounded-md">${items.join('')}</ul>`;
 
-        function resultsLeagueSeason() {
-            const s = resultsData.season;
+        // Every team's moves over a span, from the server's tallies (`season`,
+        // or one week's of `weekly`). Adds leave out drop-only moves: they
+        // picked nobody up. Teams with nothing in the span still get a row.
+        function teamTable(tallies, note) {
+            const blank = { adds: 0, starts: 0, dropGames: 0, gained: 0, lost: 0, net: 0 };
+            const ids = [...new Set([...Object.keys(resultsData.season), ...Object.keys(resultsData.teams)])];
+            const s = Object.fromEntries(ids.map(id => [id, tallies?.[id] || blank]));
+            ids.sort((x, y) => s[y].net - s[x].net || s[y].adds - s[x].adds || Number(x) - Number(y));
             const mine = myYahooTeam();
-            const ids = Object.keys(s).sort((x, y) => s[y].net - s[x].net || s[y].moves - s[x].moves);
             const cell = (n, tone = '') => `<td class="px-3 py-2 text-right ${n ? tone || 'text-gray-200' : 'text-gray-600'}">${n}</td>`;
+            const swings = resultsData.swingsScored;
+            return `
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="col-sticky px-3 py-2 font-medium">Team</th>
+                                <th class="px-3 py-2 font-medium text-right">Adds</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Pickup starts</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Drops&rsquo; open games</th>
+                                ${swings ? `<th class="px-3 py-2 font-medium text-right whitespace-nowrap">Categories won</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Cost</th>
+                                <th class="px-3 py-2 font-medium text-right">Net</th>` : ''}
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700">
+                            ${ids.map(id => `
+                                <tr class="table-row-hover">
+                                    <td class="col-sticky px-3 py-2"><button type="button" data-team="${esc(id)}" class="results-team-pick text-left py-1 text-blue-400 hover:text-blue-300">${esc(resultsTeam(id))}</button>${id === mine ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}</td>
+                                    ${cell(s[id].adds)}${cell(s[id].starts)}${cell(s[id].dropGames)}
+                                    ${swings ? `${cell(s[id].gained, 'text-green-400')}${cell(s[id].lost, 'text-red-300')}
+                                    <td class="px-3 py-2 text-right font-semibold ${s[id].net > 0 ? 'text-green-400' : s[id].net < 0 ? 'text-red-300' : 'text-gray-600'}">${shareText(s[id].net)}</td>` : ''}
+                                </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-xs text-gray-500 -mt-2">${note} Select a team to see its moves.</p>`;
+        }
+
+        function resultsLeagueSeason() {
             const ranked = resultsData.moves.map(m => ({ m, net: moveNet(m) }));
             const best = ranked.filter(r => r.net > 0).sort((x, y) => y.net - x.net).slice(0, 8);
             const worst = ranked.filter(r => r.net < 0).sort((x, y) => x.net - y.net).slice(0, 5);
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
-                    <div class="overflow-x-auto">
-                        <table class="data-table w-full text-left text-sm">
-                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
-                                <tr>
-                                    <th class="col-sticky px-3 py-2 font-medium">Team</th>
-                                    <th class="px-3 py-2 font-medium text-right">Moves</th>
-                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Pickup starts</th>
-                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Drops&rsquo; open games</th>
-                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Categories won</th>
-                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Cost</th>
-                                    <th class="px-3 py-2 font-medium text-right">Net</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-700">
-                                ${ids.map(id => `
-                                    <tr class="table-row-hover">
-                                        <td class="col-sticky px-3 py-2"><button type="button" data-team="${esc(id)}" class="results-team-pick text-left py-1 text-blue-400 hover:text-blue-300">${esc(resultsTeam(id))}</button>${id === mine ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}</td>
-                                        ${cell(s[id].moves)}${cell(s[id].starts)}${cell(s[id].dropGames)}
-                                        ${cell(s[id].gained, 'text-green-400')}${cell(s[id].lost, 'text-red-300')}
-                                        <td class="px-3 py-2 text-right font-semibold ${s[id].net > 0 ? 'text-green-400' : s[id].net < 0 ? 'text-red-300' : 'text-gray-600'}">${shareText(s[id].net)}</td>
-                                    </tr>`).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                    <p class="text-xs text-gray-500 -mt-2">Pickup starts: games the players a team picked up started for it. Drops&rsquo; open games: games the players it dropped would have filled an open spot. Categories won and cost: across every week, against having kept the dropped player. Select a team to see its moves.</p>
+                    ${teamTable(resultsData.season, 'Adds: players picked up (drop-only moves are not counted). '
+                        + 'Pickup starts: games they started. Drops&rsquo; open games: games the players dropped would have filled an open spot. '
+                        + 'Categories won and cost: across every week, against having kept the dropped player.')}
                     ${resultsData.swingsScored ? `
                     <div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">The moves that mattered most</h3>
@@ -3335,14 +3348,20 @@
         }
 
         function resultsLeagueWeek(number) {
+            const week = resultsData.weeks.find(w => w.week === number);
             const entries = resultsData.moves.flatMap(m => (m.weeks || []).filter(w => w.week === number).map(w => ({ m, w })))
                 .sort((x, y) => y.w.net - x.w.net || (y.w.gains || []).length - (x.w.gains || []).length);
-            if (!resultsData.swingsScored) return '<p class="text-gray-400 p-4">Week swings are worked out for category leagues only. Select a team to see its moves.</p>';
             return `
-                <div class="p-3 sm:p-4 flex flex-col gap-2">
-                    <h3 class="text-sm font-semibold text-gray-300">Moves that changed week ${number}</h3>
-                    ${entries.length ? resultsList(entries.map(e => moveSummary(e.m, e.w)))
-                        : '<p class="text-gray-400">No move changed a category this week.</p>'}
+                <div class="p-3 sm:p-4 flex flex-col gap-4">
+                    ${teamTable(resultsData.weekly?.[String(number)], `Week ${number}${week && week.status !== 'postevent' ? ', so far' : ''}. `
+                        + 'Adds: players picked up this week (drop-only moves are not counted). '
+                        + 'Pickup starts and drops&rsquo; open games: this week&rsquo;s nights, from moves made this week or before. '
+                        + 'Categories won and cost: this week&rsquo;s matchup, against having kept the dropped player.')}
+                    ${resultsData.swingsScored ? `<div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves that changed week ${number}</h3>
+                        ${entries.length ? resultsList(entries.map(e => moveSummary(e.m, e.w)))
+                            : '<p class="text-gray-400">No move changed a category this week.</p>'}
+                    </div>` : ''}
                 </div>`;
         }
 
