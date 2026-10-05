@@ -8,7 +8,7 @@ A Flask web app that gives Head-to-Head fantasy hockey managers advanced analyti
 draft prep, lineup/streaming help, and (planned) automated Yahoo waiver transactions.
 Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason Druckenmiller.
 
-## Where things stand (10/1/2026)
+## Where things stand (10/5/2026)
 
 - **The 2026-27 season is under way** (opened 9/29). Render's nightly cron is
   live: `player_game_stats`, `team_stats` and (from 10/1) `player_game_lines`
@@ -36,6 +36,18 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 - **Update from Yahoo reads only what is new** (10/3/2026): transactions down
   to the newest one held, bench lineups for days not yet read, and each step
   says what it added rather than the season's totals. See *Update from Yahoo*.
+- **Season History has sub-tabs and Transaction Results** (10/5/2026):
+  Transactions, Transaction Results and Bench Points, one at a time. Results
+  pair each pickup with its drop and show what each did, and the weeks a move
+  won or cost a category. See *Season History: transaction results*.
+- **ESPN's injury report refreshes nightly** (10/5/2026), as the last step of
+  the cron. Until then it was the 9/6 preseason scrape, so October showed
+  March's injuries. Render's copy refreshes on the first nightly run after
+  deploy. See *Injuries*.
+- **One Yahoo league is one league in an account** (10/5/2026). A second
+  device signing in used to save its own copy, so a scrape on one never
+  reached the other. Split accounts converge on the newest copy by themselves.
+  See *Accounts (temporary)*.
 
 ## Tech stack
 
@@ -76,6 +88,9 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `yahoo_league_api.py` | A public league's settings, weekly scoreboards and day-by-day rosters with stats, from Yahoo's public API, cached in `yahoo_public_cache`. See *Season History: left on the bench* |
 | `bench_points.py` | Pure: what benched players scored, and the single swaps that would have won or tied a category. See *Season History: left on the bench* |
 | `bench_lineups.py` | Bench points for a private league: the bookmarklet's daily lineups plus `player_game_stats`, built into the same shapes the public API gives. See *Season History: left on the bench* |
+| `transaction_results.py` | Pure: each pickup paired with its drop, what each did, and the weeks a move won or cost a category. See *Season History: transaction results* |
+| `player_pool.py` | Everyone an outside name can be matched to (projections plus anyone with games) and the aliases - for Yahoo's lineups and transactions and ESPN's injuries |
+| `injury_report.py` | ESPN's injury report into `current_injuries`, every night; and how the page reads it (`by_player`, stale notes). See *Injuries* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
 | `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
 | `goalie_planning.py` | Whether one more goalie start is worth the risk: outcomes, minutes and the limits. See *The Goalie Planning tab* |
@@ -108,7 +123,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid; every player opens the player card modal |
+| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid; Season History its own sub-tabs (Transactions / Transaction Results / Bench Points); every player opens the player card modal |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell. Carries the account button, and includes `partials/account.html` (the account modal and the boot data) |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -472,8 +487,11 @@ game results — `nhl_schedule` holds fixtures only, with no scores.
 `scrape_game_results` for one night, then `scrape_team_stats` for all six
 windows — in that order, since the team windows roll up from games that have to
 be in already — then `game_lines` for every game in the 14-day look-back that
-has no lines. Lines go last so a shift chart not yet posted costs only the
-lines, which the next night picks up. Deployed as a **Render cron**
+has no lines. Lines go after the games so a shift chart not yet posted costs
+only the lines, which the next night picks up. Last, ESPN's injury report
+replaces yesterday's (`injury_report`, see *Injuries*). That step can never
+fail the night: an ESPN outage keeps yesterday's report, which the page dates,
+and must not make the games look failed. Deployed as a **Render cron**
 (`render.yaml`, 08:30 UTC = 04:30 EDT / 03:30 EST, after even a late
 west-coast game in either offset).
 
@@ -494,6 +512,37 @@ endpoint for *today*, which returns nothing before a season has been played —
 so the first live run of the year was the one most likely to fail. It now falls
 back through earlier dates for the name→tricode mapping, which barely changes
 between seasons.
+
+### Injuries (`injury_report.py`)
+
+**ESPN's report, read again every night** (from 10/5/2026). Until then
+`current_injuries` was written once, by the preseason pipeline (step 6), and
+never refreshed. So in October League Home was still badging offseason
+surgeries for players who had played both opening nights: Matthews "Out" from
+March, Tanev, Forsling, Markstrom. ESPN's feed itself is current (113 players
+on 10/5, every note from the last three weeks), so the nightly job now reads
+it last. `python injury_report.py` refreshes it by hand.
+
+- **Same table, same columns, plus four.** `apply_injury_adjustments` reads
+  `playerId`, `injuryStatus`, `injuryDetails` (ESPN's details dict as text)
+  and `injuryDate`, so those are written as the pipeline writes them.
+  `injuryType`, `returnDate`, `team` and `fetchedAt` sit beside them. A
+  preseason re-run replaces the table without them, and the page copes.
+- **Matched by name, settled by ESPN's team and position**, through
+  `yahoo_rosters.match` against `player_pool` (projections plus anyone with
+  games). ESPN's `UTAH`, `LA`, `SJ`, `TB` and `NJ` map to NHL tricodes. On 10/5,
+  84 of 111 matched; the rest were AHL depth and prospects nobody projects.
+  They are kept with no id, as the pipeline keeps them.
+- **A failed or empty read keeps yesterday's report**, in one transaction,
+  and never fails the night.
+- **A note older than the player's last game is `stale`**: ESPN's `date` is
+  when it last updated that player's note, so a game after it means he played
+  through whatever it describes. The page shows no badge for it, the "hide
+  injured" filter ignores it, and the card shows it muted. A note dated the day
+  of his last game is not stale, since it may be about that game.
+- **The page dates the report by `fetchedAt`** (US Eastern), not by its
+  newest note. A table the pipeline wrote has no `fetchedAt`, and falls back to
+  the newest note as before.
 
 ### Per-game results (`scrape_game_results.py`)
 
@@ -735,9 +784,15 @@ top holds what every sub-page reads — **Your Team**, **Fantasy Week** (with
 *Only nights still to play*) and **Stat Sourcing**. Below it is a row of
 sub-page tabs, **League · Matchup · Lineups · Free Agents · Goalie Planning · Season History**,
 and the chosen one fills the panel under it. The site-wide nav keeps the corner
-the old Logout button had. Season History so far holds transactions and bench
-points; the old site's category strength, and its Trade Helper and Tools tabs,
-are still to come.
+the old Logout button had. Season History holds Transactions, Transaction
+Results and Bench Points; the old site's category strength, and its Trade
+Helper and Tools tabs, are still to come.
+
+**Season History's sections are sub-tabs** (10/5/2026): a lighter underlined
+row (`.sub-tab` in `styles.css`) under the page tabs, one section shown at a
+time and each fetched the first time it is shown. The open one is
+`fs_historyTab`, per device. A new section is a button and a panel in the
+markup and an entry in `HISTORY_TABS`, whose function runs when it is shown.
 
 - Tabs only toggle visibility. Every panel stays in the page and is kept
   current whichever one is showing, so switching tabs never re-plans. The last
@@ -874,8 +929,9 @@ or `W` and would drop them on its next save, so the lineup keeps
 `fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits`,
 `fs_standaloneGoalieStats`, `fs_leagueTransactions` and `fs_fantasyWeeks` — all
 synced to an account — plus `fs_benchLineups`, a private league's daily
-lineups, kept on the device only (see *Season History: left on the bench*), and
-`fs_statSource`, the Stat Sourcing, a per-device way of looking. The older `fs_standaloneRoster` /
+lineups, kept on the device only (see *Season History: left on the bench*),
+`fs_statSource`, the Stat Sourcing, a per-device way of looking, and
+`fs_historyTab`, Season History's open section. The older `fs_standaloneRoster` /
 `fs_standaloneOpponent` are read once to seed the league and left in place. Toggling a chip changes only that
 column, so a stat draft prep selects that the lineup engine cannot score
 survives a visit here.
@@ -965,10 +1021,12 @@ a game this week, and hide injured. Any header sorts. **Only 150 rows of each
 table are drawn**; filters and sorting are how you reach the rest, and the
 summary says so.
 
-**Injuries come from `current_injuries`** (the preseason ESPN scrape), as a
-badge and a filter, never applied to a projection — `apply_injury_adjustments`
-has already done that. The page prints how old the feed is, because a stale
-feed fails silently and convincingly (see *The projection pipeline*).
+**Injuries come from `current_injuries`** (ESPN's report, refreshed nightly -
+see *Injuries*), as a badge and a filter, never applied to a projection —
+`apply_injury_adjustments` has already done that. The page prints how old the
+report is, because a stale feed fails silently and convincingly (see *The
+projection pipeline*), and a note older than the player's last game gets no
+badge.
 
 **Open roster spots** is the old site's unused-roster-spots table: seats your
 roster cannot fill on each night, from the plan already on the page. That is
@@ -1391,6 +1449,62 @@ and the best two outcomes per appearance are kept.
 The response is ~200 KB for a season (lines carry only non-zero stats) and is
 held in the page, not stored — the server's cache makes it quick to fetch again.
 
+### Season History: transaction results (`transaction_results.py`)
+
+Each pickup paired with the player dropped for him: what the pickup did once
+he arrived, what the dropped player would have done instead, and the weeks a
+move won or cost a category. `/api/transaction-results` takes the page's
+stored transactions and reads the same days and weeks bench points does:
+`yahoo_league_api` for a public league; for a private one it answers 403
+`private` and the page resends with the bookmarklet's lineups (shared loader:
+`_private_season`). The dropped players' games come from `player_game_stats`,
+matched by name, team and positions.
+
+- **A move** is one add/drop, or a lone drop and a lone add by the same team
+  within 24 hours (`paired: 'nearby'`): a manager who drops first and adds
+  after makes two transactions. Trades are left out. A lone drop is judged
+  until the team's next pickup, which filled the spot he left.
+- **The pickup counts from his first night on the roster** (the move's day,
+  or up to two days later for one effective tomorrow) **until he is gone**,
+  and only on nights Yahoo had him in a starting slot and he played. A night
+  he played on the bench is a game, not production.
+- **The dropped player counts only when a spot he could fill was open** that
+  night, judged from the team's real lineup: `own` (the pickup's starting
+  slot), `empty` (a starting slot left empty; Yahoo lists only filled ones, so
+  the league's slot counts are needed - Yahoo's settings for a public league,
+  League Home's lineup slots for a private one), or `idle` (a starter with no
+  game). A goalie only ever fills G, a skater never does. Otherwise he would
+  have sat.
+- **A week's swing** takes the pickup's started lines off Yahoo's real week
+  totals, puts the dropped player's open-spot lines on, and scores every
+  category against that week's opponent again (`bench_points.swapped_totals`,
+  ratios rebuilt from their parts, a summed line's goalie minutes carried as
+  `min` - two shutouts are two hours). `net` counts a tie as half a category,
+  as head-to-head standings do. The page also says when a move turned the
+  week's matchup from a loss into a win.
+- **A start the dropped player could not have made is not left empty**
+  (`stand_in`): a teammate who played on the bench that night and fits the
+  slot takes it, the busiest in the counting categories if several, and his
+  line counts in the week without the move. Without that, every pickup was
+  credited with his whole line on nights the team had someone else ready. On
+  the 2025-26 test league it covered 56 of one team's 562 pickup starts and
+  took its net from +77.5 categories to +65.5. Every team still comes out
+  ahead on its moves, which is what streaming for games should do.
+- **Kept small:** every move of one team (the one shown, else yours) comes
+  with both players' totals and nights. Other teams' moves come only when
+  they changed a week, without lines. Fields that say nothing are left out.
+  A full season of the busiest test league is ~270 KB (1,026 moves, 1.3 s).
+  Changing the team re-requests.
+- **Views:** a team's season (every move as a card: the two players, a
+  pickup / dropped / difference table in the categories that apply, the weeks
+  it changed, night by night); a team's week (what its moves did to that
+  week, and the moves made in it); the league's season (a table by team, the
+  moves that mattered most, the ones that backfired); the league's week (every
+  move that changed it, by net).
+- **Points leagues** get contributions but no swings, as with bench points.
+  Results are held in the page, not stored, and are worked out again after
+  Update from Yahoo or a transactions scrape.
+
 ### Update from Yahoo (every scrape at once)
 
 **Update from Yahoo**, in League Home's settings bar, runs every scrape in the
@@ -1499,9 +1613,11 @@ percentage, GAA, PP share — is rebuilt from its summed parts over the window,
 never averaged game by game, and a goalie's GAA is over his own seconds. A
 stat whose column a window's games were scraped without is None, not zero.
 
-**The injury feed is named for what it is.** The card shows the preseason ESPN
-feed's status with its date and says when he has played since — Matthews was
-"Out, back 9/15" in the feed while playing both opening nights.
+**The injury report is named for what it is.** The card shows ESPN's status
+with the date ESPN last updated that player's note. A note older than his last
+game is shown muted and says he has played since. Matthews was "Out, back
+9/15" in the preseason feed while playing both opening nights, which is what
+led to the nightly refresh (*Injuries*).
 
 #### Lines from shift charts (`game_lines.py`)
 
@@ -1627,6 +1743,32 @@ so no reset; the form says so. `manage_accounts.py` is how the developer lists
 and deletes accounts (someone who lost a password and started again).
 **Retire all of it once Yahoo sync is live** — see *When Yahoo API access is
 granted*.
+
+**One Yahoo league is one league in an account** (10/5/2026). Signing in on a
+second device that already held the league used to save that copy as another
+league and open it there, so each device worked on its own copy and nothing
+scraped on one reached the other. Now:
+
+- **Sign-in opens the account's copy** when the browser's league names a Yahoo
+  League ID the account already has (`yahoo` on each listed league, read with
+  `yahoo_rosters.league_id_from`, so a pasted URL counts). The confirm offers
+  the reverse: replace the account's copy with this browser's. Hand-entered
+  leagues with no ID keep the old "save as another league" offer.
+- **Accounts already split converge by themselves**:
+  `account_routes.active_league` moves a session onto the most recently saved
+  copy of its Yahoo league. The older copies stay, labelled "Older copy of
+  League N" in the modal with a note, until deleted. A copy opened by hand
+  from the modal is pinned (`SESSION_PINNED`) and left alone. Sign-in's open
+  is not pinned.
+- A tab also checks for a newer copy on window `focus`, and a save too big for
+  `keepalive` (64 KB; a season of transactions passes it) goes as a plain
+  request instead of being refused.
+
+Checked in the browser with two origins (`127.0.0.1` and `localhost`) as two
+devices: sign-in adopted the account's league with no second copy, a change on
+one reached the other, and a split account converged and labelled its older
+copy. The pane reports itself hidden while not displayed, so the focus check
+itself was not seen to fire. Its logic is the visibility check's.
 
 **Per account, never shared.** Each account holds its own copy of each league
 in `account_leagues` (one JSONB `state` of `{localStorage key: raw string}`),
@@ -1877,7 +2019,8 @@ page)*.
 3. `append_advanced_skaters.py` / `append_advanced_goalies.py` — MoneyPuck advanced stats
 4. `create_player_directory.py`
 5. `scrape_ep_rookies.py` (EliteProspects) / `enrich_ahl_stats.py` (HockeyTech feed)
-6. `scrape_injuries.py` (ESPN injuries API)
+6. `scrape_injuries.py` (ESPN injuries API). In season the nightly job
+   refreshes the same table with the root-level `injury_report.py`; see *Injuries*.
 7. `calculate_skater_projections.py` / `calculate_goalie_projections.py` —
    60/30/10 time-decay weighting of the last 3 seasons (per-game), paced to the
    season length from `season_config`, with production & peripheral trend labels;
@@ -2105,16 +2248,18 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_manager_profiles.py` | hold pairing against re-adds, trades and unfinished holds, then the claim the classifier rests on — that managers it calls streamers really do hold pickups for less time |
 | `test_opponent_strength.py` | mean-neutrality per category, the per-category directions (including the two goalie ones that oppose each other), that the adjustment breaks ties without reordering tiers, and home ice held at its long-run size until a season's games earn their weight — an opening night read raw is wild, blended it barely moves |
 | `test_game_results.py` | the per-game scraper against a stubbed API — paging, weekly chunking, and above all that hitting the 10,000-row ceiling raises instead of truncating quietly; faceoffs from the fifth report landing on the right rows, never zeroed where the report is silent; the card's later columns collected, added to an older table, and on the list a gap re-scrapes - team PP time not |
-| `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded; the missing-column look-back each night, and lines last |
+| `test_nightly.py` | the season gate: silent before opening night, live from it, and standing down cleanly rather than failing when no schedule is loaded; the missing-column look-back each night, lines after the games, and the injury report last, where ESPN refusing it never fails the night |
+| `test_injury_report.py` | ESPN's report with no network: one entry per player with NHL tricodes, two Elias Petterssons told apart by ESPN's position, notes older than a player's last game marked stale (not one from the day of it), the report dated by when it was read; then written to a throwaway table with the pipeline's columns, and a 403, non-JSON or empty report keeping yesterday's |
 | `test_game_lines.py` | lines from a game built shift by shift: 5-on-5 and power-play seconds counted from the skaters on the ice (an empty net is neither, goalies never in a set), line 1 the offensive line even when the checking line is out longer together, PP units from shared power-play time, a skater with no position on no line, the badge's unit from the last game with a power play; then that every game this season has lines and no line or unit is oversized |
 | `test_player_card.py` | the card with no database for the maths: ratios rebuilt from summed parts (and a goalie's GAA over his own seconds), an uncollected column missing rather than zero, windows only once played and arrows by `player_form`'s test on counting stats only, a goalie's starts against scraped team games with rest since his last appearance, opponent ranks kindest-first (a goalie's shots the other way); then the route's 404, 400 and both kinds of card |
 | `test_stat_sourcing.py` | Stat Sourcing: opening the day after the last team's fifth game (and the preview opening it early), rewritten rows reading back through `daily_value` as the season rate (per start, GAA over seconds), no-game players kept on their projection, no goalie column on a skater, weights and draft-board rank left on the projections; Combined weighting each stat k to n (goals barely moved by four games, faceoffs a good part of the way, a long season outweighing any projection), points and saves built from their blended parts, every measured k used; then a goalie's relief outings left out of the sums, and the routes - planning with each, refusing Season to date before it opens with the date while Combined plans, and refusing an unknown source |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
-| `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; and the key lists in Python and JS not drifting. **It deletes every `zztest*` account** — do not use that prefix by hand |
+| `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; the key lists in Python and JS not drifting; and one Yahoo league on every device - a phone's own copy giving way to the desk's newer one by itself, a copy opened by hand staying open, sign-in listing each league's Yahoo ID. **It deletes every `zztest*` account** — do not use that prefix by hand |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
+| `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; two shutouts as two hours; points leagues without swings; then the route, private leagues and bad input |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, an update reading one page down to the transaction it holds (the whole page, for claims settled late) and every page when it holds none Yahoo knows, and the routes, saying when to merge and when to replace |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |
@@ -2244,6 +2389,13 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   (about a minute) and keeps the lineups per device; a second device reads them
   again. Points leagues get bench totals but no swaps.
 - **Season to date is closed until 2026-10-14**, by design (*Stat Sourcing*).
+- **Transaction Results' counterfactual is a model**: it assumes the dropped
+  player would have started in any open spot he fits, and that a benched
+  teammate who played would have covered a pickup's start otherwise. Managers
+  are not that diligent, and nothing models a different move instead.
+- **Accounts split before 10/5/2026 keep their older copies** until deleted
+  from the account modal. Every device uses the newest copy, so planned moves
+  or lineups entered only in an older one are not shown until it is opened.
 - **Combined's k was measured against a stand-in prior** (no age curve, no
   goalie regression), so it trusts the season slightly sooner than the real
   projections deserve. Storing birthdates in the historic tables would let

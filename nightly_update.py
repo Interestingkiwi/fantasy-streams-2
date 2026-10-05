@@ -10,7 +10,8 @@ six windows, in that order - the team windows are rolled up from games that
 have to be in already. Then `game_lines` works out lines and power-play units
 from the shift charts of every game in the look-back that has none - last, so
 a shift chart that is not posted yet costs nothing but the lines, which the
-next night picks up.
+next night picks up. Finally ESPN's injury report replaces yesterday's
+(`injury_report`); that step never fails the night.
 
 **It waits for the season, so it can be scheduled now.** Before the season's
 first game the job exits cleanly having done nothing, so the cron can be
@@ -35,7 +36,7 @@ alerting on non-zero does not fire every night before the season starts.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 10/1/2026
+Updated - 10/5/2026
 """
 
 import argparse
@@ -44,6 +45,7 @@ import sys
 from datetime import date, timedelta
 
 import game_lines
+import injury_report
 import scrape_game_results
 import scrape_team_stats
 from db import engine, text
@@ -123,6 +125,15 @@ def run(target, force=False):
 
     lines = game_lines.fill_missing(since, target)
     log.info("Lines: %d rows.", lines)
+
+    # ESPN's injury report, refreshed rather than left at the preseason
+    # scrape. Never fatal: a failure keeps yesterday's report, which the page
+    # dates, and an ESPN outage must not make the games look failed too.
+    try:
+        hurt, unmatched = injury_report.refresh()
+        log.info("Injuries: %d players, %d not matched.", hurt, len(unmatched))
+    except Exception:                                       # noqa: BLE001
+        log.exception("Injury report not refreshed - keeping the last one.")
     return True
 
 

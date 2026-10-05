@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 10/3/2026
+Updated - 10/5/2026
 """
 
 import logging
@@ -29,9 +29,12 @@ import daily_value as dv
 import game_lines
 import opponent_strength as ops
 import goalie_planning
+import injury_report
 import player_card
 import player_form
+import player_pool
 import stat_sourcing
+import transaction_results
 import week_planner
 import yahoo_matchup
 import yahoo_rosters
@@ -405,23 +408,6 @@ MAX_BENCH_DATES = 300
 MAX_BENCH_WEEKS = 40
 
 
-def _game_pool():
-    """
-    Everyone a Yahoo lineup could name: the projected pool, plus anyone who has
-    played a game this data covers but is not projected (a call-up, a rookie).
-    """
-    pool = fetch_all('SELECT "playerId", "fullName", "teamAbbrevs", "positionCode" FROM final_projections')
-    seen = {row["playerId"] for row in pool}
-    try:
-        extra = fetch_all(
-            'SELECT DISTINCT ON ("playerId") "playerId", "fullName", "teamAbbrev" AS "teamAbbrevs",'
-            ' COALESCE("positionCode", \'G\') AS "positionCode"'
-            ' FROM player_game_stats ORDER BY "playerId", "gameDate" DESC')
-    except Exception:                             # noqa: BLE001 - no games scraped yet
-        extra = []
-    return pool + [row for row in extra if row["playerId"] not in seen]
-
-
 @standalone_bp.route('/api/bench/lineups', methods=['POST'])
 def bench_from_lineups():
     """
@@ -435,55 +421,12 @@ def bench_from_lineups():
     """
     try:
         body = request.get_json(silent=True) or {}
-        lineups = body.get('lineups') or {}
-        dates = lineups.get('dates')
-        if not isinstance(dates, dict) or not dates:
-            raise BadRequest("No lineups yet - Update from Yahoo reads them.")
-        if len(dates) > MAX_BENCH_DATES:
-            raise BadRequest("That is more days than a season has.")
-        for when, teams in dates.items():
-            date.fromisoformat(str(when))
-            if not isinstance(teams, dict):
-                raise BadRequest("Lineups are {team: [[yahooId, slot]]} per date.")
-        weeks = []
-        for week in (body.get('weeks') or [])[:MAX_BENCH_WEEKS]:
-            weeks.append({"week": int(week["week"]), "start": date.fromisoformat(week["start"]).isoformat(),
-                          "end": date.fromisoformat(week["end"]).isoformat()})
-
-        codes, _unmapped = week_planner.categories_from_columns(body.get('categories'))
-        points = body.get('league_mode') == 'points'
-        info, unsupported = bench_lineups.league_info(codes, points=points)
-        players = {str(k): v for k, v in (lineups.get('players') or {}).items()
-                   if isinstance(v, list) and len(v) == 2}
-        try:
-            aliases = {r["alias_name"]: r["player_id"]
-                       for r in fetch_all("SELECT player_id, alias_name FROM player_aliases")}
-        except Exception:                         # noqa: BLE001 - the table is optional
-            aliases = {}
-        ids = bench_lineups.match_players(players, _game_pool(), aliases)
-        first, last = min(dates), max(dates)
-        try:
-            rows = fetch_all('SELECT * FROM player_game_stats WHERE "gameDate" BETWEEN :a AND :b'
-                             ' AND "playerId" = ANY(:ids)',
-                             {"a": first, "b": last, "ids": list(set(ids.values()))})
-        except Exception:                         # noqa: BLE001 - no games scraped yet
-            rows = []
-        lines = {(r["playerId"], r["gameDate"]): bench_lineups.game_line(r) for r in rows}
-
-        days = bench_lineups.build_days({**lineups, "players": players}, ids, lines)
-        built = bench_lineups.build_weeks(weeks, lineups, ids, lines,
-                                          yahoo_league_api.today().isoformat(), bench_points.NOT_STARTING)
-        result = bench_points.summarise(info, days, built)
-        names = {str(k): str(v) for k, v in (body.get('names') or {}).items()}
-        result["teams"] = {**result["teams"], **names}
-        # [name, NHL team, positions], as the public path gives them
-        result["players"] = {}
-        for yahoo_id, (name, info_text) in players.items():
-            team, positions = bench_lineups.split_info(info_text)
-            result["players"][yahoo_id] = [name, team, ",".join(positions)]
-        return jsonify({"status": "success", "source": "browser", "asOf": last,
-                        "unsupported": unsupported,
-                        "unmatched": sorted(players[k][0] for k in players if k not in ids),
+        season = _private_season(body)
+        result = bench_points.summarise(season["info"], season["days"], season["weeks"])
+        result["teams"] = {**result["teams"], **season["names"]}
+        result["players"] = season["players"]
+        return jsonify({"status": "success", "source": "browser", "asOf": season["asOf"],
+                        "unsupported": season["unsupported"], "unmatched": season["unmatched"],
                         **result})
     except BadRequest as exc:
         return _error(str(exc), 400)
@@ -491,6 +434,178 @@ def bench_from_lineups():
         return _error(f"Those lineups could not be read: {exc}", 400)
     except Exception as exc:                      # noqa: BLE001
         log.exception("Bench points from lineups failed.")
+        return _error(str(exc), 500)
+
+
+def _game_lines(nhl_ids, first, last):
+    """{(NHL id, date): Yahoo-coded game line} from `player_game_stats`."""
+    if not nhl_ids:
+        return {}
+    try:
+        rows = fetch_all('SELECT * FROM player_game_stats WHERE "gameDate" BETWEEN :a AND :b'
+                         ' AND "playerId" = ANY(:ids)',
+                         {"a": first, "b": last, "ids": list(set(nhl_ids))})
+    except Exception:                             # noqa: BLE001 - no games scraped yet
+        rows = []
+    return {(r["playerId"], r["gameDate"]): bench_lineups.game_line(r) for r in rows}
+
+
+def _private_season(body):
+    """
+    A private league's season in the shapes `yahoo_league_api.season` gives a
+    public one, from the lineups the bookmarklet read and our own game data:
+    {info, days, weeks, ids, lines, players, names, asOf, unsupported,
+    unmatched}. Shared by bench points and transaction results. Raises
+    BadRequest for lineups that are not lineups.
+    """
+    lineups = body.get('lineups') or {}
+    dates = lineups.get('dates')
+    if not isinstance(dates, dict) or not dates:
+        raise BadRequest("No lineups yet - Update from Yahoo reads them.")
+    if len(dates) > MAX_BENCH_DATES:
+        raise BadRequest("That is more days than a season has.")
+    for when, teams in dates.items():
+        date.fromisoformat(str(when))
+        if not isinstance(teams, dict):
+            raise BadRequest("Lineups are {team: [[yahooId, slot]]} per date.")
+    weeks = []
+    for week in (body.get('weeks') or [])[:MAX_BENCH_WEEKS]:
+        weeks.append({"week": int(week["week"]), "start": date.fromisoformat(week["start"]).isoformat(),
+                      "end": date.fromisoformat(week["end"]).isoformat()})
+
+    codes, _unmapped = week_planner.categories_from_columns(body.get('categories'))
+    info, unsupported = bench_lineups.league_info(codes, points=body.get('league_mode') == 'points')
+    players = {str(k): v for k, v in (lineups.get('players') or {}).items()
+               if isinstance(v, list) and len(v) == 2}
+    ids = bench_lineups.match_players(players, player_pool.pool(), player_pool.aliases())
+    first, last = min(dates), max(dates)
+    lines = _game_lines(ids.values(), first, last)
+
+    days = bench_lineups.build_days({**lineups, "players": players}, ids, lines)
+    built = bench_lineups.build_weeks(weeks, lineups, ids, lines,
+                                      yahoo_league_api.today().isoformat(), bench_points.NOT_STARTING)
+    # [name, NHL team, positions], as the public path gives them
+    named = {}
+    for yahoo_id, (name, info_text) in players.items():
+        team, positions = bench_lineups.split_info(info_text)
+        named[yahoo_id] = [name, team, ",".join(positions)]
+    return {"info": info, "days": days, "weeks": built, "ids": ids, "lines": lines,
+            "players": named, "asOf": last, "unsupported": unsupported,
+            "names": {str(k): str(v) for k, v in (body.get('names') or {}).items()},
+            "unmatched": sorted(players[k][0] for k in players if k not in ids)}
+
+
+MAX_TRANSACTIONS = 5000
+
+
+def _posted_transactions(body):
+    """The page's stored transactions ({transactions, players}), checked:
+    (transactions, {yahooId: [name, nhlTeam, positions]})."""
+    saved = body.get('transactions') or {}
+    if not isinstance(saved, dict):
+        raise BadRequest("Send the stored transactions as they were scraped.")
+    transactions = saved.get('transactions') or []
+    if not isinstance(transactions, list) or len(transactions) > MAX_TRANSACTIONS:
+        raise BadRequest("Those are not a season's transactions.")
+    clean = []
+    for t in transactions:
+        if not isinstance(t, dict) or not isinstance(t.get('moves'), list):
+            continue
+        moves = [[str(m[0]), str(m[1]) if m[1] is not None else None, str(m[2]) if m[2] is not None else None]
+                 for m in t['moves'] if isinstance(m, list) and len(m) == 3]
+        try:
+            time_value = int(t['time']) if t.get('time') else None
+        except (TypeError, ValueError):
+            time_value = None
+        clean.append({"type": str(t.get('type') or ''), "time": time_value, "moves": moves})
+    players = {str(k): [str(x or '') for x in v[:3]] for k, v in (saved.get('players') or {}).items()
+               if isinstance(v, list) and len(v) >= 3}
+    return clean, players
+
+
+def _dropped_lines(dropped, players, known_ids, first, last):
+    """
+    ({yahooId: {date: game line}}, unmatched names) for the dropped players:
+    their NHL games over the season so far, the counterfactual half of a move.
+    `known_ids` are Yahoo -> NHL matches already made (a private league's
+    lineups); the rest are matched here by name, team and positions.
+    """
+    ids = {k: v for k, v in known_ids.items() if k in dropped}
+    wanted = {k: [players[k][0], f"{players[k][1]} - {players[k][2]}"]
+              for k in dropped if k not in ids and k in players}
+    if wanted:
+        ids.update(bench_lineups.match_players(wanted, player_pool.pool(), player_pool.aliases()))
+    lines = _game_lines(ids.values(), first, last) if first and last else {}
+    yahoo_of = {}
+    for yahoo_id, nhl_id in ids.items():
+        yahoo_of.setdefault(nhl_id, []).append(yahoo_id)
+    outside = {k: {} for k in ids}
+    for (nhl_id, when), line in lines.items():
+        for yahoo_id in yahoo_of.get(nhl_id, []):
+            outside[yahoo_id][when] = line
+    unmatched = sorted(players.get(k, [k])[0] for k in dropped if k not in ids)
+    return outside, unmatched
+
+
+@standalone_bp.route('/api/transaction-results', methods=['POST'])
+def transaction_results_view():
+    """
+    Transaction Results for the season so far: each pickup's starts and line,
+    the dropped player's line on the nights a spot he fits was open, and the
+    weeks a move won or cost a category (see `transaction_results`).
+
+    Body: transactions (the page's stored scrape: {transactions, players}),
+    team (the Yahoo team number whose moves carry their nights), slots (the
+    league's starting slots, used where Yahoo's settings are not read), and
+    league_id. A public league's days and weeks are read through
+    `yahoo_league_api`, from its cache; a private one answers 403 `private`,
+    and the page sends `lineups` and the rest of the bench lineups request
+    instead (as `/api/bench/lineups` takes them).
+    """
+    test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
+    try:
+        body = request.get_json(silent=True) or {}
+        transactions, tx_players = _posted_transactions(body)
+        if (body.get('lineups') or {}).get('dates'):
+            loaded = _private_season(body)
+            info, days, weeks = loaded["info"], loaded["days"], loaded["weeks"]
+            players = {**loaded["players"], **tx_players}
+            known, names, source = loaded["ids"], loaded["names"], "browser"
+            league = {}
+        else:
+            info, days, weeks = yahoo_league_api.season(body.get('league_id'), test=test)
+            players = {}
+            for d in days:
+                players.update(d.get("players") or {})
+            players.update(tx_players)
+            known, names, source = {}, {}, "api"
+            league = {"name": info.get("name"), "season": info.get("season")}
+
+        slots = {k: v for k, v in (info.get("slots") or {}).items() if k not in NON_STARTING_SLOTS}
+        slots = slots or {k: v for k, v in _clean_slots(body.get('slots')).items()
+                          if k not in NON_STARTING_SLOTS}
+        dropped = {m["dropped"] for m in transaction_results.pair(transactions) if m["dropped"]}
+        dates = [d["date"] for d in days]
+        outside, unmatched = _dropped_lines(dropped, players, known,
+                                            min(dates) if dates else None, max(dates) if dates else None)
+        team = str(body.get('team') or '') or None
+        result = transaction_results.results(info, days, weeks, transactions, players,
+                                             outside, slots, detail_team=team)
+        result["teams"] = {**result["teams"], **names}
+        return jsonify({"status": "success", "source": source, "test": test and source == "api",
+                        "league": league, "unmatched": unmatched, **result})
+    except yahoo_rosters.RosterPageError as exc:
+        if exc.code == 'private':
+            exc = yahoo_rosters.RosterPageError(
+                'private', "This league is private, so its lineups are read through the bookmarklet: "
+                           "use Update from Yahoo at the top of the page.")
+        return _roster_error(exc)
+    except BadRequest as exc:
+        return _error(str(exc), 400)
+    except (KeyError, TypeError, ValueError) as exc:
+        return _error(f"Those transactions could not be read: {exc}", 400)
+    except Exception as exc:                      # noqa: BLE001
+        log.exception("Transaction results failed.")
         return _error(str(exc), 500)
 
 
@@ -777,41 +892,26 @@ def plan_week():
 
 def _injuries():
     """
-    {playerId: {status, detail, returnDate}} from the preseason injury scrape.
+    ({playerId: {status, type, returnDate, date, stale}}, as of) from ESPN's
+    injury report, which the nightly job refreshes (`injury_report`).
 
     Shown as a badge and offered as a filter, never applied to a projection -
-    `apply_injury_adjustments` has already done that. The feed goes stale (see
-    *The projection pipeline*), so the page says how old it is rather than
-    presenting it as today's news.
+    `apply_injury_adjustments` has already done that. A note older than the
+    player's last game is marked stale, and the page says how old the report
+    is rather than presenting it as today's news.
     """
     try:
-        rows = fetch_all('SELECT "playerId", "injuryStatus", "injuryDetails", "injuryDate"'
-                         ' FROM current_injuries')
+        rows = fetch_all('SELECT * FROM current_injuries')
     except Exception:                             # noqa: BLE001 - the table is optional
         return {}, None
-    found, newest = {}, None
-    for row in rows:
-        player_id = row.get("playerId")
-        if player_id is None:
-            continue
-        details = str(row.get("injuryDetails") or "")
-        found[str(int(player_id))] = {
-            "status": row.get("injuryStatus"),
-            "type": _between(details, "'type': '", "'"),
-            "returnDate": _between(details, "'returnDate': '", "'"),
-        }
-        seen = str(row.get("injuryDate") or "")[:10]
-        newest = max(newest, seen) if newest else seen
-    return found, newest
-
-
-def _between(text_value, prefix, suffix):
-    start = text_value.find(prefix)
-    if start < 0:
-        return None
-    start += len(prefix)
-    end = text_value.find(suffix, start)
-    return text_value[start:end] if end > start else None
+    ids = [int(r["playerId"]) for r in rows if r.get("playerId") is not None]
+    try:
+        last = {str(r["playerId"]): r["last"] for r in fetch_all(
+            'SELECT "playerId", max("gameDate") AS last FROM player_game_stats'
+            ' WHERE "playerId" = ANY(:ids) GROUP BY "playerId"', {"ids": ids})} if ids else {}
+    except Exception:                             # noqa: BLE001 - no games scraped yet
+        last = {}
+    return injury_report.by_player(rows, last)
 
 
 # The counting stats a week of goaltending is judged on. GAA and SVpct are

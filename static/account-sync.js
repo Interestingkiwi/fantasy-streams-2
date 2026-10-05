@@ -30,9 +30,15 @@
  * and are offered to the account on sign-in; keys owned by another account are
  * never carried into this one.
  *
+ * **One Yahoo league is one league in an account.** Signing in where the
+ * browser already holds a league the account has opens the account's copy
+ * (or, if asked, replaces it with this browser's) rather than saving a second
+ * - which is how each device used to end up on its own copy, and why a scrape
+ * on one never reached the other. See account_routes.active_league.
+ *
  * Author - Jason Druckenmiller
  * Created - 9/29/2026
- * Updated - 9/29/2026
+ * Updated - 10/5/2026
  */
 (function () {
     'use strict';
@@ -50,6 +56,9 @@
     const OWNER = 'fs_accountOwner';
     const PENDING = 'fs_accountPending';
     const SAVE_DELAY_MS = 1500;
+    // A keepalive request's body is capped at 64 KB, and one over it is refused
+    // outright - a season of transactions takes a league past that
+    const KEEPALIVE_BYTES = 60 * 1024;
 
     const boot = window.FS_ACCOUNT || { signedIn: false };
     const $ = id => document.getElementById(id);
@@ -109,6 +118,15 @@
         return players || (Array.isArray(stats) && stats.length > 0);
     }
 
+    // The Yahoo League ID a league names, as account_routes.yahoo_league reads
+    // it: kept as typed, so a bare number or a pasted league URL
+    function yahooLeague(raw) {
+        const text = String(parse(raw ?? '') ?? '').trim();
+        if (/^\d{1,10}$/.test(text)) return text;
+        const found = text.match(/\/hockey\/(?:\d{4}\/hockey\/)?(\d{1,10})(?:\/|$)/);
+        return found ? found[1] : null;
+    }
+
     // A name for the league list, from what the league says about itself
     function leagueName(state) {
         const league = parse(state.fs_leagueTeams);
@@ -120,12 +138,16 @@
     }
 
     async function send(method, url, body, options = {}) {
+        const payload = body === undefined ? undefined : JSON.stringify(body);
+        // Too big for keepalive: send it plainly. A page only being hidden (a
+        // phone switching apps) is still alive and finishes it.
+        const small = !payload || new Blob([payload]).size < KEEPALIVE_BYTES;
         const response = await fetch(url, {
             method,
             credentials: 'same-origin',
-            keepalive: !!options.keepalive,
+            keepalive: !!options.keepalive && small,
             headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-            body: body === undefined ? undefined : JSON.stringify(body),
+            body: payload,
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || data.status !== 'success') {
@@ -278,6 +300,9 @@
         window.addEventListener('pagehide', leaving);
         // Restored from the back/forward cache: the page is as old as when it was left
         window.addEventListener('pageshow', event => { if (event.persisted) checkFresh(); });
+        // A desktop window brought back to the front without its tab ever being
+        // hidden - beside the phone that just scraped - checks too
+        window.addEventListener('focus', checkFresh);
     }
 
     // ------------------------------------------------------------------ modal
@@ -322,13 +347,24 @@
     function renderLeagues() {
         const list = $('account-leagues');
         list.replaceChildren();
+        // Copies of one Yahoo league saved before 10/5/2026, one per device:
+        // every device now opens the newest (the list is newest first), and the
+        // rest are kept, and said to be older copies, until deleted
+        const newest = new Map();
+        (boot.leagues || []).forEach(league => {
+            if (league.yahoo && !newest.has(league.yahoo)) newest.set(league.yahoo, league.id);
+        });
+        const older = league => Boolean(league.yahoo && newest.get(league.yahoo) !== league.id);
+        $('account-copies').classList.toggle('hidden', !(boot.leagues || []).some(older));
         (boot.leagues || []).forEach(league => {
             const row = template.cloneNode(true);
             const open = league.id === boot.league;
             row.classList.remove('hidden');
             row.dataset.league = league.id;
             row.querySelector('.account-league-name').textContent = league.name || 'Unnamed league';
-            row.querySelector('.account-league-meta').textContent = when(league.updatedAt);
+            row.querySelector('.account-league-meta').textContent = [
+                older(league) ? `Older copy of League ${league.yahoo}` : '', when(league.updatedAt),
+            ].filter(Boolean).join(' · ');
             row.querySelector('.account-league-current').classList.toggle('hidden', !open);
             row.querySelector('.account-league-open').classList.toggle('hidden', open);
             list.appendChild(row);
@@ -387,7 +423,22 @@
         busy(true);
         try {
             const data = await send('POST', `/account/api/${kind}`, { username, password });
-            if (!owner && hasLeague(local)) {
+            const yahoo = yahooLeague(local.fs_yahooLeagueId);
+            // Newest first, so the copy every other device is using
+            const same = yahoo ? (data.leagues || []).find(league => league.yahoo === yahoo) : null;
+            if (!owner && hasLeague(local) && same) {
+                // The account already has this Yahoo league. Saving the browser's
+                // copy as another league is what left each device on its own
+                // copy, so one of the two is kept: the account's, by default.
+                const saved = when(same.updatedAt);
+                const useAccount = window.confirm(
+                    `Your account already has League ${yahoo}${saved ? ` (${saved})` : ''}.\n\n`
+                    + 'OK uses your account’s copy in this browser too, so every device shows the same league. '
+                    + 'Cancel keeps this browser’s copy instead, replacing the one in your account.');
+                // No base: replacing the account's copy is the point
+                if (!useAccount) await send('PUT', `/account/api/leagues/${same.id}`, { state: local, name: leagueName(local) });
+                await send('POST', `/account/api/leagues/${same.id}/open`, { pin: false });
+            } else if (!owner && hasLeague(local)) {
                 // Entered signed out, so it belongs to nobody yet
                 const keep = !data.leagues.length || window.confirm(
                     'This browser has a league that is not in your account yet.\n\n'

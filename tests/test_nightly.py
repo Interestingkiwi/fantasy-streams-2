@@ -1,5 +1,6 @@
 """
-Tests for the nightly update's season gate, and the order of its steps.
+Tests for the nightly update's season gate, and the order of its steps -
+including the injury report, which runs last and can never fail the night.
 
 The gate is what lets the cron be created months before it has anything to do,
 so the cases that matter are the boundaries: silent before opening night, live
@@ -12,7 +13,7 @@ they fetch.
 
 Author - Jason Druckenmiller
 Created - 9/8/2026
-Updated - 10/1/2026
+Updated - 10/5/2026
 """
 
 import os
@@ -77,14 +78,25 @@ def stub_lines(since, until):
     return 0
 
 
+def stub_injuries():
+    calls.append(("injuries",))
+    return 100, []
+
+
+def failing_injuries():
+    calls.append(("injuries",))
+    raise nightly.injury_report.InjuryFeedError("ESPN answered 403")
+
+
 original = (nightly.scrape_game_results.run, nightly.scrape_team_stats.run,
             nightly.season_first_game, nightly.scrape_game_results.fill_missing,
-            nightly.game_lines.fill_missing)
+            nightly.game_lines.fill_missing, nightly.injury_report.refresh)
 try:
     nightly.scrape_game_results.run = stub_results
     nightly.scrape_team_stats.run = stub_teams
     nightly.scrape_game_results.fill_missing = stub_fill
     nightly.game_lines.fill_missing = stub_lines
+    nightly.injury_report.refresh = stub_injuries
     nightly.season_first_game = lambda: OPENING
 
     calls.clear()
@@ -93,11 +105,11 @@ try:
 
     calls.clear()
     did = nightly.run(date(2026, 9, 20), force=True)
-    check("--force overrides the gate", did is True and len(calls) == 3, calls)
+    check("--force overrides the gate", did is True and len(calls) == 4, calls)
 
     calls.clear()
     did = nightly.run(OPENING)
-    check("opening night runs results, team stats and lines", did is True and len(calls) == 3, calls)
+    check("opening night runs results, team stats, lines and injuries", did is True and len(calls) == 4, calls)
     check("results are scraped for exactly that one night",
           calls[0] == ("results", "2026-09-29", "2026-09-29"), calls[0])
     check("results come before team stats, which roll up from them",
@@ -107,8 +119,19 @@ try:
     check("and earlier nights missing a column are looked for over a short look-back",
           fill_windows and fill_windows[-1] == (OPENING - nightly.timedelta(days=14), OPENING),
           fill_windows)
-    check("lines come last, over the same look-back - a shift chart not posted yet costs only the lines",
+    check("lines follow, over the same look-back - a shift chart not posted yet costs only the lines",
           calls[2] == ("lines", OPENING - nightly.timedelta(days=14), OPENING), calls)
+    check("and ESPN's injury report is refreshed last", calls[3] == ("injuries",), calls)
+
+    nightly.injury_report.refresh = failing_injuries
+    calls.clear()
+    try:
+        did, raised = nightly.run(OPENING), None
+    except Exception as exc:                                # noqa: BLE001
+        did, raised = False, exc
+    check("an injury report ESPN refuses never fails the night - the games are in",
+          did is True and raised is None and calls[-1] == ("injuries",), (did, raised))
+    nightly.injury_report.refresh = stub_injuries
 
     # A missing schedule must not raise - the cron would alert nightly.
     nightly.season_first_game = lambda: None
@@ -118,7 +141,7 @@ try:
 finally:
     (nightly.scrape_game_results.run, nightly.scrape_team_stats.run,
      nightly.season_first_game, nightly.scrape_game_results.fill_missing,
-     nightly.game_lines.fill_missing) = original
+     nightly.game_lines.fill_missing, nightly.injury_report.refresh) = original
 
 
 # --------------------------------------------------------------------------

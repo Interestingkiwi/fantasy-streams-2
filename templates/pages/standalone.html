@@ -414,8 +414,17 @@
         </section>
         </div>
 
-        <!-- Season History: what has happened in the league, starting with its transactions -->
+        <!-- Season History: what has happened in the league. One section at a
+             time - a future one is a button here, a panel below and an entry
+             in HISTORY_TABS. -->
         <div id="tab-history" role="tabpanel" class="tab-panel hidden flex flex-col gap-4 sm:gap-6">
+        <div class="flex gap-5 overflow-x-auto whitespace-nowrap border-b border-gray-700" role="tablist" aria-label="Season History">
+            <button type="button" role="tab" class="sub-tab" data-history="transactions" aria-controls="history-transactions" aria-selected="true">Transactions</button>
+            <button type="button" role="tab" class="sub-tab" data-history="results" aria-controls="history-results" aria-selected="false">Transaction Results</button>
+            <button type="button" role="tab" class="sub-tab" data-history="bench" aria-controls="history-bench" aria-selected="false">Bench Points</button>
+        </div>
+
+        <div id="history-transactions" role="tabpanel" class="history-panel flex flex-col gap-4 sm:gap-6">
         <div class="bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-700 flex flex-wrap items-end gap-x-4 gap-y-2">
             <div class="flex-1 min-w-[14rem]">
                 <h2 class="text-lg font-semibold text-white">Transactions</h2>
@@ -461,8 +470,45 @@
             </div>
             <div id="tx-body" class="overflow-x-auto"></div>
         </section>
+        </div>
+
+        <!-- Transaction Results: what each pickup did, what the player dropped
+             for him would have done, and the weeks a move decided -->
+        <div id="history-results" role="tabpanel" class="history-panel hidden flex flex-col gap-4 sm:gap-6">
+        <section id="results-section" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="flex-1 min-w-[14rem]">
+                    <h2 class="text-lg font-semibold text-white">Transaction Results</h2>
+                    <p id="results-status" class="text-xs text-gray-500 mt-0.5">What each pickup did once he arrived, what the player dropped for him would have done, and the weeks a move decided.</p>
+                </div>
+                <button id="results-load" type="button" class="column-toggle">Load results</button>
+            </div>
+            <div id="results-controls" class="hidden p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="w-full sm:w-auto">
+                    <label for="results-week" class="block mb-1 text-xs font-medium text-gray-400">Show</label>
+                    <select id="results-week" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="results-team" class="block mb-1 text-xs font-medium text-gray-400">Team</label>
+                    <select id="results-team" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+            </div>
+            <div id="results-body" class="text-sm"></div>
+            <details class="border-t border-gray-700 px-3 sm:px-4 py-2 text-xs text-gray-500">
+                <summary class="cursor-pointer py-1 text-gray-400">How this is worked out</summary>
+                <ul class="mt-1 mb-2 space-y-1 list-disc pl-4">
+                    <li>A move is a pickup and the player dropped for him &mdash; one add/drop, or a drop and an add by the same team within a day. Trades are left out.</li>
+                    <li>The pickup counts from his first night on the roster until he left, and only on nights Yahoo had him in a starting slot and he played. Nights he played on your bench count as games, not production.</li>
+                    <li>The dropped player counts on the same nights, from NHL game data, only when a spot he could fill was open: the pickup&rsquo;s own starting slot, an empty slot, or a starter&rsquo;s who had no game. Otherwise he would have sat.</li>
+                    <li>A week&rsquo;s swing takes the pickup&rsquo;s line off the real week totals, puts the dropped player&rsquo;s on, and scores every category against that week&rsquo;s opponent again. A tie counts half a category.</li>
+                    <li>A start the dropped player could not have made is not left empty: a teammate who played on your bench that night and could fill the slot takes it, and his line counts in the week without the move.</li>
+                </ul>
+            </details>
+        </section>
+        </div>
 
         <!-- Left on the bench: what benched players scored, and the swaps that would have changed a week -->
+        <div id="history-bench" role="tabpanel" class="history-panel hidden flex flex-col gap-4 sm:gap-6">
         <section id="bench-section" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
                 <div class="flex-1 min-w-[14rem]">
@@ -483,6 +529,7 @@
             </div>
             <div id="bench-body" class="text-sm"></div>
         </section>
+        </div>
         </div>
 
     </main>
@@ -613,6 +660,8 @@
             banked: 'fs_standaloneBanked',
             yahooLeagueId: 'fs_yahooLeagueId',
             tab: 'fs_standaloneTab',
+            // Season History's open section - per device, like the tab
+            historyTab: 'fs_historyTab',
             lineupEdits: 'fs_lineupEdits',
             goalieStats: 'fs_standaloneGoalieStats',
             transactions: 'fs_leagueTransactions',
@@ -664,11 +713,7 @@
                 // when the tab is first opened rather than on every plan.
                 if (tab.dataset.tab === 'free-agents') ensurePool();
                 if (tab.dataset.tab === 'goalies') loadGoalies();
-                if (tab.dataset.tab === 'history') {
-                    renderTransactions();
-                    // A second request, so fetched when the tab is first opened
-                    if (!benchData) loadBench();
-                }
+                if (tab.dataset.tab === 'history') showHistory();
             }));
         window.addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
 
@@ -2480,6 +2525,7 @@
                 transactions,
             };
             write(KEYS.transactions, saved);
+            invalidateResults(false);
             const n = transactions.length;
             showTxPanel(`<p class="text-gray-300">${previous ? `${fresh.toLocaleString()} new; ` : 'Read '}`
                 + `${n.toLocaleString()} transaction${n === 1 ? '' : 's'}${previous ? ' in all' : ' from Yahoo'}`
@@ -3056,6 +3102,424 @@
             $('bench-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
         });
 
+        // --- Season History: transaction results -----------------------------
+        // Worked out by the server (transaction_results.py) from the stored
+        // transactions, the league's days and weeks - Yahoo's for a public
+        // league, the bookmarklet's lineups for a private one - and our NHL
+        // game data for the dropped players. Held here, not stored, like bench
+        // points. One team's moves come with their lines and nights (the team
+        // shown, else yours); the rest of the league's only with the weeks they
+        // changed, which is all the league-wide views need.
+        let resultsData = null;
+        let resultsLoading = null;
+        const RESULT_VERBS = { win: 'Won', tie: 'Tied', loss: 'Lost' };
+        const RESULT_NOUNS = { win: 'a win', tie: 'a tie', loss: 'a loss' };
+        const SPOT_WORDS = { own: 'in the pickup’s', empty: 'in an empty', idle: 'in an idle starter’s' };
+        const myYahooTeam = () => String(teamById(league.mine)?.yahooTeamId || '');
+        const resultsTeam = id => resultsData?.teams?.[id]
+            || league.teams.find(t => String(t.yahooTeamId) === String(id))?.name || `Team ${id}`;
+        const shareText = n => (n > 0 ? '+' : n < 0 ? '−' : '') + (Math.abs(n) % 1 ? Math.abs(n).toFixed(1) : Math.abs(n));
+        const moveNet = m => (m.weeks || []).reduce((n, w) => n + (w.net || 0), 0);
+        const recordText3 = r => (r ? `${r[0]}-${r[1]}-${r[2]}` : '');
+        const matchupOf = r => (r[0] > r[1] ? 'win' : r[0] < r[1] ? 'loss' : 'tie');
+
+        function resultsPlayer(id) {
+            if (!id) return '<span class="text-gray-500">nobody</span>';
+            const [name, nhl, positions] = resultsData.players[id] || ['Unknown player', '', ''];
+            const detail = [nhl, positions].filter(Boolean).join(' · ');
+            return `<span class="text-white">${playerLink(resultsData.players[id] ? nhlIdFor(name, nhl, positions) : null, esc(name))}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
+        }
+
+        function resultsLine(stats) {
+            const parts = resultsData.categories.filter(c => stats?.[c.id])
+                .map(c => `${benchValue(c.id, stats[c.id])} ${c.name}`);
+            return parts.length ? parts.join(' · ') : 'nothing in your categories';
+        }
+
+        function netBadge(n) {
+            if (!n) return '';
+            const tone = n > 0 ? 'bg-emerald-700' : 'bg-red-800';
+            return `<span class="text-xs font-semibold px-1.5 py-0.5 rounded ${tone} text-white whitespace-nowrap">${shareText(n)} categor${Math.abs(n) === 1 ? 'y' : 'ies'}</span>`;
+        }
+
+        // "Won HIT (without it, a loss)" for each category a week's swing moved
+        function weekOutcomes(w) {
+            const one = ([id, real, other], tone) => `<span class="${tone}">${RESULT_VERBS[real]} ${esc(resultsData.categories.find(c => c.id === id)?.name || id)}</span> <span class="text-gray-500">(without it, ${RESULT_NOUNS[other]})</span>`;
+            return [...(w.gains || []).map(g => one(g, 'text-green-400')), ...(w.costs || []).map(c => one(c, 'text-red-300'))].join(' · ');
+        }
+
+        function weekLine(w) {
+            const flip = w.with && w.without && matchupOf(w.with) !== matchupOf(w.without)
+                ? ` <span class="text-amber-300 font-medium">Turned ${RESULT_NOUNS[matchupOf(w.without)]} into ${RESULT_NOUNS[matchupOf(w.with)]}.</span>` : '';
+            return `<p class="text-xs leading-relaxed"><span class="text-gray-400">Week ${w.week}${w.opponent ? ` vs ${esc(resultsTeam(w.opponent))}` : ''}:</span> ${weekOutcomes(w)}`
+                + ` <span class="text-gray-500">&middot; ${recordText3(w.with)} with it, ${recordText3(w.without)} without.</span>${flip}</p>`;
+        }
+
+        // "Waiver claim, Oct 6" and anything a reader needs to know about how
+        // the move was put together
+        function moveHeading(m) {
+            const kind = !m.added ? 'Drop' : m.claim ? 'Waiver claim' : 'Pickup';
+            const notes = [
+                m.paired === 'nearby' ? `dropped separately${m.dropDate ? ` on ${shortDate(m.dropDate)}` : ''}` : '',
+                m.added && !m.dropped ? 'nothing dropped' : '',
+                !m.added ? 'nothing added - judged until the next pickup' : '',
+            ].filter(Boolean);
+            return `<span class="font-medium text-white">${esc(shortDate(m.date))}</span> &middot; ${kind}${notes.length ? ` <span class="text-xs text-gray-500">(${esc(notes.join('; '))})</span>` : ''}`;
+        }
+
+        // Added, dropped and the difference, in the league's categories - a
+        // goalie's or a skater's when both players are one, all of them otherwise
+        const isGoalieId = id => String(resultsData.players[id]?.[2] || '').split(',').includes('G');
+        function comparisonTable(m) {
+            const kinds = new Set([m.added?.player, m.dropped?.player].filter(Boolean).map(isGoalieId));
+            const cats = kinds.size === 1
+                ? resultsData.categories.filter(c => c.goalie === [...kinds][0]) : resultsData.categories;
+            const a = m.added?.totals;
+            const d = m.dropped?.totals;
+            const cell = (stats, c) => {
+                const v = stats?.[c.id];
+                return `<td class="px-2 py-1 text-right ${v ? 'text-gray-200' : 'text-gray-600'}">${v != null ? esc(benchValue(c.id, v)) : (c.ratio ? '' : '0')}</td>`;
+            };
+            const diff = c => {
+                const left = a?.[c.id] ?? (c.ratio ? null : 0);
+                const right = d?.[c.id] ?? (c.ratio ? null : 0);
+                if (left == null || right == null) return '<td class="px-2 py-1"></td>';
+                const n = left - right;
+                if (Math.abs(n) < 1e-9) return '<td class="px-2 py-1 text-right text-gray-600">0</td>';
+                const good = (n > 0) === c.higherBetter;
+                const text = benchValue(c.id, c.ratio ? Math.abs(n) : Math.abs(Math.round(n * 1000) / 1000));
+                return `<td class="px-2 py-1 text-right font-medium ${good ? 'text-green-400' : 'text-red-300'}">${n > 0 ? '+' : '−'}${esc(text)}</td>`;
+            };
+            const rows = [
+                a ? `<tr><th class="col-sticky px-2 py-1 text-left font-medium text-gray-400 whitespace-nowrap">Pickup</th>${cats.map(c => cell(a, c)).join('')}</tr>` : '',
+                d ? `<tr><th class="col-sticky px-2 py-1 text-left font-medium text-gray-400 whitespace-nowrap">Dropped</th>${cats.map(c => cell(d, c)).join('')}</tr>` : '',
+                a && d ? `<tr class="border-t border-gray-700"><th class="col-sticky px-2 py-1 text-left font-medium text-gray-300 whitespace-nowrap">Difference</th>${cats.map(diff).join('')}</tr>` : '',
+            ].join('');
+            return `
+                <div class="overflow-x-auto rounded-md border border-gray-700">
+                    <table class="data-table w-full text-xs">
+                        <thead class="bg-gray-900 text-gray-400 uppercase">
+                            <tr><th class="col-sticky px-2 py-1"></th>${cats.map(c => `<th class="px-2 py-1 text-right font-medium">${esc(c.name)}</th>`).join('')}</tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+        }
+
+        function nightsHtml(m) {
+            const nights = m.nights || [];
+            if (!nights.length) return '';
+            const pickup = n => {
+                if (!n[1]) return '<span class="text-gray-600">&mdash;</span>';
+                const benched = ['BN', 'IR', 'IR+', 'NA'].includes(n[1]);
+                const slot = `<span class="${benched ? 'text-gray-500' : 'text-gray-200 font-medium'}">${esc(n[1])}</span>`;
+                const own = n[2] ? `${slot} &middot; <span class="${benched ? 'text-gray-500' : 'text-gray-300'}">${esc(resultsLine(n[2]))}</span>` : `${slot} &middot; <span class="text-gray-600">no game</span>`;
+                // Who would have had his start, had the dropped player not
+                const cover = n[6] ? `<div class="text-gray-500">without him, ${resultsPlayer(n[6][0])} from the bench: ${esc(resultsLine(n[6][1]))}</div>` : '';
+                return own + cover;
+            };
+            const dropped = n => {
+                if (!n[5]) return '<span class="text-gray-600">no game</span>';
+                return n[3]
+                    ? `<span class="text-gray-300">${esc(resultsLine(n[5]))}</span> <span class="text-xs text-gray-500">&middot; ${SPOT_WORDS[n[3]]} ${esc(n[4])}</span>`
+                    : `<span class="text-gray-500">${esc(resultsLine(n[5]))} &middot; no spot open</span>`;
+            };
+            return `
+                <details class="text-xs">
+                    <summary class="cursor-pointer py-1 text-gray-400">Night by night (${nights.length})</summary>
+                    <div class="overflow-x-auto mt-1 rounded-md border border-gray-700">
+                        <table class="data-table w-full text-left text-xs">
+                            <thead class="bg-gray-900 text-gray-400 uppercase">
+                                <tr><th class="px-2 py-1 font-medium">Night</th><th class="px-2 py-1 font-medium">Pickup</th><th class="px-2 py-1 font-medium">Dropped player</th></tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-700">
+                                ${nights.map(n => `<tr><td class="px-2 py-1 whitespace-nowrap text-gray-400">${esc(dayLabel(n[0]))}</td><td class="px-2 py-1">${pickup(n)}</td><td class="px-2 py-1">${dropped(n)}</td></tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </details>`;
+        }
+
+        function moveCard(m) {
+            const a = m.added;
+            const d = m.dropped;
+            const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+            const tenure = a ? (a.first
+                ? `on the roster ${shortDate(a.first)} – ${a.current ? 'now' : shortDate(a.last)} · started ${a.starts} of ${plural(a.games, 'game')}`
+                  + (a.covered ? ` · a teammate on the bench would have covered ${a.covered}` : '')
+                : 'not on the roster for a game yet') : '';
+            const now = d ? (d.nowOn ? (d.nowOn === m.team ? 'back on this team' : `now on ${resultsTeam(d.nowOn)}`) : 'on no team now') : '';
+            const since = d ? (d.unmatched ? 'not matched to NHL game data'
+                : `${plural(d.games, 'game')} ${a ? 'in that time' : 'since'}, ${d.open} with a spot open`) : '';
+            const weeksHtml = (m.weeks || []).map(weekLine).join('');
+            const noSwing = resultsData.swingsScored && !(m.weeks || []).length && (a?.starts || d?.open)
+                ? '<p class="text-xs text-gray-500">Changed no category in any week.</p>' : '';
+            return `
+                <li class="p-3 sm:px-4 flex flex-col gap-2">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <p class="text-gray-300">${moveHeading(m)}</p>
+                        ${netBadge(moveNet(m))}
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                        ${a ? `<div><p><span class="text-green-400 font-semibold">+</span> ${resultsPlayer(a.player)}</p><p class="text-xs text-gray-400">${esc(tenure)}</p></div>` : ''}
+                        ${d ? `<div><p><span class="text-red-300 font-semibold">&minus;</span> ${resultsPlayer(d.player)}</p><p class="text-xs text-gray-400">${esc([since, now].filter(Boolean).join(' · '))}</p></div>` : ''}
+                    </div>
+                    ${a?.totals || d?.totals ? comparisonTable(m) : ''}
+                    ${weeksHtml}${noSwing}
+                    ${nightsHtml(m)}
+                </li>`;
+        }
+
+        // One line per move, for the lists: who, for whom, and what it did -
+        // and whose, where the list is the whole league's
+        function moveSummary(m, w, showTeam = true) {
+            const who = `${m.added ? resultsPlayer(m.added.player) : 'nobody'} <span class="text-gray-500">for</span> ${m.dropped ? resultsPlayer(m.dropped.player) : 'nobody'}`;
+            const team = showTeam
+                ? `<button type="button" data-team="${esc(m.team)}" class="results-team-pick py-1 text-blue-400 hover:text-blue-300">${esc(resultsTeam(m.team))}</button>${m.team === myYahooTeam() ? ' <span class="text-xs text-gray-500">(you)</span>' : ''} <span class="text-xs text-gray-500">&middot;`
+                : '<span class="text-xs text-gray-500">Made';
+            return `
+                <li class="p-2 sm:px-3 flex flex-col gap-0.5">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <p class="text-gray-300">${team} ${esc(shortDate(m.date))}</span></p>
+                        ${netBadge(w ? w.net : moveNet(m))}
+                    </div>
+                    <p>${who}</p>
+                    ${(w ? [w] : m.weeks || []).map(weekLine).join('')}
+                </li>`;
+        }
+
+        const resultsList = items => `<ul class="divide-y divide-gray-700 border border-gray-700 rounded-md">${items.join('')}</ul>`;
+
+        function resultsLeagueSeason() {
+            const s = resultsData.season;
+            const mine = myYahooTeam();
+            const ids = Object.keys(s).sort((x, y) => s[y].net - s[x].net || s[y].moves - s[x].moves);
+            const cell = (n, tone = '') => `<td class="px-3 py-2 text-right ${n ? tone || 'text-gray-200' : 'text-gray-600'}">${n}</td>`;
+            const ranked = resultsData.moves.map(m => ({ m, net: moveNet(m) }));
+            const best = ranked.filter(r => r.net > 0).sort((x, y) => y.net - x.net).slice(0, 8);
+            const worst = ranked.filter(r => r.net < 0).sort((x, y) => x.net - y.net).slice(0, 5);
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-4">
+                    <div class="overflow-x-auto">
+                        <table class="data-table w-full text-left text-sm">
+                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                <tr>
+                                    <th class="col-sticky px-3 py-2 font-medium">Team</th>
+                                    <th class="px-3 py-2 font-medium text-right">Moves</th>
+                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Pickup starts</th>
+                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Drops&rsquo; open games</th>
+                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Categories won</th>
+                                    <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Cost</th>
+                                    <th class="px-3 py-2 font-medium text-right">Net</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-700">
+                                ${ids.map(id => `
+                                    <tr class="table-row-hover">
+                                        <td class="col-sticky px-3 py-2"><button type="button" data-team="${esc(id)}" class="results-team-pick text-left py-1 text-blue-400 hover:text-blue-300">${esc(resultsTeam(id))}</button>${id === mine ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}</td>
+                                        ${cell(s[id].moves)}${cell(s[id].starts)}${cell(s[id].dropGames)}
+                                        ${cell(s[id].gained, 'text-green-400')}${cell(s[id].lost, 'text-red-300')}
+                                        <td class="px-3 py-2 text-right font-semibold ${s[id].net > 0 ? 'text-green-400' : s[id].net < 0 ? 'text-red-300' : 'text-gray-600'}">${shareText(s[id].net)}</td>
+                                    </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="text-xs text-gray-500 -mt-2">Pickup starts: games the players a team picked up started for it. Drops&rsquo; open games: games the players it dropped would have filled an open spot. Categories won and cost: across every week, against having kept the dropped player. Select a team to see its moves.</p>
+                    ${resultsData.swingsScored ? `
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">The moves that mattered most</h3>
+                        ${best.length ? resultsList(best.map(r => moveSummary(r.m))) : '<p class="text-gray-400">No move has changed a category yet.</p>'}
+                    </div>
+                    ${worst.length ? `<div><h3 class="text-sm font-semibold text-gray-300 mb-1">Moves that backfired</h3>${resultsList(worst.map(r => moveSummary(r.m)))}</div>` : ''}` : ''}
+                </div>`;
+        }
+
+        function resultsLeagueWeek(number) {
+            const entries = resultsData.moves.flatMap(m => (m.weeks || []).filter(w => w.week === number).map(w => ({ m, w })))
+                .sort((x, y) => y.w.net - x.w.net || (y.w.gains || []).length - (x.w.gains || []).length);
+            if (!resultsData.swingsScored) return '<p class="text-gray-400 p-4">Week swings are worked out for category leagues only. Select a team to see its moves.</p>';
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-2">
+                    <h3 class="text-sm font-semibold text-gray-300">Moves that changed week ${number}</h3>
+                    ${entries.length ? resultsList(entries.map(e => moveSummary(e.m, e.w)))
+                        : '<p class="text-gray-400">No move changed a category this week.</p>'}
+                </div>`;
+        }
+
+        function resultsTeamSeason(team) {
+            const moves = resultsData.moves.filter(m => m.team === team);
+            const s = resultsData.season[team] || { moves: 0, starts: 0, dropGames: 0, gained: 0, lost: 0, net: 0 };
+            const summary = `${resultsTeam(team)}: ${s.moves} move${s.moves === 1 ? '' : 's'}, pickups started ${s.starts} game${s.starts === 1 ? '' : 's'}, the players dropped would have filled ${s.dropGames}.`
+                + (resultsData.swingsScored ? ` Against keeping them: ${s.gained} categor${s.gained === 1 ? 'y' : 'ies'} won, ${s.lost} cost - ${shareText(s.net)} net.` : '');
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-3">
+                    <p class="text-gray-300">${esc(summary)}</p>
+                    ${moves.length ? resultsList(moves.map(moveCard)) : '<p class="text-gray-400">No moves this season.</p>'}
+                </div>`;
+        }
+
+        function resultsTeamWeek(team, number) {
+            const week = resultsData.weeks.find(w => w.week === number);
+            const moves = resultsData.moves.filter(m => m.team === team);
+            const changed = moves.flatMap(m => (m.weeks || []).filter(w => w.week === number).map(w => ({ m, w })))
+                .sort((x, y) => y.w.net - x.w.net);
+            const made = week ? moves.filter(m => m.date >= week.start && m.date <= week.end) : [];
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-4">
+                    ${resultsData.swingsScored ? `<div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">What ${esc(resultsTeam(team))}&rsquo;s moves did to week ${number}${week && week.status !== 'postevent' ? ' <span class="text-xs text-gray-500 font-normal">(so far)</span>' : ''}</h3>
+                        ${changed.length ? resultsList(changed.map(e => moveSummary(e.m, e.w, false)))
+                            : '<p class="text-gray-400">No move changed a category this week.</p>'}
+                    </div>` : ''}
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves made this week</h3>
+                        ${made.length ? resultsList(made.map(moveCard)) : '<p class="text-gray-400">None.</p>'}
+                    </div>
+                </div>`;
+        }
+
+        function renderResults() {
+            if (!resultsData) return;
+            const week = $('results-week').value ? Number($('results-week').value) : null;
+            const team = $('results-team').value;
+            if (team && team !== resultsData.detailTeam) {
+                $('results-body').innerHTML = '<p class="text-gray-400 p-4">Reading that team&rsquo;s moves&hellip;</p>';
+                return;
+            }
+            $('results-body').innerHTML = team
+                ? (week ? resultsTeamWeek(team, week) : resultsTeamSeason(team))
+                : (week ? resultsLeagueWeek(week) : resultsLeagueSeason());
+        }
+
+        function applyResults(data) {
+            resultsData = data;
+            const moves = Object.values(data.season).reduce((n, s) => n + s.moves, 0);
+            const notes = [
+                data.swingsScored ? '' : 'Week swings are worked out for category leagues only.',
+                data.source === 'browser' ? 'From your lineups on Yahoo - Update from Yahoo reads the days since.' : '',
+                (data.unmatched || []).length ? `${data.unmatched.length} dropped player${data.unmatched.length === 1 ? '' : 's'} not matched to NHL game data: ${data.unmatched.slice(0, 5).join(', ')}.` : '',
+            ].filter(Boolean).join(' ');
+            $('results-status').textContent = `${data.league?.name || 'Your league'}${data.test ? ' (test league)' : ''}`
+                + `${data.asOf ? `, through ${dayLabel(data.asOf)}` : ''}: ${moves} move${moves === 1 ? '' : 's'} league-wide.`
+                + (notes ? ` ${notes}` : '');
+
+            const weekValue = $('results-week').value;
+            $('results-week').innerHTML = '<option value="">All season</option>' + data.weeks.map(w =>
+                `<option value="${w.week}">Week ${w.week} · ${esc(shortDate(w.start))} – ${esc(shortDate(w.end))}`
+                + `${w.status === 'postevent' ? '' : ' (so far)'}</option>`).join('');
+            $('results-week').value = data.weeks.some(w => String(w.week) === weekValue) ? weekValue : '';
+
+            // The team shown: yours to start with, then whichever was picked
+            const firstLoad = !$('results-team').options.length;
+            const teamValue = $('results-team').value;
+            const ids = [...new Set([...Object.keys(data.season), ...Object.keys(data.teams)])]
+                .sort((x, y) => Number(x) - Number(y));
+            const mine = myYahooTeam();
+            $('results-team').innerHTML = '<option value="">All teams</option>' + ids.map(id =>
+                `<option value="${esc(id)}">${esc(resultsTeam(id))}${id === mine ? ' (you)' : ''}</option>`).join('');
+            const wanted = firstLoad ? (data.detailTeam || '') : teamValue;
+            $('results-team').value = wanted === '' || ids.includes(wanted) ? wanted : '';
+            $('results-controls').classList.remove('hidden');
+            renderResults();
+        }
+
+        async function loadResults(team) {
+            if (resultsLoading) return resultsLoading;
+            const status = text => { $('results-status').textContent = text; };
+            const saved = read(KEYS.transactions, null);
+            if (!saved?.transactions?.length) {
+                status('Scrape the league’s transactions first - on the Transactions tab, or with Update from Yahoo.');
+                return { ok: false, message: 'no transactions yet' };
+            }
+            if (!!saved.test !== ROSTER_TEST_MODE
+                || (!ROSTER_TEST_MODE && saved.leagueId && String(saved.leagueId) !== String(savedLeagueId() || ''))) {
+                status('The transactions stored here are another league’s. Scrape this league’s on the Transactions tab first.');
+                return { ok: false, message: 'transactions are another league’s' };
+            }
+            const leagueId = savedLeagueId();
+            if (!ROSTER_TEST_MODE && !leagueId) {
+                status('Enter your League ID on the League tab first - results are read from Yahoo.');
+                return { ok: false, message: 'no League ID yet' };
+            }
+            const detail = team ?? ($('results-team').value || myYahooTeam());
+            const body = {
+                league_id: leagueId, team: detail, slots,
+                transactions: { transactions: saved.transactions, players: saved.players || {} },
+            };
+            $('results-load').disabled = true;
+            status('Working out every move this season… the first time a league is read can take a minute.');
+            resultsLoading = (async () => {
+                // A league known to be private goes straight to its stored lineups
+                let answer = benchStore().private ? null
+                    : await postJSON('/standalone/api/transaction-results', body);
+                if (!answer || (!answer.ok && answer.data.code === 'private')) {
+                    answer = benchStored() ? await postJSON('/standalone/api/transaction-results', { ...body, ...benchRequest() })
+                        : { ok: false, data: { message: 'This league is private, so its lineups are read through the '
+                            + 'bookmarklet: select Update from Yahoo at the top of the page.' } };
+                }
+                resultsLoading = null;
+                $('results-load').disabled = false;
+                if (!answer.ok) {
+                    status(answer.data.message || 'Transaction results could not be worked out.');
+                    return { ok: false, message: answer.data.message || 'could not be worked out' };
+                }
+                applyResults(answer.data);
+                return { ok: true };
+            })();
+            return resultsLoading;
+        }
+
+        // New transactions or lineups: worked out again when next looked at,
+        // or now if the section is open
+        function invalidateResults(reload) {
+            resultsData = null;
+            if (reload && !$('tab-history').classList.contains('hidden')
+                && !$('history-results').classList.contains('hidden')) loadResults();
+        }
+
+        $('results-load').addEventListener('click', () => loadResults());
+        $('results-week').addEventListener('change', renderResults);
+        $('results-team').addEventListener('change', () => {
+            const team = $('results-team').value;
+            if (team && resultsData && team !== resultsData.detailTeam) loadResults(team);
+            renderResults();
+        });
+        $('results-body').addEventListener('click', event => {
+            const pick = event.target.closest('.results-team-pick');
+            if (!pick) return;
+            $('results-team').value = pick.dataset.team;
+            $('results-team').dispatchEvent(new Event('change'));
+            $('results-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
+
+        // --- Season History: its sections ------------------------------------
+        // One at a time, each fetched the first time it is shown. A new section
+        // is a button and a panel in the markup and an entry here, run when it
+        // is shown.
+        const HISTORY_TABS = {
+            transactions: () => renderTransactions(),
+            results: () => { if (!resultsData) loadResults(); },
+            bench: () => { if (!benchData) loadBench(); },
+        };
+
+        function selectHistory(name) {
+            if (!HISTORY_TABS[name]) name = 'transactions';
+            document.querySelectorAll('.sub-tab[data-history]').forEach(tab =>
+                tab.setAttribute('aria-selected', tab.dataset.history === name ? 'true' : 'false'));
+            document.querySelectorAll('.history-panel').forEach(panel =>
+                panel.classList.toggle('hidden', panel.id !== `history-${name}`));
+            write(KEYS.historyTab, name);
+            HISTORY_TABS[name]();
+        }
+
+        // Season History opened: the section it was last left on
+        function showHistory() {
+            selectHistory(localStorage.getItem(KEYS.historyTab));
+        }
+
+        document.querySelectorAll('.sub-tab[data-history]').forEach(tab =>
+            tab.addEventListener('click', () => selectHistory(tab.dataset.history)));
+
         // --- Update everything from Yahoo -------------------------------------
         // Every scrape in one go, in the order they depend on each other:
         // rosters first (they carry each team's Yahoo number), then the score
@@ -3217,6 +3681,8 @@
                 results.push({ name: step.name, ...outcome });
             }
             renderUpdate(results, false);
+            // Built from the transactions and lineups just read
+            invalidateResults(true);
         }
 
         $('update-all').addEventListener('click', async () => {
@@ -3605,6 +4071,9 @@
         //   sortable- headers that sort the table
         // The feed's wording is too long for a name column
         const INJURY_CODES = { 'Out': 'OUT', 'Injured Reserve': 'IR', 'Suspension': 'SUSP', 'Day-To-Day': 'DTD' };
+        // ESPN's note, unless he has played since it was written (`stale`):
+        // then it describes something he played through, and the card says so
+        const injuredNow = p => Boolean(p.injury && !p.injury.stale);
 
         function rosterTable(players, categories, goalies, opts = {}) {
             if (!players.length) return '';
@@ -3634,7 +4103,7 @@
                     : null;
                 const badge = share != null
                     ? ` <span class="text-[10px] font-semibold px-1 rounded bg-blue-800 text-white">${pct(share)}</span>` : '';
-                const injured = p.injury
+                const injured = injuredNow(p)
                     ? ` <span class="text-[10px] font-semibold uppercase px-1 rounded bg-amber-800 text-white" title="${esc([p.injury.status, p.injury.type, p.injury.returnDate && `back ${p.injury.returnDate}`].filter(Boolean).join(' · '))}">${esc(INJURY_CODES[p.injury.status] || 'INJ')}</span>` : '';
                 const tags = [
                     p.out ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-red-800 text-white">Out</span>' : '',
@@ -3737,7 +4206,7 @@
                     && !String(p.eligiblePositions || p.positionCode || '').split(',')
                         .some(code => poolFilters.positions.has(code.trim()))) return false;
                 if (poolFilters.gamesOnly && !p.games) return false;
-                if (poolFilters.hideInjured && p.injury) return false;
+                if (poolFilters.hideInjured && injuredNow(p)) return false;
                 // Every night ticked, not any: the point is filling a hole
                 if (poolFilters.days.size) {
                     const plays = new Set((p.nights || []).map(n => n.date));
@@ -3782,7 +4251,7 @@
             const parts = [`${pool.players.length} free agents`, `${matches.length} shown`];
             if (matches.length > POOL_LIMIT) parts.push(`top ${POOL_LIMIT} of each table drawn — sort or filter to see others`);
             if (pool.formSeason) parts.push(`form from ${pool.formSeason}`);
-            if (pool.injuryDate) parts.push(`injuries as of ${fmt(pool.injuryDate, { month: 'short', day: 'numeric' })}`);
+            if (pool.injuryDate) parts.push(`ESPN injuries as of ${fmt(pool.injuryDate, { month: 'short', day: 'numeric' })}`);
             if (poolStale) parts.push('rosters or settings have changed — select Refresh');
             $('pool-summary').textContent = parts.join(' · ');
         }
@@ -4038,7 +4507,7 @@
             const known = pagePlayer(p.playerId);
             const fantasy = teamOf(p.playerId);
             const yahoo = fantasy?.players.find(e => String(e.id) === String(p.playerId))?.status;
-            const injury = p.injury
+            const injury = injuredNow(p)
                 ? ` <span class="text-[10px] font-semibold uppercase px-1 rounded bg-amber-800 text-white">${esc(INJURY_CODES[p.injury.status] || 'INJ')}</span>` : '';
             $('player-modal-title').innerHTML = `${esc(p.fullName || 'Player')}${statusBadge(yahoo)}${injury}`;
             const rank = known?.seasonRank ? `draft board #${known.seasonRank}` : '';
@@ -4056,15 +4525,16 @@
             $('player-body').scrollTop = 0;
         }
 
-        // The injury feed is the preseason scrape, and it goes stale: say when
-        // he has played since, rather than present it as today's news.
+        // ESPN's note, dated. One he has played since describes something he
+        // played through, so it is shown muted and says so rather than warning.
         function injuryNote(injury) {
+            const day = iso => fmt(iso, { month: 'short', day: 'numeric' });
             const last = playerCard.log?.[0]?.date;
-            const back = injury.returnDate ? `, expected back ${fmt(injury.returnDate, { month: 'short', day: 'numeric' })}` : '';
-            const fed = playerCard.injuryDate;
-            const since = last && (!fed || last > fed)
-                ? ` He has played since${fed ? ` the feed was last updated (${fmt(fed, { month: 'short', day: 'numeric' })})` : ''}, most recently ${fmt(last, { month: 'short', day: 'numeric' })}.` : '';
-            return `<p class="mb-3 text-xs text-amber-300">Injury feed: ${esc(injury.status || 'injured')}${injury.type ? ` (${esc(injury.type)})` : ''}${esc(back)}.${esc(since)}</p>`;
+            const back = injury.returnDate ? `, expected back ${day(injury.returnDate)}` : '';
+            const noted = injury.date ? ` (noted ${day(injury.date)})` : '';
+            const text = `ESPN injury report: ${injury.status || 'injured'}${injury.type ? `, ${injury.type}` : ''}${back}${noted}.`;
+            if (!injury.stale) return `<p class="mb-3 text-xs text-amber-300">${esc(text)}</p>`;
+            return `<p class="mb-3 text-xs text-gray-500">${esc(text)} He has played since${last ? `, most recently ${esc(day(last))}` : ''}, so it is probably out of date.</p>`;
         }
 
         function cardFormat(row, value, perGame) {
@@ -4886,7 +5356,7 @@
                 renderRemaining();
                 renderMatchup();
                 renderTransactions();
-                if (!$('tab-history').classList.contains('hidden')) loadBench();
+                if (!$('tab-history').classList.contains('hidden')) showHistory();
                 // A first visit has nothing to plan against, so open the form
                 setLeagueOpen(!activeCategories().length);
                 plan();

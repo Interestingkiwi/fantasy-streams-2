@@ -216,6 +216,28 @@ input.terminal {
     background-color: #2563EB;
 }
 
+/* --- Sub-tabs ---------------------------------------------------------------- */
+/* A page tab's own sections - Season History's Transactions, Transaction
+   Results and Bench Points. A lighter second row under the page tabs: text,
+   underlined when chosen, so the two levels never read as one row. */
+.sub-tab {
+    flex-shrink: 0;
+    padding: 0.5rem 0.125rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--fs-text-muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    cursor: pointer;
+}
+
+.sub-tab:hover { color: var(--fs-text-strong); }
+
+.sub-tab[aria-selected="true"] {
+    color: var(--fs-text-strong);
+    border-bottom-color: #3B82F6;
+}
+
 /* --- Player card links ------------------------------------------------------- */
 /* A player's name - or a cell about him - that opens his card on League Home.
    A button, for the keyboard and screen readers, dressed as the text it

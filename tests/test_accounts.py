@@ -8,11 +8,12 @@ a signed-in page carries its league for account-sync.js to put in place before
 any page script reads it, escaped so a team name cannot close the script tag;
 that ten wrong passwords lock an account even against the right one; and that
 an account deleted by `manage_accounts.py` is signed out wherever it was
-signed in.
+signed in. And that one Yahoo league is one league on every device: copies
+saved per device (as sign-in used to) converge on the newest by themselves.
 
 Author - Jason Druckenmiller
 Created - 9/29/2026
-Updated - 9/29/2026
+Updated - 10/5/2026
 """
 
 import json
@@ -227,6 +228,56 @@ try:
     check("and it opens again once the lock runs out",
           bob.post("/account/api/signin", json={"username": PREFIX + "bob", "password": PASSWORD})
           .status_code == 200)
+
+    # ----------------------------------------------------------------------
+    print("\n=== 5b. one Yahoo league, on every device ===")
+
+    check("a League ID is read as typed: a number, a quoted one, or a pasted URL",
+          [accounts.yahoo_league(v) for v in (
+              "5848", '"5848"', " https://hockey.fantasysports.yahoo.com/hockey/5848/3 ",
+              "https://hockey.fantasysports.yahoo.com/2025/hockey/22705", "", None, "abc")]
+          == ["5848", "5848", "5848", "22705", None, None, None])
+    listed = [{"id": 3, "yahoo": "5848"}, {"id": 2, "yahoo": None}, {"id": 1, "yahoo": "5848"}]
+    check("the newest copy of a Yahoo league is the first one listed", accounts.newest_copy(1, listed) == 3)
+    check("a league naming no Yahoo league stays itself", accounts.newest_copy(2, listed) == 2)
+
+    desk, phone = client_for(), client_for()
+    desk.post("/account/api/signup", json={"username": PREFIX + "carol", "password": PASSWORD})
+    desk_league = boot_from(desk.get("/standalone/"))["league"]
+    desk.put(f"/account/api/leagues/{desk_league}",
+             json={"state": {"fs_yahooLeagueId": "5848", "fs_numTeams": "12"}, "name": "Desk"})
+    signed = phone.post("/account/api/signin", json={"username": PREFIX + "carol", "password": PASSWORD})
+    check("signing in lists each league with the Yahoo league it names, for the page to match",
+          [league.get("yahoo") for league in signed.get_json()["leagues"]] == ["5848"], signed.get_json())
+    # How a second device used to sign in: its own copy, saved as another league
+    phone_league = phone.post("/account/api/leagues", json={
+        "state": {"fs_yahooLeagueId": "https://hockey.fantasysports.yahoo.com/hockey/5848", "fs_numTeams": "10"},
+        "name": "Phone"}).get_json()["league"]
+    check("the phone starts on its own copy, the newest for now",
+          boot_from(phone.get("/standalone/"))["league"] == phone_league)
+    # The desk scrapes, so its copy becomes the newest
+    desk.put(f"/account/api/leagues/{desk_league}",
+             json={"state": {"fs_yahooLeagueId": "5848", "fs_numTeams": "14"}, "name": "Desk"})
+    phone_boot = boot_from(phone.get("/standalone/"))
+    check("the phone moves onto the copy the desk just saved, by itself",
+          phone_boot["league"] == desk_league and phone_boot["state"].get("fs_numTeams") == "14",
+          (phone_boot["league"], phone_boot["state"]))
+    check("both copies stay listed, each naming its Yahoo league, so nothing is lost",
+          sorted(league["id"] for league in phone_boot["leagues"]) == sorted([desk_league, phone_league])
+          and all(league["yahoo"] == "5848" for league in phone_boot["leagues"]), phone_boot["leagues"])
+    phone.put(f"/account/api/leagues/{desk_league}",
+              json={"state": {"fs_yahooLeagueId": "5848", "fs_numTeams": "16"}, "base": phone_boot["updatedAt"]})
+    check("from then on a save on the phone is what the desk sees",
+          boot_from(desk.get("/standalone/"))["state"].get("fs_numTeams") == "16")
+    phone.post(f"/account/api/leagues/{phone_league}/open")
+    check("an older copy opened by hand from the account stays open",
+          boot_from(phone.get("/standalone/"))["league"] == phone_league)
+    phone.post(f"/account/api/leagues/{phone_league}/open", json={"pin": False})
+    check("opened without pinning - as sign-in opens the account's copy - the newest copy wins",
+          boot_from(phone.get("/standalone/"))["league"] == desk_league)
+    another = phone.post("/account/api/leagues", json={"state": {"fs_yahooLeagueId": "999"}, "name": "Another"})
+    check("a different Yahoo league is a league of its own",
+          boot_from(phone.get("/standalone/"))["league"] == another.get_json()["league"])
 
     # ----------------------------------------------------------------------
     print("\n=== 6. deleting ===")

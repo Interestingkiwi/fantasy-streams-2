@@ -25,6 +25,16 @@ tab left open on one device would silently put back everything changed on
 another the next time it saved. The page reloads onto the newer copy instead,
 and checks for one whenever it comes back into view.
 
+**One Yahoo league is one league in an account** (10/5/2026). Signing in on a
+second device that already held the league used to save that device's copy
+as another league and open it there, so each device worked on its own copy
+and nothing scraped on one ever reached the other - the very thing accounts
+were for. Now sign-in opens the account's copy of a league it already has
+(or replaces it, if the user says this browser's is the one to keep), and a
+session works on the newest copy whenever an account holds several - so
+accounts that were split before this converge by themselves. The older
+copies stay, listed as such, until deleted.
+
 **Staying signed in** is Flask's signed session cookie, made permanent:
 `PERMANENT_SESSION_LIFETIME` (30 days), renewed on every visit. The cookie
 carries the account id only, and every request re-reads the account, so one
@@ -36,7 +46,7 @@ deleted with `manage_accounts.py` is signed out wherever it was signed in.
 
 Author - Jason Druckenmiller
 Created - 9/29/2026
-Updated - 9/29/2026
+Updated - 10/5/2026
 """
 
 import json
@@ -50,6 +60,7 @@ from flask import Blueprint, g, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db import execute, fetch_all, fetch_one, text, transaction
+from yahoo_rosters import RosterPageError, league_id_from
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +68,8 @@ account_bp = Blueprint('account', __name__, url_prefix='/account')
 
 SESSION_ACCOUNT = 'account_id'
 SESSION_LEAGUE = 'account_league'
+# A league opened by hand from the modal, which the newest-copy rule leaves alone
+SESSION_PINNED = 'account_league_pinned'
 
 # The localStorage keys that describe one league, which an account mirrors.
 # Must match LEAGUE_KEYS in static/account-sync.js - a test fails if they
@@ -135,6 +148,7 @@ def _json_body():
 def _sign_in(account_id):
     session[SESSION_ACCOUNT] = int(account_id)
     session.pop(SESSION_LEAGUE, None)
+    session.pop(SESSION_PINNED, None)
     session.permanent = True
     g.pop('fs_account', None)
 
@@ -142,6 +156,7 @@ def _sign_in(account_id):
 def _sign_out():
     session.pop(SESSION_ACCOUNT, None)
     session.pop(SESSION_LEAGUE, None)
+    session.pop(SESSION_PINNED, None)
     g.pop('fs_account', None)
 
 
@@ -184,10 +199,32 @@ def _clean_name(raw):
     return str(raw or '').strip()[:80]
 
 
+def yahoo_league(raw):
+    """The Yahoo League ID a league's state names (`fs_yahooLeagueId`, kept as
+    typed - a number or a pasted URL), as the bare number, or None."""
+    text_value = str(raw or '').strip().strip('"')
+    if not text_value:
+        return None
+    try:
+        return league_id_from(text_value)
+    except RosterPageError:
+        return None
+
+
 def _league_list(account_id):
-    return fetch_all(
-        'SELECT id, name, updated_at FROM account_leagues'
+    """The account's leagues, newest first, each with the Yahoo League ID it
+    names (`yahoo`) - one Yahoo league should be one league here."""
+    rows = fetch_all(
+        "SELECT id, name, updated_at, state->>'fs_yahooLeagueId' AS yahoo_raw FROM account_leagues"
         ' WHERE account_id = :a ORDER BY updated_at DESC, id DESC', {'a': account_id})
+    for row in rows:
+        row['yahoo'] = yahoo_league(row.pop('yahoo_raw'))
+    return rows
+
+
+def _listed(row):
+    return {'id': row['id'], 'name': row['name'], 'updatedAt': _iso(row['updated_at']),
+            'yahoo': row['yahoo']}
 
 
 def _create_league(account_id, state, name=''):
@@ -205,14 +242,36 @@ def _create_league(account_id, state, name=''):
             {'a': account_id, 'name': name, 'state': json.dumps(state)}).mappings().first())
 
 
+def newest_copy(league_id, leagues):
+    """
+    The id of the most recently saved league naming the same Yahoo league as
+    `league_id`, from `_league_list` rows (newest first) - `league_id` itself
+    when it is the newest, or names no Yahoo league.
+    """
+    yahoo = next((row['yahoo'] for row in leagues if row['id'] == league_id), None)
+    if not yahoo:
+        return league_id
+    return next(row['id'] for row in leagues if row['yahoo'] == yahoo)
+
+
 def active_league(account_id):
     """
     The league this session is working on: the one it last opened, else the
     most recently saved, else a new empty one - so a signed-in page always has
     a league to save into.
+
+    **One Yahoo league, one league, on every device.** Signing in on a second
+    device that already held a copy of the league used to save that copy as
+    another league, and each device then worked on its own - scrape on one and
+    the other never saw it. So when the account holds several copies of one
+    Yahoo league, every session works on the most recently saved, and the rest
+    are listed in the modal as older copies. Only a league opened by hand from
+    the modal (`SESSION_PINNED`) is left as chosen.
     """
     row = None
     wanted = session.get(SESSION_LEAGUE)
+    if wanted and session.get(SESSION_PINNED) != wanted:
+        wanted = newest_copy(wanted, _league_list(account_id))
     if wanted:
         row = fetch_one('SELECT id, name, state, updated_at FROM account_leagues'
                         ' WHERE id = :id AND account_id = :a', {'id': wanted, 'a': account_id})
@@ -222,7 +281,8 @@ def active_league(account_id):
                         {'a': account_id})
     if not row:
         row = _create_league(account_id, {})
-    session[SESSION_LEAGUE] = row['id']
+    if session.get(SESSION_LEAGUE) != row['id']:
+        session[SESSION_LEAGUE] = row['id']
     return row
 
 
@@ -249,8 +309,7 @@ def boot():
             'league': league['id'],
             'state': league['state'] or {},
             'updatedAt': _iso(league['updated_at']),
-            'leagues': [{'id': row['id'], 'name': row['name'], 'updatedAt': _iso(row['updated_at'])}
-                        for row in _league_list(account['id'])],
+            'leagues': [_listed(row) for row in _league_list(account['id'])],
             'maxLeagues': MAX_LEAGUES,
         }
     except Exception:                             # noqa: BLE001
@@ -331,9 +390,10 @@ def signin():
         execute('UPDATE local_accounts SET failed_logins = 0, locked_until = NULL,'
                 ' last_seen_at = now() WHERE id = :id', {'id': row['id']})
         _sign_in(row['id'])
+        # Each with its Yahoo League ID, so a browser holding a copy of one the
+        # account already has opens that one rather than saving a second
         return jsonify({"status": "success", "accountId": row['id'], "username": row['username'],
-                        "leagues": [{'id': r['id'], 'name': r['name']}
-                                    for r in _league_list(row['id'])]})
+                        "leagues": [_listed(r) for r in _league_list(row['id'])]})
     except ValueError as exc:
         return _error(str(exc), 400)
     except Exception as exc:                      # noqa: BLE001
@@ -433,14 +493,24 @@ def league_version(league_id):
 
 @account_bp.route('/api/leagues/<int:league_id>/open', methods=['POST'])
 def open_league(league_id):
-    """Makes the league the one this session's pages work on."""
+    """
+    Makes the league the one this session's pages work on. Body (optional):
+    {pin}. Opened by hand from the modal it is pinned, so an older copy of a
+    Yahoo league stays open when chosen; opened at sign-in, to adopt the
+    account's copy of the browser's league, it is not.
+    """
     try:
         account = current_account()
         if not account:
             return _error("Sign in first.", 401)
         if not _own_league(league_id, account['id']):
             return _error("That league is not in your account.", 404)
+        body = request.get_json(silent=True) if request.is_json else None
         session[SESSION_LEAGUE] = league_id
+        if (body or {}).get('pin', True):
+            session[SESSION_PINNED] = league_id
+        else:
+            session.pop(SESSION_PINNED, None)
         return jsonify({"status": "success", "league": league_id})
     except Exception as exc:                      # noqa: BLE001
         log.exception("Opening a league failed.")

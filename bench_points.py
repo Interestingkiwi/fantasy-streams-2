@@ -33,7 +33,7 @@ fantasy points, not categories, and this does not score them yet.
 
 Author - Jason Druckenmiller
 Created - 9/30/2026
-Updated - 9/30/2026
+Updated - 10/5/2026
 """
 
 from collections import defaultdict
@@ -72,6 +72,17 @@ def minutes(ga, gaa):
     if ga and gaa:
         return ga * 60.0 / gaa
     return 60.0 if ga is not None or gaa is not None else 0.0
+
+
+def line_minutes(line):
+    """
+    A line's goaltending minutes: its own `min` when it carries one - several
+    games summed (`transaction_results`), where one GAA cannot be inverted and
+    two shutouts are not an hour - else back out of its GA and GAA.
+    """
+    if line.get("min") is not None:
+        return line["min"]
+    return minutes(line.get(GA), line.get(GAA))
 
 
 def compare(mine, theirs, higher_better):
@@ -119,8 +130,7 @@ def swapped_totals(totals, starter, bench, categories):
         after[SV_PCT] = saves / shots if shots else None
     if GAA in ids and totals.get(GA) is not None and totals.get(GAA):
         team_minutes = _value(totals, GA) * 60.0 / totals[GAA]
-        new_minutes = (team_minutes - minutes(starter.get(GA), starter.get(GAA))
-                       + minutes(bench.get(GA), bench.get(GAA)))
+        new_minutes = team_minutes - line_minutes(starter) + line_minutes(bench)
         goals = _value(totals, GA) - _value(starter, GA) + _value(bench, GA)
         after[GAA] = goals * 60.0 / new_minutes if new_minutes > 0 else None
     return after

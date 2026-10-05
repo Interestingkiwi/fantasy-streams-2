@@ -1,8 +1,12 @@
 """
 Identifies players who are injured to start the season
+
+In season the nightly job refreshes the same table from the same feed with the
+root-level `injury_report.py`, which keeps these columns and adds four.
+
 Author - Jason Druckenmiller
 Created - 7/1/2026
-Updated - 9/6/2026
+Updated - 10/5/2026
 """
 
 
