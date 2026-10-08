@@ -8,11 +8,14 @@ scripts have run). A real league's page is not committed.
 Pinned hardest are the readings a user would be misled by: a dash is nothing
 recorded yet rather than a zero, a starred column is shown but not scored,
 Yahoo's SV% is the engine's SVpct, and signed out the page is team 1's unless
-the request names the team - so the URL has to carry mid1.
+the request names the team - so the URL has to carry mid1. Then the goalie
+minimum, which lives on each team's own page: both pages read for the
+matchup's week, a page showing another week not used, and a page that cannot
+be read costing the appearances but never the score.
 
 Author - Jason Druckenmiller
 Created - 9/21/2026
-Updated - 9/21/2026
+Updated - 10/7/2026
 """
 
 import os
@@ -66,6 +69,23 @@ MATCHUP = page([
 ])
 
 
+def appearances_box(week, appearances, minimum, reached=True):
+    """A team page's Goaltender Appearances box, in the markup Yahoo serves."""
+    note = "Minimum Reached" if reached else f"{minimum - appearances} more needed"
+    return (f'<section class="Bdr P-lg"><section class="Mod Thm-inherit No-mbot" id="position-caps-head">'
+            f'<header class="Hd"><h2 class="Fz-lg">Goaltender Appearances</h2></header><div class="Bd"><dl>'
+            f'<dt class="Inlineblock Mend-lg">Total for Week {week}:</dt><dd class="Inlineblock">'
+            f'<span class="{"F-positive" if reached else "F-negative"}">{appearances} <strong>({note})</strong>'
+            f'</span></dd></dl><p class="My-lg">Note: Each week, your goaltenders must reach the minimum of '
+            f'<strong>{minimum} appearances</strong>. If you fail to reach this mark, you will lose all of '
+            f'your goaltending games for that week.</p></div></section></section>')
+
+
+def team_page(week, appearances, minimum, reached=True):
+    return (f"<html><head><title>Team | Fantasy Hockey</title></head><body><h1>Roster</h1>"
+            f"{appearances_box(week, appearances, minimum, reached)}</body></html>")
+
+
 # --------------------------------------------------------------------------
 print("\n=== 1. addresses ===")
 
@@ -85,6 +105,17 @@ try:
     check("a League ID that is not a number is refused", False)
 except ym.RosterPageError as exc:
     check("a League ID that is not a number is refused", exc.code == "invalid_id")
+
+check("a team's own page is the matchup's league and week",
+      ym.team_url("https://hockey.fantasysports.yahoo.com/hockey/5848/matchup?week=3&mid1=6&module=matchup", 7)
+      == "https://hockey.fantasysports.yahoo.com/hockey/5848/7?week=3")
+check("a past season's league keeps its year",
+      ym.team_url(ym.TEST_MATCHUP_URL, "7") == "https://hockey.fantasysports.yahoo.com/2025/hockey/22705/7?week=2")
+check("with no week on the matchup, the team page's own (Yahoo's current week)",
+      ym.team_url("https://hockey.fantasysports.yahoo.com/hockey/5848/matchup", 4)
+      == "https://hockey.fantasysports.yahoo.com/hockey/5848/4")
+check("and no team number, no page", ym.team_url(ym.TEST_MATCHUP_URL, None) is None
+      and ym.team_url(ym.TEST_MATCHUP_URL, "7;x") is None)
 
 
 # --------------------------------------------------------------------------
@@ -123,6 +154,15 @@ for label, html, code in [
     except ym.RosterPageError as exc:
         check(label, exc.code == code, exc.code)
 
+check("a team page's goalie appearances, the week and the league's minimum",
+      ym.parse_appearances(team_page(3, 4, 3)) == {"week": 3, "appearances": 4, "minimum": 3})
+check("short of it reads the same way - the count, not the shortfall",
+      ym.parse_appearances(team_page(3, 1, 3, reached=False))["appearances"] == 1)
+check("the box alone, as the bookmarklet sends it, reads the same",
+      ym.parse_appearances(appearances_box(5, 2, 4)) == {"week": 5, "appearances": 2, "minimum": 4})
+check("a page with no such box says so rather than zero", ym.parse_appearances(MATCHUP) is None
+      and ym.parse_appearances("") is None)
+
 
 # --------------------------------------------------------------------------
 print("\n=== 3. routes ===")
@@ -136,27 +176,60 @@ try:
     fetched = []
     real_fetch = ym.fetch
 
+    # Team 6 is short of the minimum, team 7 through it; team pages of any
+    # other league have no box, and league 33333's team pages are down
+    TEAM_PAGES = {"6": team_page(3, 1, 3, reached=False), "7": team_page(3, 4, 3)}
+
     def fake_fetch(url, session=None):
         fetched.append(url)
         if "/22222/" in url:
             raise ym.RosterPageError("private", "private")
+        if "/33333/" in url and "/matchup" not in url:
+            raise ym.RosterPageError("unreachable", "down")
+        team = url.split("/hockey/11111/")[-1].split("?")[0] if "/hockey/11111/" in url else None
+        if team in TEAM_PAGES:
+            return TEAM_PAGES[team]
         return MATCHUP
 
     ym.fetch = fake_fetch
     try:
         flask_app.config["ROSTER_SCRAPE_TEST"] = True
+        before = len(fetched)
         response = client.post("/standalone/api/matchup/scrape", json={"league_id": "22222", "week": 4})
         check("test mode reads the test matchup whatever is asked",
-              response.status_code == 200 and fetched[-1] == ym.TEST_MATCHUP_URL
-              and response.get_json()["test"] is True, (response.status_code, fetched[-1:]))
+              response.status_code == 200 and fetched[before] == ym.TEST_MATCHUP_URL
+              and response.get_json()["test"] is True, (response.status_code, fetched[before:]))
 
         flask_app.config["ROSTER_SCRAPE_TEST"] = False
+        before = len(fetched)
         response = client.post("/standalone/api/matchup/scrape",
                                json={"league_id": "11111", "week": 3, "team": "6"})
         data = response.get_json()
         check("otherwise the league, week and team are fetched",
-              response.status_code == 200 and fetched[-1].endswith("/hockey/11111/matchup?week=3&mid1=6&module=matchup"),
-              fetched[-1:])
+              response.status_code == 200 and fetched[before].endswith("/hockey/11111/matchup?week=3&mid1=6&module=matchup"),
+              fetched[before:])
+        check("then both teams' own pages, for the same week",
+              sorted(fetched[before + 1:]) == ["https://hockey.fantasysports.yahoo.com/hockey/11111/6?week=3",
+                                               "https://hockey.fantasysports.yahoo.com/hockey/11111/7?week=3"],
+              fetched[before:])
+        check("each team's goalie appearances so far, and the league's minimum, come back",
+              [t.get("goalieAppearances") for t in data["teams"]] == [1, 4] and data["goalieMinimum"] == 3,
+              (data["teams"], data.get("goalieMinimum")))
+
+        TEAM_PAGES["7"] = team_page(4, 2, 3)
+        stale = client.post("/standalone/api/matchup/scrape",
+                            json={"league_id": "11111", "week": 3, "team": "6"}).get_json()
+        check("a team page showing another week is not used for this one",
+              "goalieAppearances" not in stale["teams"][1] and stale["teams"][0]["goalieAppearances"] == 1,
+              stale["teams"])
+        TEAM_PAGES["7"] = team_page(3, 4, 3)
+
+        down = client.post("/standalone/api/matchup/scrape", json={"league_id": "33333", "week": 3})
+        check("team pages that cannot be read leave the score standing, without appearances",
+              down.status_code == 200 and down.get_json()["goalieMinimum"] is None
+              and down.get_json()["teams"][0]["columns"]["proj_goals"] == 11
+              and all("goalieAppearances" not in t for t in down.get_json()["teams"]),
+              (down.status_code, down.get_json()))
         check("each team's stats come back keyed by projection column too",
               data["teams"][0]["columns"].get("proj_goals") == 11
               and data["teams"][0]["columns"].get("proj_savePct") == 0.879
@@ -182,6 +255,13 @@ try:
         check("a page the bookmarklet sends is parsed the same way",
               response.status_code == 200 and response.get_json()["source"] == "browser"
               and response.get_json()["teams"][0]["columns"]["proj_goals"] == 11)
+        boxes = client.post("/standalone/api/matchup/parse", json={
+            "html": MATCHUP, "url": yahoo_url,
+            "goalies": {"6": appearances_box(3, 2, 3, reached=False), "7": appearances_box(3, 3, 3), "8": 5},
+        }).get_json()
+        check("and the appearances boxes it read off the two team pages",
+              [t.get("goalieAppearances") for t in boxes["teams"]] == [2, 3] and boxes["goalieMinimum"] == 3,
+              boxes.get("teams"))
         response = client.post("/standalone/api/matchup/parse",
                                json={"html": MATCHUP, "url": "https://yahoo.com.evil.example/matchup"})
         check("a page claiming to come from anywhere but Yahoo is refused",

@@ -10,7 +10,7 @@ tests must not rewrite either table.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 9/29/2026
+Updated - 10/7/2026
 """
 
 import os
@@ -182,9 +182,11 @@ check("an opponent marked out projects nothing",
       benched_opp["opponent"]["totals"]["G"] == 0, benched_opp["opponent"]["totals"])
 
 rate = wp.plan_week(POOL, [5], ["W", "SVpct"], SLOTS, WEEK, SEASON, opponent=[7])
-check("a rate category is listed but not given odds",
-      {"category": "SVpct", "rate": True} in rate["matchup"]["categories"],
-      rate["matchup"]["categories"])
+unprojected = {r["category"]: r for r in rate["matchup"]["categories"]}["SVpct"]
+check("a rate category with no shots projected to divide gets no odds, and says why",
+      unprojected["rate"] and unprojected["mine"] is None and "winProbability" not in unprojected
+      and "No goaltending projected" in unprojected["note"]
+      and rate["matchup"]["scoredCategories"] == 1, unprojected)
 
 points_vs = wp.plan_week(POOL, [1], ["G"], SLOTS, WEEK, SEASON, opponent=[2],
                          points={"G": 3.0})
@@ -209,6 +211,149 @@ check("on flat weights the better player starts",
 check("against a lost category, the lineup chases the live one",
       chasing["days"][0]["slots"][0]["player"]["fullName"] == "Grinder",
       (chasing["days"][0]["slots"][0], chasing["weights"]))
+
+
+# --------------------------------------------------------------------------
+print("\n=== 6b. GAA and save percentage ===")
+
+
+def netminder(pid, name, team, starts, goals_against, shots_against):
+    return {**goalie(pid, name, team, starts, starts // 2),
+            "proj_goalsAgainst": goals_against, "proj_shotsAgainst": shots_against,
+            "proj_saves": shots_against - goals_against}
+
+
+# Per start: the Wall concedes 2.2 on 30 shots (.927), the Sieve 3.4 on 28 (.879)
+RATIO_POOL = [p for p in POOL if p["positionCode"] != "G"] + [
+    netminder(5, "Wall", "TOR", 60, 132, 1800),
+    netminder(6, "Wall's Backup", "TOR", 24, 70, 670),
+    netminder(7, "Sieve", "MTL", 55, 187, 1540),
+] + [netminder(100 + i, f"Goalie {i}", "SEA", 40 + i, (40 + i) * 3, (40 + i) * 29) for i in range(6)]
+RATIOS = ["W", "GAA", "SVpct"]
+
+versus = wp.plan_week(RATIO_POOL, [5], RATIOS, SLOTS, WEEK, SEASON, opponent=[7])
+rows = {r["category"]: r for r in versus["matchup"]["categories"]}
+check("GAA and save percentage are projected from each side's goalie starts",
+      rows["GAA"]["mine"] < rows["GAA"]["theirs"] and rows["SVpct"]["mine"] > rows["SVpct"]["theirs"]
+      and abs(rows["SVpct"]["mine"] - (1800 - 132) / 1800) < 0.002, rows)
+check("the better goalie is favoured in both, GAA the lower-is-better way",
+      rows["GAA"]["winProbability"] > 0.5 and rows["SVpct"]["winProbability"] > 0.5
+      and 0 < rows["GAA"]["contested"] <= 1, rows)
+check("both count in the expected categories won",
+      versus["matchup"]["scoredCategories"] == 3
+      and abs(versus["matchup"]["expectedWins"] - sum(r["winProbability"] for r in rows.values())) < 0.01,
+      versus["matchup"])
+check("and the matchup says what they rest on",
+      versus["matchup"]["goaltending"]["mine"]["minutesFrom"] == "none"
+      and versus["matchup"]["goaltending"]["mine"]["starts"] > 1, versus["matchup"].get("goaltending"))
+check("the parts they are built from are carried, never shown or totalled",
+      set(versus["totals"]) == {"W"} and "GA" not in versus["weights"]
+      and all(set(p["perGame"]) <= set(RATIOS) for p in versus["players"]),
+      (versus["totals"], versus["weights"]))
+
+# Two blow-ups already banked: 12 goals in 120 minutes is a 6.00 GAA, .880
+behind = wp.plan_week(RATIO_POOL, [5], RATIOS, SLOTS, WEEK, SEASON, opponent=[7],
+                      goalie_stats={"mine": {"GA": "12", "SA": "100", "SV": "88", "GAA": "6.00"}})
+late = {r["category"]: r for r in behind["matchup"]["categories"]}
+check("the week so far is built in, and shown",
+      late["GAA"]["soFarMine"] == 6.0 and late["SVpct"]["soFarMine"] == 0.88
+      and late["GAA"]["mine"] > rows["GAA"]["mine"] + 1, late["GAA"])
+check("and turns the odds",
+      late["GAA"]["winProbability"] < 0.5 < rows["GAA"]["winProbability"], (late["GAA"], rows["GAA"]))
+
+flat_seats = wp.plan_week(RATIO_POOL, [5, 6], ["W"], {"G": 1}, WEEK, SEASON, opponent=[7])
+ratio_seats = wp.plan_week(RATIO_POOL, [5, 6], RATIOS, {"G": 1}, WEEK, SEASON, opponent=[7],
+                           goalie_stats={"mine": {"GA": "12", "SA": "100", "SV": "88", "GAA": "6.00"}})
+check("they do not set lineups yet: the same goalies start with or without them",
+      [[s["player"] and s["player"]["fullName"] for s in d["slots"]] for d in flat_seats["days"]]
+      == [[s["player"] and s["player"]["fullName"] for s in d["slots"]] for d in ratio_seats["days"]])
+
+in_points = wp.plan_week(RATIO_POOL, [5], ["W", "GAA"], SLOTS, WEEK, SEASON, opponent=[7],
+                         points={"W": 5.0, "GAA": -1.0})
+check("a points league lists a ratio but does not project it",
+      {"category": "GAA", "rate": True} in in_points["matchup"]["categories"]
+      and "goaltending" not in in_points["matchup"], in_points["matchup"])
+
+ratio_week = wp.Week(RATIO_POOL + [skater(60, "Free C", "C", "TOR", 30)], ["G", "GAA", "SVpct"],
+                     {"C": 1, "G": 1}, WEEK, SEASON)
+banked_goalies = {"theirs": {"GA": 3, "SA": 70, "SV": 67, "GAA": 1.5}}
+search = wp.free_agents(ratio_week, [2, 5], [2, 5, 7], opponent=[7], goalie_stats=banked_goalies,
+                        evaluate={"add": 60, "drop": 2})
+plain = wp.plan_week(None, [2, 5], None, None, None, None, week=ratio_week, opponent=[7],
+                     goalie_stats=banked_goalies)
+unbanked = wp.plan_week(None, [2, 5], None, None, None, None, week=ratio_week, opponent=[7])
+check("the free-agent search counts them the way the plan does, week so far included",
+      abs(search["baseline"] - plain["matchup"]["expectedWins"]) < 0.01
+      and abs(search["baseline"] - unbanked["matchup"]["expectedWins"]) > 0.05,
+      (search["baseline"], plain["matchup"]["expectedWins"], unbanked["matchup"]["expectedWins"]))
+
+
+# --------------------------------------------------------------------------
+print("\n=== 6c. the goalie minimum ===")
+
+# TOR plays all three nights, MTL two: the Sieve cannot reach 3 from nothing
+short = wp.plan_week(RATIO_POOL, [1, 5], ["G"] + RATIOS, SLOTS, WEEK, SEASON, opponent=[2, 7],
+                     goalie_minimum=3, goalie_stats={"mine": {"GP": 3}})
+odds = {r["category"]: r["winProbability"] for r in short["matchup"]["categories"]}
+plain_odds = {r["category"]: r["winProbability"] for r in wp.plan_week(
+    RATIO_POOL, [1, 5], ["G"] + RATIOS, SLOTS, WEEK, SEASON, opponent=[2, 7])["matchup"]["categories"]}
+reach = short["matchup"]["goalieMinimum"]
+check("an opponent who cannot reach the minimum forfeits every goalie category",
+      reach["theirs"]["chance"] == 0 and reach["mine"]["chance"] == 1
+      and all(odds[c] == 1.0 for c in RATIOS), (odds, reach))
+check("and nothing else changes",
+      odds["G"] == plain_odds["G"], (odds["G"], plain_odds["G"]))
+
+unsure = wp.plan_week(RATIO_POOL, [1, 5], ["G"] + RATIOS, SLOTS, WEEK, SEASON, opponent=[2, 7],
+                      goalie_minimum=3)
+unsure_reach = unsure["matchup"]["goalieMinimum"]
+unsure_odds = {r["category"]: r["winProbability"] for r in unsure["matchup"]["categories"]}
+check("the matchup says where each side stands",
+      unsure_reach["minimum"] == 3 and unsure_reach["mine"]["soFar"] == 0
+      and unsure_reach["mine"]["soFarFrom"] == "none"
+      and 0 < unsure_reach["mine"]["toCome"] <= 3 and 0 < unsure_reach["mine"]["chance"] < 1, unsure_reach)
+check("and when you might fall short too, both sides' chances are weighed",
+      abs(unsure_odds["W"] - (unsure_reach["mine"]["chance"]
+                              + 0.5 * (1 - unsure_reach["mine"]["chance"]))) < 0.002,
+      (unsure_odds, unsure_reach))
+
+through = wp.plan_week(RATIO_POOL, [1, 5], ["G"] + RATIOS, SLOTS, WEEK, SEASON, opponent=[2, 7],
+                       goalie_minimum=3, goalie_stats={"mine": {"GP": 3}, "theirs": {"GP": "2"}})
+through_reach = through["matchup"]["goalieMinimum"]
+check("appearances so far count toward it",
+      through_reach["mine"]["chance"] == 1.0 and through_reach["mine"]["soFarFrom"] == "yahoo"
+      and through_reach["theirs"]["chance"] > 0.5, through_reach)
+both_short = wp.plan_week(RATIO_POOL, [1, 5], ["G"] + RATIOS, SLOTS, WEEK, SEASON, opponent=[2, 7],
+                          goalie_minimum=5)
+check("both sides short is a tie in every goalie category",
+      all(r["winProbability"] == 0.5 for r in both_short["matchup"]["categories"] if r["category"] in RATIOS),
+      both_short["matchup"]["categories"])
+check("with no minimum, no forfeit and nothing said",
+      wp.plan_week(RATIO_POOL, [1, 5], ["G"] + RATIOS, SLOTS, WEEK, SEASON, opponent=[2, 7],
+                   goalie_minimum=0)["matchup"].get("goalieMinimum") is None)
+check("without an opponent, your own standing is still reported",
+      wp.plan_week(RATIO_POOL, [5], RATIOS, SLOTS, WEEK, SEASON, goalie_minimum=3)["goalieMinimum"]["mine"]["chance"] > 0)
+
+POINTS = {"G": 3.0, "W": 4.0, "GA": -2.0, "SV": 0.2}
+counted = wp.plan_week(RATIO_POOL, [1, 5], list(POINTS), SLOTS, WEEK, SEASON, opponent=[2, 7],
+                       points=POINTS)
+zeroed = wp.plan_week(RATIO_POOL, [1, 5], list(POINTS), SLOTS, WEEK, SEASON, opponent=[2, 7],
+                      points=POINTS, goalie_minimum=5)
+goalie_points = zeroed["matchup"]["goaliePoints"]
+check("a points league short of the minimum scores no goalie points",
+      abs(zeroed["matchup"]["minePoints"] - (counted["matchup"]["minePoints"] - goalie_points["mine"])) < 0.02
+      and abs(zeroed["matchup"]["theirsPoints"] - (counted["matchup"]["theirsPoints"] - goalie_points["theirs"])) < 0.02
+      and goalie_points["mine"] != 0, (zeroed["matchup"], counted["matchup"]))
+
+# A free goalie who gets you to the minimum is worth the categories it saves
+minimum_week = wp.Week(RATIO_POOL, ["G"] + RATIOS, SLOTS, WEEK, SEASON)
+needs_goalie = wp.free_agents(minimum_week, [1, 6], [1, 6, 2, 7], opponent=[2, 7], goalie_minimum=3,
+                              goalie_stats={"theirs": {"GP": 2}}, evaluate={"add": 5, "drop": None})
+no_minimum = wp.free_agents(minimum_week, [1, 6], [1, 6, 2, 7], opponent=[2, 7],
+                            goalie_stats={"theirs": {"GP": 2}}, evaluate={"add": 5, "drop": None})
+check("the free-agent search values a goalie for getting you to the minimum",
+      needs_goalie["candidates"][0]["gain"] > no_minimum["candidates"][0]["gain"] + 0.1,
+      (needs_goalie["candidates"][0]["gains"], no_minimum["candidates"][0]["gains"]))
 
 
 # --------------------------------------------------------------------------
@@ -472,6 +617,36 @@ try:
             check("a manual night comes back as set; malformed ones are dropped, not refused",
                   manual["status"] == "success" and manual["days"][0].get("manual")
                   and manual["days"][0]["slots"][0]["player"] is None, manual.get("message"))
+
+        # GAA and save percentage on real goalies, over a real week: odds for
+        # both, and the same projection the Goalie Planning tab shows
+        from datetime import date as _date, timedelta as _timedelta
+        starters = [r["playerId"] for r in fetch_all(
+            'SELECT "playerId" FROM final_projections WHERE "positionCode" = \'G\''
+            ' ORDER BY "proj_gamesStarted" DESC NULLS LAST LIMIT 4')]
+        seven = (_date.fromisoformat(str(week)) + _timedelta(days=6)).isoformat()
+        ratio_body = {**body, "roster": ids[:12] + starters[:2], "opponent": ids[12:24] + starters[2:],
+                      "categories": ["proj_wins", "proj_goalsAgainstAverage", "proj_savePct"],
+                      "start": str(week), "end": seven,
+                      "goalie_stats": {"mine": {"GA": 4, "SA": 61, "SV": 57, "GAA": 2.05},
+                                       "theirs": {"GA": 0, "SA": 33, "SV": 33, "GAA": 0}}}
+        ratio_plan = client.post("/standalone/api/week", json=ratio_body).get_json()
+        ratio_rows = {r["category"]: r for r in (ratio_plan.get("matchup") or {}).get("categories", [])}
+        check("real goalies over a real week get odds for GAA and save percentage",
+              all(0 < (ratio_rows.get(c) or {}).get("winProbability", 0) < 1 for c in ("GAA", "SVpct"))
+              and 1.0 < ratio_rows["GAA"]["mine"] < 5.0 and 0.85 < ratio_rows["SVpct"]["mine"] < 0.95,
+              ratio_rows or ratio_plan.get("message"))
+        goalie_tab = client.post("/standalone/api/goalies", json=ratio_body).get_json()
+        if ratio_rows and goalie_tab.get("status") == "success":
+            check("the Matchup tab and Goalie Planning project the same GAA and save percentage",
+                  all(abs(ratio_rows["GAA"][who] - goalie_tab[side]["projected"]["GAA"]) < 1e-3
+                      and abs(ratio_rows["SVpct"][who] - goalie_tab[side]["projected"]["SVpct"]) < 2e-4
+                      for who, side in (("mine", "mine"), ("theirs", "theirs"))),
+                  (ratio_rows["GAA"], ratio_rows["SVpct"],
+                   goalie_tab["mine"]["projected"], goalie_tab["theirs"]["projected"]))
+            check("a week of shutouts so far is measured by its shots on both",
+                  goalie_tab["theirs"]["minutesFrom"] == "shots"
+                  and ratio_plan["matchup"]["goaltending"]["theirs"]["minutesFrom"] == "shots")
 
         pool_response = client.post("/standalone/api/free-agents/pool",
                                     json={**body, "rostered": ids})

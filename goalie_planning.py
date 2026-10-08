@@ -20,7 +20,8 @@ GA and GAA, and `GAA = GA x 60 / TOI`, so `TOI = 60 x GA / GAA` recovers them
 exactly - see `minutes_played`. What comes back already carries every pull,
 empty net and overtime minute, because Yahoo worked its GAA out from the real
 ones. With nothing conceded yet there is nothing to divide, and the caller
-falls back to counting starts at the measured average below.
+falls back to counting starts at the measured average below, or to the shots
+faced.
 
 **A start is not 60 minutes, and nothing here assumes it is.** Measured over
 the 2,624 starts of 2025-26 in `player_game_stats`, the table the nightly job
@@ -44,7 +45,7 @@ the opponent, and that is the whole model.
 
 Author - Jason Druckenmiller
 Created - 9/22/2026
-Updated - 9/22/2026
+Updated - 10/7/2026
 """
 
 import math
@@ -56,6 +57,10 @@ import math
 MINUTES_BY_GOALS = {0: 57.6, 1: 59.8, 2: 59.8, 3: 58.7, 4: 57.3, 5: 56.6, 6: 57.3, 7: 59.1}
 AVERAGE_START_MINUTES = 58.6      # every start, however it went
 GAA_MINUTES = 60.0                # the hour GAA is quoted per, not a start's length
+# Minutes per shot faced, over the same starts: 153,700 minutes on 70,746
+# shots. What a week of shutouts so far is measured by, since a GAA of zero
+# cannot be inverted (a shutout alone runs 2.27, close enough).
+MINUTES_PER_SHOT = 2.17
 
 # A start that ended early: the average of the 147 that ran under 55 minutes.
 PULL_MINUTES = 30.3
@@ -67,13 +72,14 @@ PULL_SHARE = 0.056                # how often a start ends this way at all
 MAX_GOALS = 7
 
 
-def minutes_played(goals_against, gaa, starts=None):
+def minutes_played(goals_against, gaa, starts=None, shots=None):
     """
     (minutes, how it was worked out) for a week of goaltending so far.
 
     From GA and GAA where both are real, since `GAA = GA x 60 / TOI` inverts
     exactly and carries the real minutes with it. Otherwise from starts at the
-    measured average, which is all a page has when nothing has been conceded.
+    measured average, or from the shots faced - which is what a week of
+    shutouts leaves, since nothing has been conceded to divide.
     """
     goals_against = _number(goals_against)
     gaa = _number(gaa)
@@ -81,6 +87,8 @@ def minutes_played(goals_against, gaa, starts=None):
         return goals_against * GAA_MINUTES / gaa, 'gaa'
     if starts:
         return _number(starts) * AVERAGE_START_MINUTES, 'starts'
+    if _number(shots) > 0:
+        return _number(shots) * MINUTES_PER_SHOT, 'shots'
     return 0.0, 'none'
 
 

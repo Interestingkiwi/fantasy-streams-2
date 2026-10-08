@@ -8,7 +8,7 @@ A Flask web app that gives Head-to-Head fantasy hockey managers advanced analyti
 draft prep, lineup/streaming help, and (planned) automated Yahoo waiver transactions.
 Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason Druckenmiller.
 
-## Where things stand (10/5/2026)
+## Where things stand (10/7/2026)
 
 - **The 2026-27 season is under way** (opened 9/29). Render's nightly cron is
   live: `player_game_stats`, `team_stats` and (from 10/1) `player_game_lines`
@@ -48,6 +48,16 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
   device signing in used to save its own copy, so a scrape on one never
   reached the other. Split accounts converge on the newest copy by themselves.
   See *Accounts (temporary)*.
+- **GAA and save % are projected in the matchup** (10/7/2026), with win odds
+  that count toward expected categories won. Built from goals and shots
+  against, each side's goalie starts on top of its week so far, and the same
+  numbers Goalie Planning shows. They do not set lineups yet. See *GAA and
+  save percentage in the matchup*.
+- **The goalie minimum is read and applied** (10/7/2026). Scrape score reads
+  each team's appearances and the league's minimum off the two team pages, and
+  the matchup weighs each side's chance of reaching it: short, it forfeits
+  every goalie category (or, in a points league, its goalie points). See
+  *The goalie minimum*.
 - **Move reminders** (10/5/2026): a push notification when a planned move is
   due, linking Yahoo's player search, since nothing can make the move without
   write access. They need an account and, on Render, `VAPID_PUBLIC_KEY` /
@@ -94,7 +104,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `static/icons/` | The app icons (gradient + FS), drawn once with Pillow - a dev-time tool, not in `requirements.txt` |
 | `manage_accounts.py` | Dev CLI: `list` / `delete <username>` accounts, `--render` for Render's database |
 | `yahoo_rosters.py` | Every team's roster from a Yahoo league's Starting Rosters page: fetch (public leagues), parse, and match names to projections. See *Scraping rosters from Yahoo* |
-| `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
+| `yahoo_matchup.py` | A matchup's score so far from Yahoo's Matchup page: URL (league, week, team), parse; and each team's goalie appearances and the league's minimum from its own page. Reuses `yahoo_rosters`' fetch and errors. See *Scraping the score so far* |
 | `yahoo_transactions.py` | A league's adds, drops and trades: Yahoo's public read-only API for public leagues, the Transactions page (via the bookmarklet) for private ones, one compact shape. See *Season History: transactions* |
 | `yahoo_league_api.py` | A public league's settings, weekly scoreboards and day-by-day rosters with stats, from Yahoo's public API, cached in `yahoo_public_cache`. See *Season History: left on the bench* |
 | `bench_points.py` | Pure: what benched players scored, and the single swaps that would have won or tied a category. See *Season History: left on the bench* |
@@ -105,6 +115,9 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
 | `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
 | `goalie_planning.py` | Whether one more goalie start is worth the risk: outcomes, minutes and the limits. See *The Goalie Planning tab* |
+| `goalie_ratios.py` | Pure: each side's projected GAA and save percentage from its goalie seats and week so far, their spread, and the odds of winning each. See *GAA and save percentage in the matchup* |
+| `goalie_minimum.py` | Pure: each side's chance of reaching the league's goalie minimum, and the forfeit that falling short costs. See *The goalie minimum* |
+| `derive_ratio_dispersion.py` | Measures how much goals against and saves vary per start (`goalie_ratios.GA_DISPERSION` / `SV_DISPERSION`) and checks the odds on real weeks. Not a job — it prints constants to copy by hand |
 | `player_form.py` | PP share, L20/L10/L5 trends and home/road splits from `player_game_stats`, for the Lineups roster view. See *The Lineups tab* |
 | `season_stats.py` | A player's season so far and his L20/L10/L5 and home/road windows, in Yahoo codes, ratios rebuilt from their parts. See *The player card* |
 | `player_card.py` | Pure: one player's card for League Home's player modal — stats windows, game log, line and PP unit or a goalie's starts, the week's opponents. See *The player card* |
@@ -850,8 +863,9 @@ counted twice; the page says so. That checkbox appears only for a week already
 under way, so it could not be exercised in a browser before opening night
 (2026-09-29) — worth a look the first week of the season.
 
-Rate categories (GAA, SVpct) are listed in the matchup but get no odds: their
-final value depends on volume that is not projected as a ratio.
+Rate categories (GAA, SVpct) are projected from their parts and get odds —
+see *GAA and save percentage in the matchup* — but they do not set lineups,
+and a points league lists them unprojected.
 
 `optimise_week` re-values players into new dicts, so benches are found by
 `playerId`, not `lineup_utils.benched` — which matches object identity and
@@ -942,8 +956,8 @@ or `W` and would drop them on its next save, so the lineup keeps
 `fs_lineupSlots`, seeded once from `fs_rosterSlots`. Also `fs_leagueTeams`
 (below), `fs_standaloneMoves`, `fs_standaloneWeek`, `fs_standaloneRemaining`,
 `fs_standaloneBanked`, `fs_standaloneTab`, `fs_lineupEdits`,
-`fs_standaloneGoalieStats`, `fs_leagueTransactions` and `fs_fantasyWeeks` — all
-synced to an account — plus `fs_benchLineups`, a private league's daily
+`fs_standaloneGoalieStats`, `fs_goalieMinimum`, `fs_leagueTransactions` and
+`fs_fantasyWeeks` — all synced to an account — plus `fs_benchLineups`, a private league's daily
 lineups, kept on the device only (see *Season History: left on the bench*),
 `fs_statSource`, the Stat Sourcing, a per-device way of looking, and
 `fs_historyTab`, Season History's open section. The older `fs_standaloneRoster` /
@@ -1212,6 +1226,93 @@ in. `/api/goalies` builds a **second `Week` over the goalie counting stats**,
 because the league's own categories may not include GA or SA and a plan that
 never projected them cannot be read for them.
 
+A week of shutouts so far has no GA to invert, so its minutes come from the
+shots faced instead (`MINUTES_PER_SHOT`, 2.17, measured over 2025-26).
+Before 10/7/2026 such a week counted no minutes at all.
+
+### GAA and save percentage in the matchup (`goalie_ratios.py`)
+
+**Projected from their parts, not from a rate.** A ratio is not a sum of what
+each start adds, so each side's final GAA and save percentage are built from
+goals against, shots against, saves and minutes. That is the week so far
+(`fs_standaloneGoalieStats`, which the Matchup scrape fills and Goalie Planning
+edits, now sent with every plan as `goalie_stats`) plus each seated goalie's
+per-start line times his start odds, at 58.6 minutes a start. When a league
+scores either ratio, `Week` carries GA, SA and SV on every line, unscored. They
+get no weight, no column and no total. Goalie Planning reads its minutes so
+far through the same `goalie_ratios.so_far`, and a route test pins that both
+tabs project the same GAA and save percentage.
+
+**Odds from a delta-method spread.** A final GAA moves by `60/M x (G - r x M)`,
+so each seat adds `p x d_GA x ga` (what happens if he starts) and
+`p(1-p)(ga - r x m)^2` (whether he does). The second term is zero for a start
+that would play exactly to the side's running GAA. Save percentage is the same
+with saves over shots. What is banked adds no variance but dilutes the rest.
+The two sides are independent and the margin is taken as normal. A row a side
+has no goaltending for gets a `note` and no odds, and is left out of
+`scoredCategories`.
+
+**Measured, then checked on weeks** (`derive_ratio_dispersion.py`, 2025-26,
+against each goalie's own season rate). Goals against around minutes played
+run at **0.87** of Poisson, since pulls stop the count and empty-net goals are
+not the goalie's. Saves around shots run at **0.99** of binomial. On 20,000
+random two-goalie sides from real weeks, errors spread at 0.98 and 1.00 of the
+predicted spread, and the predicted odds matched actual results bin by bin. The
+spread formula is within 10% of a simulation of the same model; it runs a
+little wide when one coin-flip start is most of the week. **Expect modest
+odds:** even with every goalie's true rate known, a week's ratios rarely sit
+outside 25-75% before it starts.
+
+**Not yet:** lineups do not chase or protect the ratios. The optimiser's
+weights are per unit of a counting stat, and `matchup_weights` still gives
+rates none. The free-agent search counts the ratios only in its exact pass.
+A points league lists the ratios unprojected.
+
+### The goalie minimum (`goalie_minimum.py`)
+
+**Yahoo's rule:** a team short of the league's minimum goalie appearances at
+the end of a week forfeits. In a categories league the opponent takes every
+goalie category; in a points league its goalie points count as zero. An
+appearance is any game a goalie in an active slot touches the ice, relief
+included. The default is 3. Both 5848 and the test league use 3.
+
+**Where it is read: each team's own page, not the Matchup page.**
+`/hockey/<league>/<team>?week=N` carries a Goaltender Appearances box
+(`#position-caps-head`): "Total for Week 2: 4 (Minimum Reached)" and "must
+reach the minimum of 3 appearances". Yahoo updates it each morning, so it
+counts through last night. The settings page and the public API's settings
+(`min_games_played`) carry the minimum too, but not the appearances.
+
+- **Public leagues:** `/api/matchup/scrape` fetches both teams' pages beside
+  the matchup, two at once (~2s in all). A box for another week is ignored,
+  and a page that cannot be read costs the appearances but never the score.
+- **Private leagues:** the bookmarklet reads the two team pages after the
+  matchup, in both the Matchup-page mode and the everything mode. It sends
+  only each box (~700 bytes), as `goalies: {team number: html}`.
+- **Stored:** the appearances as `GP` in each side's goalie numbers
+  (`fs_standaloneGoalieStats`, which Goalie Planning also edits). The minimum
+  goes in `fs_goalieMinimum` (`{minimum, from}`, synced to an account), which
+  can also be typed under the matchup table. Unset, Yahoo's default of 3 is
+  used, and the page says so. 0 means no minimum.
+
+**The chance of reaching it** is appearances so far plus the goalie seats
+still to come. One (night, NHL team) is one chance, at `min(1, Σ p)`, since
+only one goalie starts each game. The Poisson-binomial tail is worked out
+exactly. Without a count from Yahoo, appearances so far are estimated from the
+minutes at 58.6 a start, and labelled as estimated. Relief appearances are not
+projected, so the chance runs a little low.
+
+**Applied to the matchup:** for a goalie category with odds `q` when both
+sides are through, `P = Pm·Pt·q + Pm·(1-Pt) + ½(1-Pm)(1-Pt)`. Both sides
+short is taken as a tie, which is an assumption; Yahoo only says a short side
+"won't win" a category. `contested` is scaled by `Pm·Pt`. In a points league,
+expected goalie points are multiplied by the chance, and `P(1-P)·goalie
+points²` is added to the variance. The free-agent search's exact pass sees
+all of it, so a goalie who gets you to the minimum is valued for what that
+saves. A points league's Matchup tab also says when your goalie points
+are projected below zero while the minimum is still unreached: missing it on
+purpose would be worth that much.
+
 ### Scraping rosters from Yahoo (`yahoo_rosters.py`)
 
 **League ID + Scrape rosters** fills every team from Yahoo's
@@ -1342,6 +1443,12 @@ route adds each team's stats keyed by projection column, which is how
 cannot be added to — and a category the page lacks is left as it was, with a
 note. The live page (~3 MB after Yahoo's scripts) gives the same table as the
 served one, checked in the browser.
+
+**Each team's own page is read too**, for its goalie appearances and the
+league's minimum (see *The goalie minimum*), by the server for a public league
+and by the bookmarklet for a private one. A bookmark dragged before 10/7/2026
+sends the matchup without them. The score still applies, and appearances are
+estimated from minutes until it is dragged again.
 
 Private leagues use the same bookmarklet as the rosters. It now accepts either
 page and posts `fs-yahoo-page`, and the receiving page routes on the URL's path.
@@ -1866,7 +1973,7 @@ handful of files rather than edits through three pages.
 - **Which keys.** `LEAGUE_KEYS`, listed identically in `account_routes.py` and
   `account-sync.js` (a test fails if they drift): teams, Yahoo league ID,
   scoring, roster and lineup slots, playoff weeks, fantasy weeks, moves, score
-  so far, goalie stats, manual lineups, scraped transactions. Per-device state stays local: open tab,
+  so far, goalie stats, the goalie minimum, manual lineups, scraped transactions. Per-device state stays local: open tab,
   selected week, *Only nights still to play*, and draft prep's view settings,
   saved lists and tags (the draft is over; lists are ~1 MB).
 - **Unsaved edits win.** A write sets `fs_accountPending` until a save carrying
@@ -2329,12 +2436,14 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_game_lines.py` | lines from a game built shift by shift: 5-on-5 and power-play seconds counted from the skaters on the ice (an empty net is neither, goalies never in a set), line 1 the offensive line even when the checking line is out longer together, PP units from shared power-play time, a skater with no position on no line, the badge's unit from the last game with a power play; then that every game this season has lines and no line or unit is oversized |
 | `test_player_card.py` | the card with no database for the maths: ratios rebuilt from summed parts (and a goalie's GAA over his own seconds), an uncollected column missing rather than zero, windows only once played and arrows by `player_form`'s test on counting stats only, a goalie's starts against scraped team games with rest since his last appearance, opponent ranks kindest-first (a goalie's shots the other way); then the route's 404, 400 and both kinds of card |
 | `test_stat_sourcing.py` | Stat Sourcing: opening the day after the last team's fifth game (and the preview opening it early), rewritten rows reading back through `daily_value` as the season rate (per start, GAA over seconds), no-game players kept on their projection, no goalie column on a skater, weights and draft-board rank left on the projections; Combined weighting each stat k to n (goals barely moved by four games, faceoffs a good part of the way, a long season outweighing any projection), points and saves built from their blended parts, every measured k used; then a goalie's relief outings left out of the sums, and the routes - planning with each, refusing Season to date before it opens with the date while Combined plans, and refusing an unknown source |
-| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; then the routes on real data including every 400, rank and form on every player, and malformed manual nights dropped, and the free agent pool route |
+| `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; GAA and save percentage projected with odds that count in expected wins, the week so far turning them, their parts never shown or totalled, and lineups unchanged by them; the goalie minimum forfeiting every goalie category (a tie when both fall short), zeroing a points league's goalie points, and making a free goalie worth what reaching it saves; then the routes on real data including every 400, rank and form on every player, malformed manual nights dropped, the free agent pool route, and the Matchup tab and Goalie Planning projecting the same ratios |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
+| `test_goalie_minimum.py` | the goalie minimum with no database: Yahoo's appearances taken as given and otherwise estimated (and said to be), a tandem seated on one night one chance at an appearance, the chance exact against brute force, and the forfeit by Yahoo's rule - the opponent short, you win every goalie category; you short, you lose them; both short, a tie |
+| `test_goalie_ratios.py` | the matchup's GAA and save percentage with no database: the week so far read as Goalie Planning reads it (a week of shutouts by its shots), seated goalies per start, ratios from summed parts, a start in doubt adding nothing when it would play to the side's GAA, banked minutes diluting the rest, the spread within 10% of a simulation of the model, and odds the lower-is-better way for GAA with none for a side that has no goaltending |
 | `test_accounts.py` | the temporary accounts, on real routes under `zztest*` usernames: one account can never read, save over, open, delete or even version-check another's league; a stale save is refused as a conflict; the page carries its league escaped so a team name cannot close the script tag; lockout, sign-up limits (a spoofed forwarding header does not reset them), size and league caps; an account deleted by `manage_accounts.py` signed out where it was signed in; the key lists in Python and JS not drifting; and one Yahoo league on every device - a phone's own copy giving way to the desk's newer one by itself, a copy opened by hand staying open, sign-in listing each league's Yahoo ID. **It deletes every `zztest*` account** — do not use that prefix by hand |
 | `test_move_reminders.py` | move reminders: due from its time until the end of the move's day in the device's own zone, the night-before setting, a move already made never reminded, one listed twice reminded once and one moved to another night again, ids however stored (a rookie's negative one too); the notification's names and Yahoo search link; a real push encrypted, signed with VAPID and decrypted with the device's key on a local push service; sending once through failures, retries, a held lock and a device gone; then the routes - sign-in required, keys no browser would make refused, another account never touching a device, settings clamped, the service worker and manifest served. Under `zztestpush*` accounts |
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
-| `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse) |
+| `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse); then each team's own page for the goalie minimum - read for the matchup's week, a page showing another week not used, an unreadable one costing the appearances but not the score, and the boxes the bookmarklet sends |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
 | `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; season and weekly tallies, where a lone drop is a move but not an add and last week's pickup still counts his starts this week; two shutouts as two hours; points leagues without swings; then the route, private leagues and bad input |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, an update reading one page down to the transaction it holds (the whole page, for claims settled late) and every page when it holds none Yahoo knows, and the routes, saying when to merge and when to replace |
@@ -2467,6 +2576,14 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   (about a minute) and keeps the lineups per device; a second device reads them
   again. Points leagues get bench totals but no swaps.
 - **Season to date is closed until 2026-10-14**, by design (*Stat Sourcing*).
+- **Lineups do not chase or protect GAA and save percentage** yet, though the
+  matchup projects them and gives odds, nor play for the goalie minimum. Both
+  are counted in the odds; neither sets a lineup. See *GAA and save
+  percentage in the matchup* and *The goalie minimum*.
+- **The goalie minimum's "both short" is a tie by assumption**: Yahoo says a
+  short side "won't win" its goalie categories, not what happens when both
+  are. Relief appearances are not projected. The bookmarklet's team-page reads
+  have not been run by a real click (see *Scraping rosters from Yahoo*).
 - **Transaction Results' counterfactual is a model**: it assumes the dropped
   player would have started in any open spot he fits, and that a benched
   teammate who played would have covered a pickup's start otherwise. Managers

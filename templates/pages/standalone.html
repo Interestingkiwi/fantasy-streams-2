@@ -239,6 +239,19 @@
                 Type in the matchup score as it stands (the boxes are at the end of each row). Pair it with <em>Only nights still to play</em>, or tonight is counted twice.
             </p>
             <div id="matchup-body" class="overflow-x-auto"></div>
+            <!-- Outside the table, which every plan redraws, so typing here keeps its place -->
+            <div id="goalie-minimum" class="hidden flex flex-col gap-2 border-t border-gray-700 px-3 py-3 sm:px-4 text-sm text-gray-300">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <label for="goalie-minimum-input" class="flex items-center gap-2">
+                        <span class="font-semibold text-white">Goalie minimum</span>
+                        <input id="goalie-minimum-input" type="text" inputmode="numeric" autocomplete="off"
+                               class="form-input w-14 p-1.5 text-center text-sm" aria-describedby="goalie-minimum-from">
+                        <span>appearances a week</span>
+                    </label>
+                    <span id="goalie-minimum-from" class="text-xs text-gray-500"></span>
+                </div>
+                <ul id="goalie-minimum-status" class="text-xs space-y-1"></ul>
+            </div>
         </section>
 
         <p id="moves-note" class="hidden text-xs text-gray-400"></p>
@@ -697,6 +710,9 @@
             historyTab: 'fs_historyTab',
             lineupEdits: 'fs_lineupEdits',
             goalieStats: 'fs_standaloneGoalieStats',
+            // The league's minimum goalie appearances a week, {minimum, from}:
+            // read off Yahoo's team pages by the Matchup scrape, or typed
+            goalieMinimum: 'fs_goalieMinimum',
             transactions: 'fs_leagueTransactions',
             // A private league's daily lineups, read by the bookmarklet for bench
             // points. Kept on this device only - ~3 KB a day, too much to sync -
@@ -845,6 +861,14 @@
         // Keyed by week, so last week's score cannot leak into this one
         let banked = read(KEYS.banked, {}) || {};
         let bankedOpen = false;
+        // Each side's goaltending so far ({W, GA, SA, SV, SHO, GAA, GP}), by
+        // week: what GAA and save percentage are built on, on the Matchup tab
+        // and on Goalie Planning, whether or not the league scores the parts.
+        // GP is goalie appearances, which the goalie minimum counts
+        let goalieStats = read(KEYS.goalieStats, {}) || {};
+        // Yahoo's default until the league's own is read or typed
+        const DEFAULT_GOALIE_MINIMUM = 3;
+        let goalieMinimum = read(KEYS.goalieMinimum, null);
         let gridSide = 'mine';
         let weekData = null;     // FantasyWeeks.load(): season, standard weeks, customised
         let weeks = [];          // the weeks in use - standard, or this league's edit
@@ -1319,7 +1343,7 @@
                 }, 5000);
             }
 
-            if (!transactions && !everything) {
+            if (!transactions && !everything && !matchup) {
                 deliver({ type: 'fs-yahoo-page', url: location.href, html: document.documentElement.outerHTML });
                 return;
             }
@@ -1366,6 +1390,42 @@
                     }).catch(fail);
                 }
                 readPage();
+            }
+            // The goalie minimum is on each team's own page, not the matchup:
+            // keep just its Goaltender Appearances box, by team number
+            function readGoalies(doc, weekNumber, done) {
+                var numbers = [];
+                Array.prototype.forEach.call(doc.querySelectorAll('table.Datatable tbody tr'), function (tr) {
+                    var link = Array.prototype.filter.call(tr.querySelectorAll('td a[href]'), function (a) {
+                        return /\/hockey\/\d+\/\d+\/?$/.test(a.getAttribute('href') || '') && a.textContent.trim();
+                    })[0];
+                    var found = link && link.getAttribute('href').match(/\/(\d+)\/?$/);
+                    if (found && numbers.indexOf(found[1]) === -1) numbers.push(found[1]);
+                });
+                var boxes = {};
+                var left = numbers.length;
+                if (!left) { done(boxes); return; }
+                document.title = 'Reading goalie appearances…';
+                numbers.forEach(function (number) {
+                    getText(base + '/' + number + (weekNumber ? '?week=' + weekNumber : '')).then(function (text) {
+                        var box = new DOMParser().parseFromString(text, 'text/html').querySelector('#position-caps-head');
+                        if (box) boxes[number] = box.outerHTML;
+                    }).catch(function () {}).then(function () {
+                        left -= 1;
+                        if (!left) {
+                            document.title = title;
+                            done(boxes);
+                        }
+                    });
+                });
+            }
+
+            if (matchup && !everything) {
+                readGoalies(document, (location.search.match(/[?&]week=(\d+)/) || [])[1], function (boxes) {
+                    deliver({ type: 'fs-yahoo-page', url: location.href,
+                              html: document.documentElement.outerHTML, goalies: boxes });
+                });
+                return;
             }
 
             if (!everything) {
@@ -1470,15 +1530,18 @@
                 return getText(sent.matchupUrl);
             }).then(function (html) {
                 sent.matchup = html;
-                readTransactions(base + '/transactions', function (tables) {
-                    sent.transactions = tables;
-                    if (!benchDays && !benchWeeks) {
-                        deliver(sent);
-                        return;
-                    }
-                    readBench(function (bench) {
-                        sent.bench = bench;
-                        deliver(sent);
+                readGoalies(new DOMParser().parseFromString(html, 'text/html'), week, function (boxes) {
+                    sent.goalies = boxes;
+                    readTransactions(base + '/transactions', function (tables) {
+                        sent.transactions = tables;
+                        if (!benchDays && !benchWeeks) {
+                            deliver(sent);
+                            return;
+                        }
+                        readBench(function (bench) {
+                            sent.bench = bench;
+                            deliver(sent);
+                        });
                     });
                 });
             }).catch(fail);
@@ -1711,6 +1774,12 @@
         // A Yahoo page posted back by the bookmarklet. Only Yahoo may send one,
         // and only HTML is taken - it goes to the server to be parsed, never
         // run. 'fs-rosters' is what the bookmark sent before it read matchups.
+        // Each team's Goaltender Appearances box, by Yahoo team number - HTML
+        // for the server to parse, like the pages
+        const goalieBoxes = raw => Object.fromEntries(
+            Object.entries(raw && typeof raw === 'object' ? raw : {})
+                .filter(([number, html]) => /^\d+$/.test(number) && typeof html === 'string'));
+
         window.addEventListener('message', event => {
             if (!YAHOO_ORIGIN.test(event.origin)) return;
             const data = event.data;
@@ -1729,7 +1798,7 @@
                     } catch (error) { /* read as nothing */ }
                 }
                 runUpdate(pageSource({ ...Object.fromEntries(fields.map(key => [key, data[key]])),
-                    timeZone: String(data.timeZone || ''), benchDays }));
+                    timeZone: String(data.timeZone || ''), benchDays, goalies: goalieBoxes(data.goalies) }));
                 return;
             }
             if (!data || !['fs-yahoo-page', 'fs-rosters'].includes(data.type) || typeof data.html !== 'string') return;
@@ -1738,7 +1807,7 @@
             try { path = new URL(String(data.url || '')).pathname; } catch (error) { /* checked by the server */ }
             if (/\/matchup/.test(path)) {
                 selectTab('matchup');
-                matchupFromHtml(data.html, String(data.url || ''));
+                matchupFromHtml(data.html, String(data.url || ''), goalieBoxes(data.goalies));
                 return;
             }
             if (/\/transactions/.test(path)) {
@@ -2427,6 +2496,81 @@
 
         // --- Score so far ----------------------------------------------------
         const weekBanked = () => banked[$('week-select').value] || {};
+        const weekGoalieStats = () => goalieStats[$('week-select').value] || {};
+        const goalieMinimumValue = () =>
+            (Number.isInteger(goalieMinimum?.minimum) ? goalieMinimum.minimum : DEFAULT_GOALIE_MINIMUM);
+
+        // From the Matchup scrape ('yahoo') or the box under the matchup ('typed')
+        function setGoalieMinimum(value, from) {
+            const minimum = parseInt(value, 10);
+            if (!Number.isInteger(minimum) || minimum < 0) return;
+            goalieMinimum = { minimum: Math.min(minimum, 20), from };
+            write(KEYS.goalieMinimum, goalieMinimum);
+        }
+
+        $('goalie-minimum-input').addEventListener('input', event => {
+            const text = event.target.value.trim();
+            if (text === '') {
+                goalieMinimum = null;
+                localStorage.removeItem(KEYS.goalieMinimum);
+            } else if (/^\d{1,2}$/.test(text)) {
+                setGoalieMinimum(text, 'typed');
+            } else {
+                return;
+            }
+            schedulePlan();
+        });
+
+        // Where each side stands against the minimum, under the matchup table
+        function renderGoalieMinimum(match) {
+            const show = rosters.theirs.length > 0 && activeCategories().some(c => c.goalie);
+            $('goalie-minimum').classList.toggle('hidden', !show);
+            if (!show) return;
+            const box = $('goalie-minimum-input');
+            if (document.activeElement !== box) box.value = goalieMinimum ? String(goalieMinimum.minimum) : '';
+            box.placeholder = String(DEFAULT_GOALIE_MINIMUM);
+            $('goalie-minimum-from').textContent = goalieMinimum?.from === 'yahoo' ? 'Read from Yahoo.'
+                : goalieMinimum ? 'Typed in.'
+                : 'Yahoo’s default — Scrape score from Yahoo reads your league’s.';
+
+            const summary = match?.goalieMinimum;
+            const points = leagueMode === 'points';
+            const minimum = goalieMinimumValue();
+            if (!minimum) {
+                $('goalie-minimum-status').innerHTML = '<li class="text-gray-500">No minimum: goalie categories count however few appearances a side makes.</li>';
+                return;
+            }
+            const line = (label, side) => {
+                if (!side) return '';
+                const so = `${side.soFar} ${side.soFar === 1 ? 'appearance' : 'appearances'} so far${side.soFarFrom === 'estimated' ? ' (estimated from minutes)' : ''}`;
+                const tone = side.chance >= 0.9 ? 'text-emerald-400' : side.chance >= 0.6 ? 'text-amber-300' : 'text-red-400';
+                return `<li><span class="text-gray-300">${label}:</span> ${esc(so)}, ${esc((Math.round(side.toCome * 10) / 10).toFixed(1))} more projected &mdash;
+                    <span class="${tone} font-semibold">${side.chance >= 1 ? 'reached' : `${pct(side.chance)} to reach ${minimum}`}</span></li>`;
+            };
+            const items = summary ? [line('You', summary.mine), line('Opponent', summary.theirs)] : [];
+            items.push(`<li class="text-gray-500">A side short of it at the end of the week ${points
+                ? 'scores no goalie points at all' : 'forfeits every goalie category to the other'}, and the odds above count that in.
+                Appearances so far come from each team's page on Yahoo (Scrape score), or GP on <button type="button" class="goto-goalies text-blue-400 hover:text-blue-300 underline">Goalie Planning</button>.</li>`);
+            // Points: a bad week in net can be worth throwing away - say so
+            // when reaching the minimum is projected to leave less than the 0
+            // falling short would. Once it is reached there is no choice left.
+            const goalie = points && (summary?.mine?.soFar ?? 0) < minimum ? match?.goaliePoints : null;
+            const so = goalie && esc(round1(goalie.soFarMine));
+            const projected = goalie && esc(round1(goalie.mine));
+            if (points && goalie && goalie.mine < 0) {
+                items.push(`<li class="text-amber-300">Your goalie points: ${so} so far, ${projected} projected if you reach the minimum.
+                    Falling short would make them 0, so sitting your goalies the rest of the week is projected to be worth
+                    ${esc(round1(-goalie.mine))} ${round1(-goalie.mine) === 1 ? 'point' : 'points'}.</li>`);
+            } else if (points && goalie && goalie.soFarMine < 0) {
+                items.push(`<li>Your goalie points: ${so} so far, ${projected} projected if you reach the minimum &mdash;
+                    better than the 0 falling short would leave.</li>`);
+            }
+            $('goalie-minimum-status').innerHTML = items.join('');
+        }
+
+        $('goalie-minimum').addEventListener('click', event => {
+            if (event.target.closest('.goto-goalies')) openGoalieEntry();
+        });
 
         $('banked-toggle').addEventListener('click', () => {
             bankedOpen = !bankedOpen;
@@ -2559,11 +2703,17 @@
             write(KEYS.banked, banked);
 
             // Goalie planning needs GA, SA and SV whether or not the league
-            // scores them, and GAA to recover the minutes played
-            const goalieSide = team => Object.fromEntries(
-                ['W', 'GA', 'SA', 'SV', 'SHO', 'GAA'].map(code => [code, team.stats?.[code] ?? '']));
-            goalieStats[key] = { mine: goalieSide(mine), theirs: goalieSide(theirs) };
+            // scores them, and GAA to recover the minutes played. GP is the
+            // goalie appearances from each team's own page, for the minimum;
+            // left as it was when Yahoo's team page could not be read
+            const before = goalieStats[key] || {};
+            const goalieSide = (team, was) => ({
+                ...Object.fromEntries(['W', 'GA', 'SA', 'SV', 'SHO', 'GAA'].map(code => [code, team.stats?.[code] ?? ''])),
+                GP: team.goalieAppearances ?? was?.GP ?? '',
+            });
+            goalieStats[key] = { mine: goalieSide(mine, before.mine), theirs: goalieSide(theirs, before.theirs) };
             write(KEYS.goalieStats, goalieStats);
+            if (data.goalieMinimum != null) setGoalieMinimum(data.goalieMinimum, 'yahoo');
 
             const today = localToday();
             if (week && week.start < today && today <= week.end && !$('remaining-only').checked) {
@@ -2628,9 +2778,9 @@
         });
 
         // A private league's Matchup page, read in the user's browser by the bookmarklet
-        function matchupFromHtml(html, url) {
+        function matchupFromHtml(html, url, goalies = {}) {
             showMatchupPanel('<p class="text-gray-300">Reading the matchup from Yahoo&hellip;</p>');
-            return postMatchup('/standalone/api/matchup/parse', { html, url });
+            return postMatchup('/standalone/api/matchup/parse', { html, url, goalies });
         }
 
         // --- Season History: transactions ------------------------------------
@@ -3841,7 +3991,9 @@
         const pageSource = pages => ({
             kind: 'browser',
             rosters: () => postJSON('/standalone/api/rosters/parse', { html: pages.rosters, url: pages.rostersUrl }),
-            matchup: () => postJSON('/standalone/api/matchup/parse', { html: pages.matchup, url: pages.matchupUrl }),
+            matchup: () => postJSON('/standalone/api/matchup/parse', {
+                html: pages.matchup, url: pages.matchupUrl, goalies: pages.goalies || {},
+            }),
             // The link asked for transactions since the newest stored (txHash),
             // so this is the recent pages only - merged, not replacing. A
             // bookmark dragged before that reads them all, which merges the same.
@@ -3976,6 +4128,8 @@
                 slots,
                 source: statSource,
                 banked: weekBanked(),
+                goalie_stats: weekGoalieStats(),
+                goalie_minimum: goalieMinimumValue(),
                 moves: weekMoves(),
                 lineups: activeLineupEdits(),
                 start: span.start,
@@ -5130,6 +5284,34 @@
                 + rosterTable(players.filter(isGoalie), goalieCats, true, { starts: true });
         }
 
+        // What GAA and save percentage rest on, under the matchup table
+        function goaltendingNote(goaltending) {
+            if (!goaltending) return '';
+            const banked = g => g.minutesFrom === 'none' ? 'none yet' : `${Math.round(g.minutes)} minutes`;
+            const starts = g => (Math.round(g.starts * 10) / 10).toFixed(1);
+            return `
+                <p class="text-xs text-gray-500 px-3 pb-3 sm:px-4">
+                    GAA and save % are worked out from goals and shots against: the week so far
+                    (you ${esc(banked(goaltending.mine))}, the opponent ${esc(banked(goaltending.theirs))})
+                    plus the goalie starts still projected (you ${esc(starts(goaltending.mine))}, the opponent ${esc(starts(goaltending.theirs))}).
+                    <em>Scrape score from Yahoo</em> fills in the week so far, or type it on
+                    <button type="button" class="goto-goalies text-blue-400 hover:text-blue-300 underline">Goalie Planning</button>.
+                    They do not set your lineups yet.
+                </p>`;
+        }
+
+        // To Goalie Planning with its boxes open, where the week so far is typed
+        function openGoalieEntry() {
+            selectTab('goalies');
+            loadGoalies();
+            if ($('goalie-entry').classList.contains('hidden')) $('goalie-edit').click();
+            $('goalie-entry').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        $('matchup-body').addEventListener('click', event => {
+            if (event.target.closest('.goto-goalies')) openGoalieEntry();
+        });
+
         // Rendered from the league's categories, not from the last plan, so the
         // score-so-far boxes are there to type into before a plan comes back.
         function renderMatchup() {
@@ -5138,6 +5320,7 @@
             $('matchup').classList.toggle('hidden', !hasOpponent);
             $('totals').classList.toggle('hidden', Boolean(match));
             if (!hasOpponent) return;
+            renderGoalieMinimum(match);
 
             if (!match) {
                 $('matchup-headline').textContent = 'Add opponent players with games this week to see the matchup.';
@@ -5153,6 +5336,11 @@
             const byCode = new Map((match?.categories || []).map(r => [r.category, r]));
             const saved = weekBanked();
             const points = leagueMode === 'points';
+            // A save percentage reads .912, a GAA 2.41, everything else as before
+            const shown = (code, value) => value == null ? '&mdash;'
+                : code === 'SVpct' ? esc(Number(value).toFixed(3).replace(/^0\./, '.'))
+                : code === 'GAA' ? esc(Number(value).toFixed(2))
+                : esc(round1(value));
             const input = (column, who) => `
                 <input type="text" inputmode="decimal" autocomplete="off" value="${esc(saved[column]?.[who] ?? '')}"
                        class="banked-input form-input w-20 p-1.5 text-center text-sm" placeholder="0"
@@ -5181,21 +5369,31 @@
                     <tbody class="divide-y divide-gray-700">
                         ${activeCategories().map(cat => {
                             const row = byCode.get(cat.code);
-                            const inputs = bankedOpen
-                                ? (cat.rate ? '<td></td><td></td>' : `<td class="px-3 py-1.5 text-center">${input(cat.column, 'mine')}</td><td class="px-3 py-1.5 text-center">${input(cat.column, 'theirs')}</td>`)
-                                : '';
-                            if (!row || row.rate) {
+                            // GAA and save percentage are projected, not typed in: the
+                            // so-far columns show them from the goalie numbers
+                            const ratioSoFar = v => `<td class="px-3 py-1.5 text-center text-gray-400">${shown(cat.code, v)}</td>`;
+                            const inputs = !bankedOpen ? ''
+                                : !cat.rate ? `<td class="px-3 py-1.5 text-center">${input(cat.column, 'mine')}</td><td class="px-3 py-1.5 text-center">${input(cat.column, 'theirs')}</td>`
+                                : row && 'soFarMine' in row ? ratioSoFar(row.soFarMine) + ratioSoFar(row.soFarTheirs)
+                                : '<td></td><td></td>';
+                            if (!row || (row.rate && !('mine' in row))) {
                                 return `<tr><td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(cat.code)}</td>
                                     <td colspan="${points ? 3 : 4}" class="px-3 py-2 text-xs text-gray-500">${row?.rate ? 'Rate stat — not projected' : '&mdash;'}</td>${inputs}</tr>`;
                             }
-                            const mineWins = row.winProbability != null ? row.winProbability >= 0.5 : row.mine >= row.theirs;
+                            const hasOdds = row.winProbability != null;
+                            // A ratio with no odds (a side with no goaltending) favours nobody
+                            const mineWins = hasOdds ? row.winProbability >= 0.5 : row.rate ? null : row.mine >= row.theirs;
+                            const tone = side => mineWins === null ? 'text-gray-300'
+                                : side === mineWins ? 'text-white font-semibold' : 'text-gray-400';
                             return `
                             <tr>
                                 <td style="min-width: 3.5rem" class="col-sticky px-3 py-2 font-semibold text-gray-300">${esc(cat.code)}</td>
-                                <td class="px-3 py-2 text-right ${mineWins ? 'text-white font-semibold' : 'text-gray-400'}">${esc(round1(row.mine))}</td>
-                                <td class="px-3 py-2 text-right ${mineWins ? 'text-gray-400' : 'text-white font-semibold'}">${esc(round1(row.theirs))}</td>
+                                <td class="px-3 py-2 text-right ${tone(true)}">${shown(cat.code, row.mine)}</td>
+                                <td class="px-3 py-2 text-right ${tone(false)}">${shown(cat.code, row.theirs)}</td>
                                 ${points
                                     ? `<td class="px-3 py-2 text-right text-gray-400">${esc(row.points)}</td>`
+                                    : !hasOdds
+                                    ? `<td colspan="2" class="px-3 py-2 text-xs text-gray-500">${esc(row.note || '')}</td>`
                                     : `<td class="px-3 py-2 text-right font-semibold ${oddsTone(row.winProbability)}">${pct(row.winProbability)}</td>
                                        <td class="px-3 py-2">
                                            <div class="w-20 sm:w-28 h-2 rounded bg-gray-700 overflow-hidden" role="img"
@@ -5208,7 +5406,8 @@
                         }).join('')}
                     </tbody>
                 </table>
-                ${points ? '' : '<p class="text-xs text-gray-500 p-3 sm:px-4">The longer the bar, the closer the race. Your lineups lean toward those categories, since a lopsided one is won or lost whoever you start.</p>'}`;
+                ${points ? '' : '<p class="text-xs text-gray-500 p-3 sm:px-4">The longer the bar, the closer the race. Your lineups lean toward those categories, since a lopsided one is won or lost whoever you start.</p>'}
+                ${goaltendingNote(match?.goaltending)}`;
 
             if (typing) {
                 const box = document.querySelector(
@@ -5227,7 +5426,9 @@
             notes.push(data.adjusted ? 'Adjusted for each opponent and home ice.'
                 : data.homeIce ? 'Adjusted for home ice; opponent strength not loaded yet.'
                 : 'Opponent strength not loaded - unadjusted projections.');
-            if (data.rateCategories?.length) notes.push(`${data.rateCategories.join(', ')} not used to set lineups (rate stats).`);
+            if (data.rateCategories?.length) notes.push(data.matchup?.goaltending
+                ? `${data.rateCategories.join(' and ')} projected, but not yet used to set lineups.`
+                : `${data.rateCategories.join(', ')} not used to set lineups (rate stats).`);
             if (data.missingCategories?.length) notes.push(`No projection for ${data.missingCategories.join(', ')}.`);
             const unknown = (data.unknownPlayers?.length || 0) + (data.opponent?.unknownPlayers?.length || 0);
             if (unknown) notes.push(`${unknown} rostered player(s) no longer projected.`);
@@ -5265,13 +5466,11 @@
             { code: 'SVpct', label: 'Save %', better: 'high', rate: true },
             { code: 'SHO', label: 'Shutouts', better: 'high' },
         ];
-        const GOALIE_INPUTS = ['W', 'GA', 'SA', 'SV', 'SHO', 'GAA'];
+        // GP is goalie appearances, for the minimum - Yahoo's team page has it
+        const GOALIE_INPUTS = ['W', 'GA', 'SA', 'SV', 'SHO', 'GAA', 'GP'];
 
         let goalieData = null;
         let goalieLoading = false;
-        let goalieStats = read(KEYS.goalieStats, {}) || {};
-
-        const weekGoalieStats = () => goalieStats[$('week-select').value] || {};
 
         function saveGoalieStats(side, code, value) {
             const week = $('week-select').value;
@@ -5323,10 +5522,15 @@
                     </tbody>
                 </table>`;
 
-            const source = { gaa: 'worked out from GA and GAA', starts: 'estimated from starts', none: 'nothing played yet' };
+            const source = { gaa: 'worked out from GA and GAA', starts: 'estimated from starts',
+                             shots: 'estimated from shots faced', none: 'nothing played yet' };
+            const reach = goalieData.goalieMinimum;
             $('goalie-note').textContent = [
                 `${round1(mine.minutes)} minutes played, ${source[mine.minutesFrom]}`,
                 `${round1(mine.projectedMinutes - mine.minutes)} more projected`,
+                ...(reach?.mine ? [`goalie minimum ${reach.minimum}: ${reach.mine.soFar} so far`
+                    + `${reach.mine.soFarFrom === 'estimated' ? ' (estimated)' : ''}, ${round1(reach.mine.toCome)} more projected`
+                    + `, ${reach.mine.chance >= 1 ? 'reached' : `${pct(reach.mine.chance)} to reach it`}`] : []),
                 goalieData.adjusted ? 'shots adjusted for each opponent and venue'
                     : goalieData.homeIce ? 'shots adjusted for venue; opponent strength not loaded yet'
                     : 'opponent strength not loaded',
@@ -5366,6 +5570,8 @@
             saveGoalieStats(box.dataset.side, box.dataset.code, box.value);
             clearTimeout(goalieTimer);
             goalieTimer = setTimeout(loadGoalies, 500);
+            // The Matchup tab's GAA and save percentage are built on them too
+            schedulePlan();
         });
         let goalieTimer = null;
 

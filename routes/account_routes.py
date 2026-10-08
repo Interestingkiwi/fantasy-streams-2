@@ -46,7 +46,7 @@ deleted with `manage_accounts.py` is signed out wherever it was signed in.
 
 Author - Jason Druckenmiller
 Created - 9/29/2026
-Updated - 10/5/2026
+Updated - 10/7/2026
 """
 
 import json
@@ -82,8 +82,8 @@ LEAGUE_KEYS = frozenset({
     'fs_selectedStats', 'fs_statWeights', 'fs_leagueMode', 'fs_pimPolarity',
     'fs_rosterMode', 'fs_rosterSlots', 'fs_playoffWeeks', 'fs_lineupSlots',
     'fs_fantasyWeeks', 'fs_standaloneMoves', 'fs_standaloneBanked',
-    'fs_standaloneGoalieStats', 'fs_lineupEdits', 'fs_leagueTransactions',
-    'fs_standaloneRoster', 'fs_standaloneOpponent',
+    'fs_standaloneGoalieStats', 'fs_goalieMinimum', 'fs_lineupEdits',
+    'fs_leagueTransactions', 'fs_standaloneRoster', 'fs_standaloneOpponent',
 })
 
 USERNAME = re.compile(r'^[A-Za-z0-9_.-]{3,30}$')

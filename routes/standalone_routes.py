@@ -12,12 +12,13 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 10/5/2026
+Updated - 10/7/2026
 """
 
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from urllib.parse import urlparse
 
@@ -28,7 +29,9 @@ import bench_points
 import daily_value as dv
 import game_lines
 import opponent_strength as ops
+import goalie_minimum
 import goalie_planning
+import goalie_ratios
 import injury_report
 import player_card
 import player_form
@@ -280,10 +283,52 @@ def _matchup_columns(parsed):
     return parsed
 
 
+def _matchup_goalies(parsed, pages):
+    """
+    Each team's goalie appearances so far, and the league's minimum, from its
+    team page's Goaltender Appearances box - `pages` is {team number: html}.
+
+    Sets `goalieAppearances` on each parsed team that has a box for the same
+    week, and `goalieMinimum` on the matchup. A box for another week (a team
+    page Yahoo showed for the current week instead) is not used. Missing pages
+    leave both unset: the page keeps what it had.
+    """
+    minimum = None
+    for team in parsed["teams"]:
+        box = yahoo_matchup.parse_appearances(pages.get(str(team.get("yahooTeamId"))) or "")
+        if not box or box["appearances"] is None:
+            continue
+        if parsed.get("week") and box.get("week") and box["week"] != parsed["week"]:
+            continue
+        team["goalieAppearances"] = box["appearances"]
+        minimum = box["minimum"] if box["minimum"] is not None else minimum
+    parsed["goalieMinimum"] = minimum
+    return parsed
+
+
+def _team_pages(matchup_url, parsed):
+    """{team number: html} for both teams' own pages, fetched side by side."""
+    urls = {str(t["yahooTeamId"]): yahoo_matchup.team_url(matchup_url, t["yahooTeamId"])
+            for t in parsed["teams"] if t.get("yahooTeamId")}
+
+    def read(url):
+        try:
+            return yahoo_matchup.fetch(url)
+        except Exception:                         # noqa: BLE001 - the score stands without it
+            log.warning("No team page at %s - goalie appearances left out.", url)
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pages = dict(zip(urls, pool.map(read, [u for u in urls.values() if u])))
+    return {number: html for number, html in pages.items() if html}
+
+
 @standalone_bp.route('/api/matchup/scrape', methods=['POST'])
 def scrape_matchup():
     """
-    The score so far from a league's Matchup page, fetched here.
+    The score so far from a league's Matchup page, fetched here, with both
+    teams' goalie appearances and the league's goalie minimum from their own
+    pages (`_matchup_goalies`).
 
     Body: league_id, week (Yahoo's week number) and team (the Yahoo team
     number the roster scrape recorded). Without a team Yahoo answers with team
@@ -303,7 +348,8 @@ def scrape_matchup():
             return _error("team must be a Yahoo team number.", 400)
         url = yahoo_matchup.matchup_url(body.get('league_id'), week=week or None,
                                         team=team or None, test=test)
-        result = _matchup_columns(yahoo_matchup.parse(yahoo_matchup.fetch(url)))
+        parsed = yahoo_matchup.parse(yahoo_matchup.fetch(url))
+        result = _matchup_goalies(_matchup_columns(parsed), _team_pages(url, parsed))
         return jsonify({"status": "success", "source": "server", "test": test,
                         "url": url, **result})
     except yahoo_rosters.RosterPageError as exc:
@@ -317,7 +363,9 @@ def scrape_matchup():
 def parse_matchup():
     """
     The same, for a Matchup page the bookmarklet read in the user's browser.
-    Body: html, url. Parsed for team names and category totals, and discarded.
+    Body: html, url, and goalies ({team number: the Goaltender Appearances box
+    off that team's page}, when the bookmarklet read them). Parsed for team
+    names, category totals and goalie appearances, and discarded.
     """
     try:
         if (request.content_length or 0) > MAX_ROSTER_HTML_BYTES:
@@ -327,7 +375,9 @@ def parse_matchup():
         if not _is_yahoo_url(body.get('url')):
             raise yahoo_rosters.RosterPageError(
                 "unrecognised", "A matchup can only be read from a Yahoo Fantasy page.")
-        result = _matchup_columns(yahoo_matchup.parse(str(body.get('html') or '')))
+        goalies = body.get('goalies') if isinstance(body.get('goalies'), dict) else {}
+        result = _matchup_goalies(_matchup_columns(yahoo_matchup.parse(str(body.get('html') or ''))),
+                                  {str(k): str(v) for k, v in goalies.items() if isinstance(v, str)})
         return jsonify({"status": "success", "source": "browser",
                         "url": body.get('url'), **result})
     except yahoo_rosters.RosterPageError as exc:
@@ -753,9 +803,13 @@ def _request_plan(body):
     ({column or code: points}), pim_positive, slots ({slot: count}), start,
     end. Optionally opponent and opponent_out (playerIds), which add the
     matchup; banked ({category: {mine, theirs}}), the score so far - keyed by
-    column name or Yahoo code, like the categories; moves ([{add, drop,
-    date}]), planned add/drops on your roster; and source, the Stat Sourcing
-    ('projected', the default, or 'todate' once it has opened).
+    column name or Yahoo code, like the categories; goalie_stats ({mine,
+    theirs}, each {W, GA, SA, SV, SHO, GAA, GP}), the goaltending so far that
+    GAA and save percentage are built on and the appearances the goalie
+    minimum counts; goalie_minimum, the league's minimum appearances a week
+    (0 or absent for none); moves ([{add, drop, date}]), planned
+    add/drops on your roster; and source, the Stat Sourcing ('projected', the
+    default, 'combined', or 'todate' once it has opened).
     """
     roster = list(body.get('roster') or [])[:MAX_ROSTER]
     if not roster:
@@ -806,12 +860,15 @@ def _request_plan(body):
         points=points, pim_positive=bool(body.get('pim_positive')),
         values=_sourced(body.get('source'), projections, schedule))
 
+    goalie_stats = body.get('goalie_stats')
     return week, {
         'roster': roster,
         'out': body.get('out') or [],
         'opponent': list(body.get('opponent') or [])[:MAX_ROSTER],
         'opponent_out': body.get('opponent_out') or [],
         'banked': banked,
+        'goalie_stats': goalie_stats if isinstance(goalie_stats, dict) else {},
+        'goalie_minimum': goalie_minimum.minimum_from(body.get('goalie_minimum')),
         'moves': _moves(body.get('moves')),
     }, unmapped
 
@@ -954,10 +1011,15 @@ def _num(value):
 
 
 def _side_week(so_far, days, per_start):
-    """One side's goaltending: the week so far, what is left, and the rates."""
+    """
+    One side's goaltending: the week so far, what is left, and the rates.
+
+    The minutes so far are `goalie_ratios.so_far`'s, as the Matchup tab's GAA
+    and save percentage use them, so the two tabs project the same ratios.
+    """
     entered = {c: _num((so_far or {}).get(c)) for c in GOALIE_STATS}
-    minutes, source = goalie_planning.minutes_played(
-        entered.get('GA'), (so_far or {}).get('GAA'), (so_far or {}).get('starts'))
+    banked = goalie_ratios.so_far(so_far)
+    minutes, source = banked['minutes'], banked['minutesFrom']
     remaining, starts = _goalie_totals(days, per_start)
     remaining_minutes = remaining.pop('minutes', 0.0)
 
@@ -1020,6 +1082,7 @@ def goalie_planning_view():
         result = {"status": "success", "mine": mine, "theirs": theirs,
                   "adjusted": week.adjusted, "homeIce": bool(goalie_week.venue),
                   "dates": week.dates,
+                  "goalieMinimum": plan.get('goalieMinimum'),
                   "goalies": _roster_goalies(goalie_week, roster_ids, plan)}
 
         extra = body.get('extra') or {}
@@ -1262,7 +1325,9 @@ def free_agents():
                 opponent=rosters['opponent'], opponent_out=rosters['opponent_out'],
                 banked=rosters['banked'], moves=rosters['moves'],
                 evaluate=body.get('evaluate'), season=season,
-                lineups=_lineups(body.get('lineups')))
+                lineups=_lineups(body.get('lineups')),
+                goalie_stats=rosters['goalie_stats'],
+                goalie_minimum=rosters['goalie_minimum'])
         except ValueError as exc:
             raise BadRequest(str(exc)) from exc
         return jsonify({"status": "success", **result})

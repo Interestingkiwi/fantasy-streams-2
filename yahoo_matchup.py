@@ -26,9 +26,16 @@ Public leagues are fetched here with no sign-in, and private ones come in
 through the same bookmarklet as the rosters, exactly as `yahoo_rosters`
 describes. Its errors and fetch are reused rather than copied.
 
+**The goalie minimum is not on the Matchup page.** Each team's own page
+carries it, in a Goaltender Appearances box: the week's appearances so far and
+the league's minimum (`parse_appearances`). So a matchup is read with its two
+team pages beside it (`team_url`). A team short of the minimum forfeits every
+goalie category to its opponent - or, in a points league, its goalie points
+go to zero.
+
 Author - Jason Druckenmiller
 Created - 9/21/2026
-Updated - 9/21/2026
+Updated - 10/7/2026
 """
 
 import re
@@ -152,3 +159,44 @@ def parse(html):
         "categories": [c for c in categories if c is not None],
         "teams": teams,
     }
+
+
+def team_url(matchup_url, team):
+    """
+    A team's own page for the week of `matchup_url`, where Yahoo keeps its
+    Goaltender Appearances box: `/hockey/<league>/<team>?week=N`, with the
+    season prefix (`/2025/`) kept for a past season's league.
+    """
+    found = re.match(r"(https://[^/]+/(?:\d{4}/)?hockey/\d+)", str(matchup_url or ""))
+    if not found or not str(team or "").isdigit():
+        return None
+    week = re.search(r"[?&]week=(\d+)", str(matchup_url))
+    return f"{found.group(1)}/{int(team)}" + (f"?week={week.group(1)}" if week else "")
+
+
+def parse_appearances(html):
+    """
+    {week, appearances, minimum} from a team page's Goaltender Appearances box
+    (`#position-caps-head`), or None when the page has no such box.
+
+    The box reads "Total for Week 2: 4 (Minimum Reached)" and "your
+    goaltenders must reach the minimum of 3 appearances". Yahoo updates it
+    each morning, so it counts the week up to last night. Accepts the whole
+    page or just the box, which is all the bookmarklet sends.
+    """
+    soup = BeautifulSoup(html or "", "lxml")
+    box = soup.select_one("#position-caps-head")
+    if box is None:
+        return None
+    week = appearances = minimum = None
+    label = box.find("dt")
+    if label:
+        found = re.search(r"Week\s+(\d+)", label.get_text(" ", strip=True))
+        week = int(found.group(1)) if found else None
+    total = box.find("dd")
+    if total:
+        found = re.search(r"\d+", total.get_text(" ", strip=True))
+        appearances = int(found.group(0)) if found else None
+    found = re.search(r"minimum of\s+(\d+)\s+appearance", box.get_text(" ", strip=True), re.I)
+    minimum = int(found.group(1)) if found else None
+    return {"week": week, "appearances": appearances, "minimum": minimum}
