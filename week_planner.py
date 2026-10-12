@@ -67,7 +67,7 @@ optimiser overruling them.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 10/7/2026
+Updated - 10/12/2026
 """
 
 import bisect
@@ -82,6 +82,7 @@ import goalie_starts as gs
 import matchup_weights as mw
 import opponent_strength as ops
 from lineup_utils import optimal_lineup, slots_for, starting_slots
+from stat_sourcing import IN_SEASON_SOURCE
 
 # The order slots are shown in: specific positions, then the generics that
 # widen them, goalies last.
@@ -189,6 +190,11 @@ class Week:
             self.home_teams[game_date].add(home)
             self.games_on[game_date] += 1
 
+        self.season_games = defaultdict(int)
+        for _day, home, away in schedule:
+            self.season_games[home] += 1
+            self.season_games[away] += 1
+
         self.splits = ops.blended_z_scores(team_stats) if team_stats else {}
         self.venue = {**ops.venue_multipliers(team_stats or []),
                       **(ops.peripheral_venue([]) if peripheral is None else peripheral)}
@@ -237,6 +243,12 @@ class Week:
             row = self.by_id.get(str(player_id))
             (players if row else unknown).append(row or player_id)
         return players, unknown
+
+    def start_share(self, player):
+        """A goalie's projected starts over his team's games this season, at
+        most one - what share of its nights he can be expected to start."""
+        games = self.season_games.get(gs.primary_team(player.get('teamAbbrevs')))
+        return min(1.0, _number(player.get('proj_gamesStarted')) / games) if games else 0.0
 
     def games_for(self, player, nights=None):
         team = gs.primary_team(player.get('teamAbbrevs'))
@@ -540,8 +552,7 @@ def free_agents(week, roster, rostered, out=None, opponent=None, opponent_out=No
             continue
         per_game = dv.score(player.get('perGame') or {}, weights)
         if _is_goalie(player):
-            per_game *= min(1.0, _number(player.get('proj_gamesStarted'))
-                            / max(1.0, _number(player.get('projectedGames'))))
+            per_game *= week.start_share(player)
         screened.append((per_game * games, player))
     screened.sort(key=lambda item: item[0], reverse=True)
     shortlist = [player for _score, player in screened[:SCREEN_SHORTLIST]]
@@ -621,9 +632,7 @@ def available(week, rostered, next_games=None):
             'heat': week.heat(player),
         }
         if _is_goalie(player):
-            games = _number(player.get('projectedGames'))
-            row['startShare'] = round(min(1.0, _number(player.get('proj_gamesStarted'))
-                                          / games), 3) if games else None
+            row['startShare'] = round(week.start_share(player), 3) if week.season_games else None
         rows.append(row)
     return rows
 
@@ -1186,6 +1195,13 @@ def _public(player):
     # and is on his projection instead
     for key in ('statSource', 'seasonGames'):
         if key in player:
+            fields[key] = player[key]
+    # In season (`in_season`, `goalie_usage`): nobody projected him, he has
+    # moved team, or his share of starts has been read from his usage
+    if player.get('projectionSource') == IN_SEASON_SOURCE:
+        fields['unprojected'] = True
+    for key in ('projectedTeam', 'usage'):
+        if player.get(key):
             fields[key] = player[key]
     return fields
 

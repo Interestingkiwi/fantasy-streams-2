@@ -15,9 +15,10 @@ being valued times his projected games (projected starts, for a goalie).
 `daily_value` divides by exactly those, so it reads the rate back - and nothing
 downstream, the lineup matcher, matchup weighting, the free-agent search or
 goalie planning, needs to know which source it is reading. Projected games
-and starts are left as they are: goalie start odds are balanced against them,
-and a goalie's share of his team's starts is better projected than read off a
-few weeks.
+and starts are left as they are here: goalie start odds are balanced against
+them, and a goalie's share of his team's starts is blended with his usage
+whatever the source (`goalie_usage`), at its own measured pace rather than
+read off a few weeks.
 
 **The category weights stay on the projections.** σ is what makes a goal and
 a hit commensurable, and rates over a few weeks spread far wider than the
@@ -25,6 +26,12 @@ true ones - early noise would quietly re-weight the league. `Week` takes the
 projections for the scales and these rows for the values. The draft board's
 rank (drop suggestions, the roster view's Rank) stays on projections too: it
 prices the rest of a season, which a few weeks of play do not settle.
+
+**A player nobody projected** has a row built from his games by `in_season`
+(Combined's blend against his position's league rate at his ice time), which
+Combined leaves as built and Season to date reads back to his season rate.
+Goalies' projected starts are read again from their usage (`goalie_usage`)
+before any of this - his starts, not his line per start.
 
 **A player who has not played keeps his projection**, marked so the page can
 say so. An injured starter would otherwise be planned at nothing, and a
@@ -54,7 +61,7 @@ development.
 
 Author - Jason Druckenmiller
 Created - 10/1/2026
-Updated - 10/3/2026
+Updated - 10/12/2026
 """
 
 import logging
@@ -68,6 +75,10 @@ log = logging.getLogger(__name__)
 
 PROJECTED, SEASON, COMBINED = 'projected', 'todate', 'combined'
 SOURCES = (PROJECTED, SEASON, COMBINED)
+
+# `projectionSource` of a row `in_season` built from a player's games because
+# nobody projected him. It is Combined's blend already, so Combined leaves it.
+IN_SEASON_SOURCE = 'in-season'
 
 # Games every team must have played before Season to date opens
 OPEN_AFTER_TEAM_GAMES = 5
@@ -219,6 +230,8 @@ def _rewrite(projection, sums, blend):
         return row
 
     row['statSource'] = 'combined' if blend else 'season'
+    if blend and projection.get('projectionSource') == IN_SEASON_SOURCE:
+        return row
     goalie = projection.get('positionCode') == 'G'
     projected = dv.games_for(projection)
     divisor = projected

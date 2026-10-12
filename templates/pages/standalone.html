@@ -351,6 +351,10 @@
                         <input id="pool-hide-injured" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
                         Hide injured
                     </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 py-1">
+                        <input id="pool-unprojected" type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700">
+                        Only players with no projection
+                    </label>
                     <button id="pool-clear" type="button" class="column-toggle">Clear filters</button>
                 </div>
             </div>
@@ -4480,13 +4484,18 @@
                 const share = goalies
                     ? (p.startShare != null ? p.startShare : (p.games ? p.starts / p.games : null))
                     : null;
+                // His share read again from how often he has started (goalie_usage)
+                const usage = p.usage
+                    ? `Started ${p.usage.starts} of his team's ${p.usage.games} games since his first; projected ${pct(p.usage.projectedShare)}` : '';
                 const badge = share != null
-                    ? ` <span class="text-[10px] font-semibold px-1 rounded bg-blue-800 text-white">${pct(share)}</span>` : '';
+                    ? ` <span class="text-[10px] font-semibold px-1 rounded bg-blue-800 text-white"${usage ? ` title="${esc(usage)}"` : ''}>${pct(share)}</span>` : '';
                 const injured = injuredNow(p)
                     ? ` <span class="text-[10px] font-semibold uppercase px-1 rounded bg-amber-800 text-white" title="${esc([p.injury.status, p.injury.type, p.injury.returnDate && `back ${p.injury.returnDate}`].filter(Boolean).join(' · '))}">${esc(INJURY_CODES[p.injury.status] || 'INJ')}</span>` : '';
                 const tags = [
                     p.out ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-red-800 text-white">Out</span>' : '',
                     statusBadge(yahooStatus.get(String(p.playerId))).trim(),
+                    // Nobody projected him: his line is built from his games (in_season)
+                    p.unprojected ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-purple-700 text-white" title="Not in the preseason projections - valued on his games so far, against what his position gets for his ice time">No proj</span>' : '',
                     p.added ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-emerald-700 text-white">Add</span>' : '',
                     p.dropped ? '<span class="text-[10px] font-semibold uppercase px-1 rounded bg-gray-600 text-white">Drop</span>' : '',
                 ].join(' ');
@@ -4494,7 +4503,7 @@
                 <tr class="table-row-hover ${p.out ? 'opacity-70' : ''}">
                     ${opts.add ? `<td class="px-2 py-2"><button type="button" class="pool-add btn-primary rounded-md text-xs font-medium px-3 py-2" data-id="${esc(p.playerId)}">Add</button></td>` : ''}
                     <td class="col-sticky px-3 py-2 text-white font-medium whitespace-nowrap">${playerLink(p.playerId, esc(p.fullName))}${lineBadge(p)}${badge}${injured} ${tags}</td>
-                    <td class="px-3 py-2 text-gray-300">${esc(p.teamAbbrevs || '')}</td>
+                    <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${esc(p.teamAbbrevs || '')}${p.projectedTeam ? ` <span class="text-xs text-gray-500">was ${esc(p.projectedTeam)}</span>` : ''}</td>
                     <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${esc(p.eligiblePositions || p.positionCode || '')}</td>
                     <td class="px-3 py-2 whitespace-nowrap">${weekNights(p)}</td>
                     <td class="px-3 py-2 text-gray-300 whitespace-nowrap">${p.nights?.length ? playerLink(p.playerId, p.nights.map(n => `${n.home ? '' : '@'}${esc(n.opponent)}`).join(', '), 'schedule') : '&mdash;'}</td>
@@ -4545,7 +4554,7 @@
         let poolStale = false;
         let poolSort = { key: 'rank', dir: 1 };
         const POOL_LIMIT = 150;     // rows drawn; filters and sorting narrow to them
-        const poolFilters = { search: '', positions: new Set(), days: new Set(), gamesOnly: true, hideInjured: false };
+        const poolFilters = { search: '', positions: new Set(), days: new Set(), gamesOnly: true, hideInjured: false, unprojected: false };
 
         const POSITIONS = ['C', 'LW', 'RW', 'D', 'G'];
 
@@ -4561,6 +4570,7 @@
                 : '<span class="text-xs text-gray-500">Pick a week to filter by night.</span>';
             $('pool-games-only').checked = poolFilters.gamesOnly;
             $('pool-hide-injured').checked = poolFilters.hideInjured;
+            $('pool-unprojected').checked = poolFilters.unprojected;
         }
 
         function poolValue(player, key) {
@@ -4586,6 +4596,7 @@
                         .some(code => poolFilters.positions.has(code.trim()))) return false;
                 if (poolFilters.gamesOnly && !p.games) return false;
                 if (poolFilters.hideInjured && injuredNow(p)) return false;
+                if (poolFilters.unprojected && !p.unprojected) return false;
                 // Every night ticked, not any: the point is filling a hole
                 if (poolFilters.days.size) {
                     const plays = new Set((p.nights || []).map(n => n.date));
@@ -4627,7 +4638,9 @@
                                     { ...opts, count: `${goalies.length} of ${matches.filter(isGoalie).length}` })
                     : '<p class="text-gray-400 text-sm p-4">No free agent matches these filters.</p>');
 
+            const unprojected = pool.players.filter(p => p.unprojected).length;
             const parts = [`${pool.players.length} free agents`, `${matches.length} shown`];
+            if (unprojected) parts.push(`${unprojected} with no projection, valued on their games`);
             if (matches.length > POOL_LIMIT) parts.push(`top ${POOL_LIMIT} of each table drawn — sort or filter to see others`);
             if (pool.formSeason) parts.push(`form from ${pool.formSeason}`);
             if (pool.injuryDate) parts.push(`ESPN injuries as of ${fmt(pool.injuryDate, { month: 'short', day: 'numeric' })}`);
@@ -4686,9 +4699,10 @@
             renderPoolFilters();
             renderPool();
         });
-        ['pool-games-only', 'pool-hide-injured'].forEach(id => $(id).addEventListener('change', () => {
+        ['pool-games-only', 'pool-hide-injured', 'pool-unprojected'].forEach(id => $(id).addEventListener('change', () => {
             poolFilters.gamesOnly = $('pool-games-only').checked;
             poolFilters.hideInjured = $('pool-hide-injured').checked;
+            poolFilters.unprojected = $('pool-unprojected').checked;
             renderPool();
         }));
         $('pool-clear').addEventListener('click', () => {
@@ -4697,6 +4711,7 @@
             poolFilters.days.clear();
             poolFilters.gamesOnly = true;
             poolFilters.hideInjured = false;
+            poolFilters.unprojected = false;
             $('pool-search').value = '';
             renderPoolFilters();
             renderPool();

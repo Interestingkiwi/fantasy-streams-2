@@ -32,6 +32,7 @@ import opponent_strength as ops
 import goalie_minimum
 import goalie_planning
 import goalie_ratios
+import in_season
 import injury_report
 import player_card
 import player_form
@@ -143,6 +144,16 @@ def _schedule():
         'SELECT "gameDate", "homeTeam", "awayTeam" FROM nhl_schedule')]
 
 
+def _projections(schedule=None):
+    """
+    Every projection as League Home values it this season (`in_season.pool`):
+    each player on the team he plays for now, a row for anyone with games and
+    no projection, and goalies' starts blended with their usage.
+    """
+    return in_season.pool(fetch_all('SELECT * FROM final_projections'),
+                          _schedule() if schedule is None else schedule)
+
+
 def _sourcing_status(schedule=None):
     """
     Whether Season to date can be chosen yet, and when it opens - for the page
@@ -196,8 +207,8 @@ def _roster_error(exc, yahoo_url=None):
 def _matched_rosters(html):
     """Parse a Starting Rosters page and match its players to projections."""
     parsed = yahoo_rosters.parse(html)
-    pool = fetch_all('SELECT "playerId", "fullName", "teamAbbrevs", "positionCode"'
-                     ' FROM final_projections')
+    # Players nobody projected too - a roster scrape used to drop them
+    pool = _projections()
     try:
         aliases = {r["alias_name"]: r["player_id"]
                    for r in fetch_all("SELECT player_id, alias_name FROM player_aliases")}
@@ -693,9 +704,10 @@ def setup():
     score, keyed the way draft prep stores them.
     """
     try:
-        players = fetch_all(
-            'SELECT "playerId", "fullName", "teamAbbrevs", "positionCode",'
-            ' "eligiblePositions" FROM final_projections ORDER BY "fullName"')
+        players = sorted(
+            ({k: p.get(k) for k in ('playerId', 'fullName', 'teamAbbrevs', 'positionCode',
+                                    'eligiblePositions')} for p in _projections()),
+            key=lambda p: p['fullName'] or '')
         categories = [
             {"column": column, "code": code,
              "goalie": code in dv.GOALIE_CATEGORIES,
@@ -853,7 +865,7 @@ def _request_plan(body):
         if mapped and isinstance(entry, dict):
             banked[mapped[0]] = entry
 
-    projections = fetch_all('SELECT * FROM final_projections')
+    projections = _projections(schedule)
     week = week_planner.Week(
         projections, categories, slots, dates, schedule,
         team_stats=_team_stats(), peripheral=_peripheral_venue(),

@@ -25,7 +25,7 @@ starts, not as a percentage.
 
 Author - Jason Druckenmiller
 Created - 10/1/2026
-Updated - 10/1/2026
+Updated - 10/12/2026
 """
 
 from datetime import date, timedelta
@@ -264,7 +264,8 @@ def card(player_id, projection, games, line_rows, names, schedule, team_stats,
     return {
         'player': {
             'playerId': str(player_id), 'fullName': name, 'team': team,
-            'positionCode': (projection or {}).get('positionCode') or ('G' if goalie else None),
+            'positionCode': ((projection or {}).get('positionCode') or ('G' if goalie else None)
+                             or (games[-1].get('positionCode') if games else None)),
             'eligiblePositions': (projection or {}).get('eligiblePositions'),
             'goalie': goalie, 'injury': injury,
         },

@@ -6,15 +6,18 @@ goalie's season total staying near what he was projected for. They pull
 against each other, so the tests pin which one wins where - the nightly
 constraint is exact, the season one is approximate, and a team with more
 projected starts than games is the case where the season totals must give.
+A goalie who is out starts none of the nights he misses, and they go to his
+teammates in proportion to their odds.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 10/12/2026
 """
 
 import os
 import sys
 from collections import defaultdict
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -132,6 +135,31 @@ check("a level tandem gets no invented back-to-back hierarchy",
       [{str(k): round(v, 3) for k, v in r.items()} for r in level])
 check("no games is not a crash", gs.start_probabilities(tandem, []) == [{}, {}])
 check("no goalies is not a crash", gs.start_probabilities([], DATES) == [])
+
+
+# --------------------------------------------------------------------------
+print("\n=== 4b. a goalie who is out ===")
+
+# The starter is out from Tuesday until Friday, when he is back
+trio = [goalie("Starter", 3.0), goalie("Backup", 1.5), goalie("Third", 0.5)]
+fit = gs.start_probabilities(trio, DATES)
+hurt = gs.start_probabilities([{**trio[0], "outFrom": "2027-01-05", "outUntil": "2027-01-08"}] + trio[1:], DATES)
+tue, thu, fri = date(2027, 1, 5), date(2027, 1, 7), date(2027, 1, 8)
+check("no start on a night he is out, and still one start a night between them",
+      hurt[0][tue] == 0 and hurt[0][thu] == 0
+      and all(abs(sum(r[d] for r in hurt) - 1.0) < 1e-9 for d in hurt[0]), hurt)
+check("his nights go to the others in proportion to their own odds",
+      abs(hurt[1][thu] / hurt[2][thu] - fit[1][thu] / fit[2][thu]) < 1e-9
+      and abs(hurt[1][thu] - fit[1][thu] / (fit[1][thu] + fit[2][thu])) < 1e-9, (hurt[1][thu], fit[1][thu]))
+check("from his return he is the starter he was, not catching up",
+      hurt[0][fri] == fit[0][fri] and hurt[0][date(2027, 1, 4)] == fit[0][date(2027, 1, 4)])
+lone_out = gs.start_probabilities([{**goalie("Only one", 2.0), "outFrom": "2027-01-01", "outUntil": None}], DATES)
+check("out with no return date: out every night after, and nobody known starts them",
+      all(v == 0 for v in lone_out[0].values()), lone_out)
+both = gs.start_probabilities([{**goalie("A", 3.0), "outFrom": "2027-01-01"},
+                               {**goalie("B", 2.0), "outFrom": "2027-01-01"}], DATES)
+check("a whole tandem out: no start for either - not shared back to them evenly",
+      all(v == 0 for r in both for v in r.values()), both)
 
 
 # --------------------------------------------------------------------------

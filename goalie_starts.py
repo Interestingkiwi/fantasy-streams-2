@@ -31,13 +31,20 @@ rookie-imported goalies carry counting stats but no `proj_gamesStarted`, so
 never starting. Populating that column in `apply_rookie_projections.py` would
 retire the fallback.
 
+**An injured goalie starts nobody's nights.** `in_season` marks a goalie
+ESPN has out with the nights he cannot play (`outFrom`, `outUntil`), and on
+those nights his share goes to his teammates in proportion to theirs - with
+Shesterkin and Korpisalo both out, the Rangers' nights go to Garand. Done after
+the balancing (`_sit_out`), so his season of starts is not crammed into the
+nights he is fit.
+
 Not modelled, because it needs live data: confirmed starters. When that feed
 exists it belongs here as a column override - fix the known starter at 1.0 and
 let the balancing redistribute the rest.
 
 Author - Jason Druckenmiller
 Created - 9/7/2026
-Updated - 9/7/2026
+Updated - 10/12/2026
 """
 
 from collections import defaultdict
@@ -93,6 +100,8 @@ def start_probabilities(goalies, game_dates, starts_key='proj_gamesStarted',
     for _ in range(BALANCE_ITERATIONS):
         _scale_rows(grid, targets)
         _scale_columns(grid)
+
+    _sit_out(grid, [_out_dates(goalie, dates) for goalie in goalies], dates)
 
     # The residual goalie, if there is one, was only ever there to absorb
     # starts nobody real was projected for. Drop him from the answer.
@@ -210,6 +219,44 @@ def _tilt(targets, dates, damping):
             for game_date in dates
         ])
     return grid
+
+
+def _out_dates(goalie, dates):
+    """
+    The dates a goalie cannot start: from `outFrom` up to the night before
+    `outUntil` (his expected return; None for no date), set on an injured
+    goalie by `in_season`. Empty for anyone else.
+    """
+    if not goalie.get('outFrom'):
+        return set()
+    first, back = _as_date(goalie['outFrom']), _as_date(goalie.get('outUntil'))
+    return {d for d in dates if (first is None or d >= first) and (back is None or d < back)}
+
+
+def _sit_out(grid, out, dates):
+    """
+    Takes an unavailable goalie's start off each night he cannot play and
+    shares it among the rest - his teammates and the residual - in proportion
+    to their odds that night. A night with nobody left to start keeps no
+    start for anyone known: whoever starts is not in the projections.
+
+    After the balancing, not inside it: balancing would push his season of
+    starts onto the nights he is fit, and a starter back from injury is a
+    starter again, not one making up for lost time.
+    """
+    if not any(out):
+        return
+    out = out + [set()] * (len(grid) - len(out))
+    for column, day in enumerate(dates):
+        if not any(day in missing for missing in out):
+            continue
+        for row, missing in zip(grid, out):
+            if day in missing:
+                row[column] = 0.0
+        total = sum(row[column] for row in grid)
+        if total > 0:
+            for row in grid:
+                row[column] /= total
 
 
 def _starts(goalie, starts_key, fallback_key):
