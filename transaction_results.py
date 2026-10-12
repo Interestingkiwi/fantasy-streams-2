@@ -42,6 +42,13 @@ category the real week won or tied that the counterfactual would not have is
 a gain; the reverse a cost, a tie counting half (`net`). Points leagues get
 contributions but no swings, as with bench points.
 
+**A weekend pickup for the week ahead counts in that week too.** A move made
+on the Saturday or Sunday ending a week (its last two days) whose pickup was
+kept into the next week and started a game for the team in it is counted
+among that week's moves and adds as well as the week it was made in
+(`carriedInto`). His starts and swings already went to the week of each
+night; this is the week's tally of moves, and the page's list of them.
+
 **A start the dropped player could not have made is not left empty.** On a
 night the pickup started and played and the dropped player could not take his
 slot, a teammate who played on the bench that night and could fill it would
@@ -53,7 +60,7 @@ strongly ahead on its moves, streamers most of all.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/5/2026
+Updated - 10/12/2026
 """
 
 from collections import Counter, defaultdict
@@ -69,6 +76,9 @@ PAIR_SECONDS = 24 * 3600
 # An add effective tomorrow first shows on the roster a day later; a claim
 # processed overnight, the same day
 ARRIVAL_DAYS = 2
+# The end of a week a pickup can be made in for the next one: its last two
+# days, Saturday and Sunday in a Monday-Sunday week
+WEEKEND_DAYS = 2
 OUTCOME = bp.OUTCOME
 # A category's share of a week, as head-to-head standings count it: a tie is half
 CATEGORY_SHARE = {1: 1.0, 0: 0.5, -1: 0.0}
@@ -300,7 +310,8 @@ def _tally():
     table counts), the pickups' `starts` and the dropped players' open games
     (`dropGames`) on that span's nights, and the categories its moves won,
     cost and were worth (`gained`, `lost`, `net`). A week's adds are those
-    made in it; its starts and swings come from moves made then or before.
+    made in it, and those made the weekend before whose pickup started for
+    the team in it; its starts and swings come from moves made then or before.
     """
     return {"moves": 0, "adds": 0, "starts": 0, "dropGames": 0, "gained": 0, "lost": 0, "net": 0.0}
 
@@ -328,7 +339,8 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
     player's line, [the bench stand-in, his line] or None]); another team's
     only when it changed a week, with games,
     starts and those weeks. `season` and `weekly` count every move of every
-    team. Fields that say nothing (None, False, []) are left out.
+    team. A weekend move for the week ahead carries that week as
+    `carriedInto`. Fields that say nothing (None, False, []) are left out.
     """
     categories = bp.scored_categories(info)
     swings_scored = info.get("scoring") == "head"
@@ -369,6 +381,11 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         summary[team]["moves"] += 1
         if made_in:
             weekly[made_in["week"]][team]["moves"] += 1
+        # Made on the weekend ending a week: the next week's too, if he was
+        # kept into it and started there (counted once the nights are read)
+        following = week_of(_plus(made_in["end"], 1)) if made_in and added else None
+        if following and _plus(move["date"], WEEKEND_DAYS) < following["start"]:
+            following = None
         if added:
             summary[team]["adds"] += 1
             if made_in:
@@ -381,7 +398,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
 
         drop_positions = positions_of((players.get(dropped) or ["", "", ""])[2]) if dropped else []
         a_total, d_total = {}, {}
-        a_games = a_starts = d_games = d_open = covered = 0
+        a_games = a_starts = d_games = d_open = covered = following_starts = 0
         by_week = defaultdict(lambda: ({}, {}))
         nights = []
         for when in window:
@@ -398,6 +415,8 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                 if week:
                     add_line(by_week[week["week"]][0], row[2])
                     weekly[week["week"]][team]["starts"] += 1
+                    if following and week["week"] == following["week"]:
+                        following_starts += 1
 
             d_line, spot = None, None
             if dropped and not season.on_team(when, dropped, team):
@@ -438,6 +457,11 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                 if entry["gains"] or entry["costs"]:
                     week_out.append({"week": number, "opponent": rival, **entry})
 
+        carried = following["week"] if following and following_starts else None
+        if carried is not None:
+            weekly[carried][team]["moves"] += 1
+            weekly[carried][team]["adds"] += 1
+
         tally = summary[team]
         tally["starts"] += a_starts
         tally["dropGames"] += d_open
@@ -470,6 +494,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                 "totals": shown(d_total, categories) if detail else None,
             }),
             "weeks": week_out,
+            "carriedInto": carried,
             "nights": nights if detail else None,
         })
         out.append(record)

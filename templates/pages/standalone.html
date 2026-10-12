@@ -3593,7 +3593,7 @@
                 </details>`;
         }
 
-        function moveCard(m) {
+        function moveCard(m, note = '') {
             const a = m.added;
             const d = m.dropped;
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -3613,6 +3613,7 @@
                         <p class="text-gray-300">${moveHeading(m)}</p>
                         ${netBadge(moveNet(m))}
                     </div>
+                    ${note ? `<p class="text-xs text-gray-500 -mt-1">${esc(note)}</p>` : ''}
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                         ${a ? `<div><p><span class="text-green-400 font-semibold">+</span> ${resultsPlayer(a.player)}</p><p class="text-xs text-gray-400">${esc(tenure)}</p></div>` : ''}
                         ${d ? `<div><p><span class="text-red-300 font-semibold">&minus;</span> ${resultsPlayer(d.player)}</p><p class="text-xs text-gray-400">${esc([since, now].filter(Boolean).join(' · '))}</p></div>` : ''}
@@ -3707,7 +3708,7 @@
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
                     ${teamTable(resultsData.weekly?.[String(number)], `Week ${number}${week && week.status !== 'postevent' ? ', so far' : ''}. `
-                        + 'Adds: players picked up this week (drop-only moves are not counted). '
+                        + 'Adds: players picked up this week, or the weekend before if they were kept and started this week (drop-only moves are not counted). '
                         + 'Pickup starts and drops&rsquo; open games: this week&rsquo;s nights, from moves made this week or before. '
                         + 'Categories won and cost: this week&rsquo;s matchup, against having kept the dropped player.')}
                     ${resultsData.swingsScored ? `<div>
@@ -3735,7 +3736,8 @@
             const moves = resultsData.moves.filter(m => m.team === team);
             const changed = moves.flatMap(m => (m.weeks || []).filter(w => w.week === number).map(w => ({ m, w })))
                 .sort((x, y) => y.w.net - x.w.net);
-            const made = week ? moves.filter(m => m.date >= week.start && m.date <= week.end) : [];
+            // Made in it, and the weekend before's pickups kept and started in it
+            const made = week ? moves.filter(m => (m.date >= week.start && m.date <= week.end) || m.carriedInto === number) : [];
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
                     ${resultsData.swingsScored ? `<div>
@@ -3745,7 +3747,8 @@
                     </div>` : ''}
                     <div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves made this week</h3>
-                        ${made.length ? resultsList(made.map(moveCard)) : '<p class="text-gray-400">None.</p>'}
+                        ${made.length ? resultsList(made.map(m => moveCard(m, m.carriedInto === number
+                            ? 'Made the weekend before, and kept: started this week.' : ''))) : '<p class="text-gray-400">None.</p>'}
                     </div>
                 </div>`;
         }

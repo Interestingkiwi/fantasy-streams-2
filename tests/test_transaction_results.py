@@ -14,11 +14,14 @@ player's own slot, an empty slot, or an idle starter's - and a goalie never
 fills a skater's; a week's swing names the category a move won and the one it
 cost; a start the dropped player could not have made going to a teammate who
 played on the bench, never left empty; ratios rebuilt from summed parts, so
-two shutouts are two hours; and points leagues get no swings.
+two shutouts are two hours; a pickup made on the weekend before a week, kept
+and started in it, counted among that week's adds (but not a Friday one, nor
+one who only sat on its bench, nor one gone by Monday); and points leagues get
+no swings.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/5/2026
+Updated - 10/12/2026
 """
 
 import os
@@ -275,6 +278,40 @@ two_weeks = tr.results(INFO, DAYS + [{"date": "2026-10-12", "names": DAYS[0]["na
 check("a pickup made last week still counts his starts this week, but not as an add",
       two_weeks["weekly"]["2"] == {"2": {"moves": 0, "adds": 0, "starts": 1, "dropGames": 0, "gained": 0,
                                          "lost": 0, "net": 0.0}}, two_weeks["weekly"].get("2"))
+
+# The weekend before week 2: Friday's pickup (40) and Saturday's (42) both start
+# on Monday; Sunday's (44) is kept but sits on the bench; team 2's Sunday
+# pickup (46) is gone by Monday
+WEEKEND = [{"date": day, "names": DAYS[0]["names"], "teams": teams} for day, teams in [
+    ("2026-10-09", {"1": [["1", "C", C, sk()], ["40", "Util", C, sk()]], "2": [["22", "C", C, sk()]]}),
+    ("2026-10-10", {"1": [["1", "C", C, sk()], ["40", "Util", C, sk()], ["42", "BN", LW, sk()]],
+                    "2": [["22", "C", C, sk()]]}),
+    ("2026-10-11", {"1": [["1", "C", C, sk()], ["40", "Util", C, sk()], ["42", "BN", LW, sk()],
+                          ["44", "BN", C, sk()]],
+                    "2": [["22", "C", C, sk()], ["46", "BN", C, sk()]]}),
+    ("2026-10-12", {"1": [["1", "C", C, sk(1, 0, 0)], ["40", "Util", C, sk(0, 1, 0)],
+                          ["42", "LW", LW, sk(0, 0, 2)], ["44", "BN", C, sk(0, 1, 0)]],
+                    "2": [["22", "C", C, sk()]]}),
+]]
+WEEKEND_TX = [
+    {"id": "40", "type": "add/drop", "time": at("2026-10-09", 10), "moves": [["40", "freeagents", "1"], ["41", "1", "freeagents"]]},
+    {"id": "42", "type": "add/drop", "time": at("2026-10-10", 12), "moves": [["42", "freeagents", "1"], ["43", "1", "freeagents"]]},
+    {"id": "44", "type": "add/drop", "time": at("2026-10-11", 20), "moves": [["44", "freeagents", "1"], ["45", "1", "freeagents"]]},
+    {"id": "46", "type": "add/drop", "time": at("2026-10-11", 9), "moves": [["46", "freeagents", "2"], ["47", "2", "freeagents"]]},
+]
+weekend = tr.results(INFO, WEEKEND, WEEKS + [{"week": 2, "start": "2026-10-12", "end": "2026-10-18",
+                                             "status": "midevent", "matchups": []}],
+                     WEEKEND_TX, PLAYERS, {}, SLOTS, "1")
+carried = {m["added"]["player"]: m.get("carriedInto") for m in weekend["moves"] if m["team"] == "1"}
+check("a Saturday pickup kept and started in the next week counts among its adds - "
+      "a Friday one does not, nor a Sunday one who only sat on its bench",
+      carried == {"40": None, "42": 2, "44": None}
+      and weekend["weekly"]["2"].get("1") == {"moves": 1, "adds": 1, "starts": 2, "dropGames": 0,
+                                              "gained": 0, "lost": 0, "net": 0.0}, (carried, weekend["weekly"]))
+check("and still counts in the week it was made in, with the season counting it once",
+      weekend["weekly"]["1"]["1"]["adds"] == 3 and weekend["season"]["1"]["adds"] == 3, weekend["weekly"]["1"])
+check("a Sunday pickup gone by Monday is not carried", "2" not in weekend["weekly"]["2"], weekend["weekly"]["2"])
+
 flipped = tr.swing({G: 2, A: 1}, {G: 1, A: 1}, {G: 2}, {}, [cat(G, "G"), cat(A, "A")])
 check("a loss turned into a win is worth a whole category, and the records say so",
       flipped["net"] == 1.0 and flipped["with"] == [1, 0, 1] and flipped["without"] == [0, 1, 1], flipped)
