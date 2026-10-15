@@ -42,6 +42,15 @@ category the real week won or tied that the counterfactual would not have is
 a gain; the reverse a cost, a tie counting half (`net`). Points leagues get
 contributions but no swings, as with bench points.
 
+**A team's week is scored once, with all its moves undone together**
+(`undone`, `together`). Each move's own swing says what that move alone
+decided, so two moves that each alone won assists both say so - and summed,
+the team was credited with two categories for one. Its categories won, cost
+and net are therefore the week with every move active on each night undone
+at once, each spot and each bench stand-in used once, and scored against the
+opponent a single time. On the 2025-26 test league a category was claimed by
+more than one move in 172 of the 236 team-weeks a move changed.
+
 **A weekend pickup for the week ahead counts in that week too.** A move made
 on the Saturday or Sunday ending a week (its last two days) whose pickup was
 kept into the next week and started a game for the team in it is counted
@@ -60,7 +69,7 @@ strongly ahead on its moves, streamers most of all.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/12/2026
+Updated - 10/15/2026
 """
 
 from collections import Counter, defaultdict
@@ -212,6 +221,71 @@ def open_spot(roster, positions, own_slot, slots, added=None):
     return None
 
 
+def undone(roster, active, slots, categories):
+    """
+    One night of a team with every move active that night undone at once:
+    (the pickups' started lines, the lines that would have been played
+    instead). `active` is [(added, his row or None, the dropped player's
+    positions, his line or None)], in the order the moves were made.
+
+    Each spot is filled once, which judging the moves one at a time cannot
+    promise: a dropped player takes his own pickup's slot, an empty one, an
+    idle starter's or another pickup's, in that order, and a pickup's start
+    nobody dropped could take goes to a teammate who played on the bench,
+    each teammate once. Another pickup is never that teammate - his move is
+    undone too. With one move active it is exactly `open_spot` and `stand_in`.
+    """
+    pickups = {added for added, *_ in active if added}
+    vacated, minus = {}, []
+    for added, row, _positions, _line in active:
+        if row and row[0] not in bp.NOT_STARTING:
+            vacated[added] = row[0]
+            if bp.played(row[2]):
+                minus.append(row[2])
+    filled = Counter(slot for slot, _p, _s in roster.values() if slot not in bp.NOT_STARTING)
+    empty = {slot: (count or 0) - filled.get(slot, 0) for slot, count in (slots or {}).items()
+             if slot not in bp.NOT_STARTING}
+    idle = {player: slot for player, (slot, _p, stats) in roster.items()
+            if player not in pickups and slot not in bp.NOT_STARTING and not bp.played(stats)}
+
+    def fitter(positions):
+        goalie = bp.is_goalie(positions)
+        return lambda slot: (slot == "G") == goalie and bp.can_fill(positions, slot)
+
+    # Every dropped player's claim on his own pickup's slot first, so another's
+    # last resort never takes it from him
+    plus, refilled, waiting = [], set(), []
+    for added, _row, positions, line in active:
+        if not line:
+            continue
+        if added in vacated and fitter(positions)(vacated[added]):
+            refilled.add(added)
+            plus.append(line)
+        else:
+            waiting.append((positions, line))
+    for positions, line in waiting:
+        fits = fitter(positions)
+        if (slot := next((s for s, n in empty.items() if n > 0 and fits(s)), None)):
+            empty[slot] -= 1
+        elif (player := next((p for p, s in idle.items() if fits(s)), None)):
+            del idle[player]
+        elif (other := next((a for a, s in vacated.items() if a not in refilled and fits(s)), None)):
+            refilled.add(other)
+        else:
+            continue
+        plus.append(line)
+
+    bench = {p: r for p, r in roster.items() if p not in pickups}
+    for added, slot in vacated.items():
+        if added in refilled or not bp.played(roster[added][2]):
+            continue
+        cover = stand_in(bench, slot, categories)
+        if cover:
+            del bench[cover[0]]
+            plus.append(cover[1])
+    return minus, plus
+
+
 def stand_in(roster, slot, categories):
     """
     (yahooId, line) of the teammate who would have taken `slot` on a night the
@@ -309,7 +383,8 @@ def _tally():
     drop included), `adds` (only those that picked someone up - what the
     table counts), the pickups' `starts` and the dropped players' open games
     (`dropGames`) on that span's nights, and the categories its moves won,
-    cost and were worth (`gained`, `lost`, `net`). A week's adds are those
+    cost and were worth together (`gained`, `lost`, `net` - each week scored
+    once with all of them undone, never each move's swing summed). A week's adds are those
     made in it, and those made the weekend before whose pickup started for
     the team in it; its starts and swings come from moves made then or before.
     """
@@ -329,7 +404,9 @@ def _slim(record):
 def results(info, days, weeks, transactions, players, outside, slots, detail_team=None):
     """
     {categories, swingsScored, teams, players, asOf, weeks, moves, season,
-    weekly} - `season` a `_tally` per team, `weekly` one per team per week.
+    weekly, together} - `season` a `_tally` per team, `weekly` one per team
+    per week, `together` {week: {team: swing with its opponent}} for each week
+    a team's moves, undone at once, changed.
 
     `players` is {yahooId: [name, nhlTeam, positions]}; `outside` {yahooId:
     {date: game line}} - the dropped players' NHL games, matched by the route;
@@ -374,6 +451,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
     moves = pair(transactions)
     out, summary = [], defaultdict(_tally)
     weekly = defaultdict(lambda: defaultdict(_tally))     # {week: {team: tally}}
+    nightly = defaultdict(list)     # {(team, date): every move active that night, for `undone`}
     for n, move in enumerate(moves):
         team = move["team"]
         added, dropped = move["added"], move["dropped"]
@@ -440,6 +518,11 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                     covered += 1
                     if week:
                         add_line(by_week[week["week"]][1], cover[1])
+            if row or d_line:
+                # A pickup on the roster, started or not: undone with the
+                # rest, he is no one's bench stand-in
+                nightly[(team, when)].append((added if row else None, row if started else None,
+                                              drop_positions, d_line))
             if team == detail_team and (a_played or d_line):
                 nights.append([when, row[0] if row else None,
                                _compact_line(row[2], categories) if a_played else None,
@@ -462,14 +545,8 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
             weekly[carried][team]["moves"] += 1
             weekly[carried][team]["adds"] += 1
 
-        tally = summary[team]
-        tally["starts"] += a_starts
-        tally["dropGames"] += d_open
-        for entry in week_out:
-            for each in (tally, weekly[entry["week"]][team]):
-                each["gained"] += len(entry["gains"])
-                each["lost"] += len(entry["costs"])
-                each["net"] += entry["net"]
+        summary[team]["starts"] += a_starts
+        summary[team]["dropGames"] += d_open
 
         # The team being looked at gets every move, with its lines and nights.
         # The rest of the league only feeds the summary and the weeks a move
@@ -499,6 +576,33 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         })
         out.append(record)
 
+    # A team's categories won and cost are its week with every one of its
+    # moves undone at once, scored once. Summing each move's own swing counted
+    # a category twice when two moves each decided it alone, and missed one
+    # only two together decided.
+    together = defaultdict(dict)        # {week: {team: swing}}, the weeks changed
+    if swings_scored:
+        joint = defaultdict(lambda: ({}, {}))
+        for (team, when), active in nightly.items():
+            week = week_of(when)
+            if week:
+                minus, plus = undone(season.roster(when, team), active, slots, categories)
+                for line in minus:
+                    add_line(joint[(week["week"], team)][0], line)
+                for line in plus:
+                    add_line(joint[(week["week"], team)][1], line)
+        for (number, team), (minus, plus) in sorted(joint.items()):
+            rival = opponent.get((number, team))
+            if not (rival and (number, team) in totals and (number, rival) in totals):
+                continue
+            entry = swing(totals[(number, team)], totals[(number, rival)], minus, plus, categories)
+            if entry["gains"] or entry["costs"]:
+                together[number][team] = {"opponent": rival, **entry}
+                for each in (summary[team], weekly[number][team]):
+                    each["gained"] += len(entry["gains"])
+                    each["lost"] += len(entry["costs"])
+                    each["net"] += entry["net"]
+
     out.reverse()          # newest first, as the transactions are listed
     named = {p for m in out for p in ((m.get("added") or {}).get("player"),
                                       (m.get("dropped") or {}).get("player")) if p}
@@ -515,5 +619,6 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         "season": {team: _rounded(tally) for team, tally in summary.items()},
         "weekly": {str(number): {team: _rounded(tally) for team, tally in teams.items()}
                    for number, teams in sorted(weekly.items())},
+        "together": {str(number): teams for number, teams in sorted(together.items())},
         "detailTeam": detail_team,
     }

@@ -16,12 +16,14 @@ cost; a start the dropped player could not have made going to a teammate who
 played on the bench, never left empty; ratios rebuilt from summed parts, so
 two shutouts are two hours; a pickup made on the weekend before a week, kept
 and started in it, counted among that week's adds (but not a Friday one, nor
-one who only sat on its bench, nor one gone by Monday); and points leagues get
-no swings.
+one who only sat on its bench, nor one gone by Monday); a team's week scored
+once with all its moves undone, so two moves that each alone won assists are
+one category won, not two, and each spot and bench stand-in is used once; and
+points leagues get no swings.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/12/2026
+Updated - 10/15/2026
 """
 
 import os
@@ -334,6 +336,83 @@ check("with no slot counts an empty slot cannot be seen - only the idle starter'
 check("the night says who would have covered, with his line, and he is among the players sent",
       theirs["nights"][0][6] == ["26", {HIT: 4}] and theirs["nights"][1][6] is None
       and "26" in no_slots["players"], theirs["nights"])
+
+# --------------------------------------------------------------------------
+print("\n=== 4b. a team's moves together ===")
+
+# Two pickups start and play one night, and neither dropped player had a game.
+# One teammate who played from the bench could cover either - but only one.
+# 72, a third pickup who played on the bench, is undone too, so covers neither.
+night = {"1": ("C", C, sk(1, 0, 0)), "70": ("Util", C, sk(0, 2, 0)), "71": ("LW", LW, sk(0, 1, 0)),
+         "72": ("BN", CLW, sk(0, 0, 3)), "80": ("BN", CLW, sk(0, 1, 1))}
+minus, plus = tr.undone(night, [("70", night["70"], D, None), ("71", night["71"], D, None),
+                                ("72", None, D, None)], {"C": 1, "LW": 1, "Util": 1}, SCORED)
+check("both pickups' started lines come off", minus == [sk(0, 2, 0), sk(0, 1, 0)], minus)
+check("a teammate on the bench covers one of their starts, not both, and another pickup covers none",
+      plus == [sk(0, 1, 1)], plus)
+check("one at a time, each move would have had the busiest of them - the pickup on the bench - cover it",
+      tr.stand_in(night, "Util", SCORED)[0] == "72" and tr.stand_in(night, "LW", SCORED)[0] == "72")
+
+# Two lone drops, both defencemen with a game, and one empty D slot
+minus, plus = tr.undone({"1": ("C", C, sk(1, 0, 0)), "5": ("D", D, sk(0, 0, 1))},
+                        [(None, None, D, sk(0, 0, 2)), (None, None, D, sk(0, 0, 5))], {"C": 1, "D": 2}, SCORED)
+check("an empty slot is filled once", minus == [] and plus == [sk(0, 0, 2)], plus)
+
+# 90's dropped defenceman cannot play his LW; 91's dropped centre can play his
+# Util. Only the Util is open to either, and it is the centre's to take.
+night = {"90": ("LW", LW, sk(0, 1, 0)), "91": ("Util", C, sk(0, 1, 0))}
+minus, plus = tr.undone(night, [("90", night["90"], D, sk(0, 0, 4)), ("91", night["91"], C, sk(1, 0, 0))],
+                        {"LW": 1, "Util": 1}, SCORED)
+check("a dropped player's claim on his own pickup's slot comes before another's last resort",
+      plus == [sk(1, 0, 0)], plus)
+# Team 2's move on the 6th, alone: 21 into the empty LW, 26 covering 20's D
+theirs_night = season.roster("2026-10-06", "2")
+check("with one move it is the spot and the stand-in the move alone is judged on",
+      tr.undone(theirs_night, [("20", theirs_night["20"], LW, sk(0, 1, 0))], SLOTS, SCORED)
+      == ([sk(0, 0, 3)], [sk(0, 1, 0), sk(0, 0, 4)]))
+
+# The case reported: two pickups in one week, each with two assists. Mine won
+# assists 4-3; taking either pickup's two off loses it, so each move alone
+# "won assists" - but the team won one category, not two.
+PAIR_DAYS = [{"date": day, "names": {"1": "Mine", "2": "Theirs"}, "teams": teams} for day, teams in [
+    ("2026-10-06", {"1": [["1", "C", C, sk(0, 0, 0)], ["50", "Util", C, sk(0, 2, 0)]],
+                    "2": [["22", "C", C, sk(0, 0, 0)]]}),
+    ("2026-10-07", {"1": [["1", "C", C, sk(0, 0, 0)], ["50", "BN", C, sk()], ["51", "Util", C, sk(0, 2, 0)]],
+                    "2": [["22", "C", C, sk(0, 0, 0)]]}),
+]]
+PAIR_TX = [
+    {"id": "50", "type": "add/drop", "time": at("2026-10-06", 9), "moves": [["50", "freeagents", "1"], ["60", "1", "freeagents"]]},
+    {"id": "51", "type": "add/drop", "time": at("2026-10-07", 9), "moves": [["51", "freeagents", "1"], ["61", "1", "freeagents"]]},
+]
+GOALIES = {W: 1, GA: 2, GAA: 2.0, SA: 30, SV: 28, SVP: 28 / 30}
+
+
+def pair_week(their_assists):
+    return [{"week": 1, "start": "2026-10-05", "end": "2026-10-11", "status": "postevent",
+             "matchups": [{"teams": ["1", "2"], "totals": {"1": {G: 1, A: 4, HIT: 5, **GOALIES},
+                                                         "2": {G: 1, A: their_assists, HIT: 5, **GOALIES}}}]}]
+
+
+both = tr.results(INFO, PAIR_DAYS, pair_week(3), PAIR_TX, PLAYERS, {}, SLOTS, "1")
+alone = [w for m in both["moves"] for w in m.get("weeks") or []]
+check("each move alone says it won assists",
+      len(alone) == 2 and all(w["gains"] == [[A, "win", "loss"]] and w["net"] == 1.0 for w in alone), alone)
+check("but the team's week counts assists once",
+      both["weekly"]["1"]["1"] == {"moves": 2, "adds": 2, "starts": 2, "dropGames": 0, "gained": 1,
+                                   "lost": 0, "net": 1.0}
+      and both["season"]["1"]["gained"] == 1 and both["season"]["1"]["net"] == 1.0,
+      (both["weekly"]["1"]["1"], both["season"]["1"]))
+together = both["together"]["1"]["1"]
+check("and says what the moves did together, against whom",
+      together["gains"] == [[A, "win", "loss"]] and together["costs"] == [] and together["opponent"] == "2"
+      and together["with"] == [1, 0, 5] and together["without"] == [0, 1, 5], together)
+
+# Their one assist: either pickup alone leaves a 2-1 win, both together a 0-1 loss
+only_together = tr.results(INFO, PAIR_DAYS, pair_week(1), PAIR_TX, PLAYERS, {}, SLOTS, "1")
+check("a category only the moves together decided is counted, though no move alone changed it",
+      not any(m.get("weeks") for m in only_together["moves"])
+      and only_together["together"]["1"]["1"]["gains"] == [[A, "win", "loss"]]
+      and only_together["weekly"]["1"]["1"]["gained"] == 1, only_together["together"])
 
 # --------------------------------------------------------------------------
 print("\n=== 5. the route ===")

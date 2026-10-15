@@ -1677,13 +1677,27 @@ matched by name, team and positions.
   `min` - two shutouts are two hours). `net` counts a tie as half a category,
   as head-to-head standings do. The page also says when a move turned the
   week's matchup from a loss into a win.
+- **A team's week is scored once, all its moves together** (10/15/2026).
+  Each move's own swing says what it decided alone, so two pickups that each
+  alone won assists both claim it. The team table summed those, crediting two
+  categories for one: on the test league a category was claimed by more than
+  one move in 172 of the 236 team-weeks a move changed, and team 11's season
+  read 108 categories won where its moves together won 46. Now `undone` takes
+  each night with every move active on it undone at once - each dropped
+  player into one spot (his own pickup's first, then empty, idle, another
+  pickup's), each bench stand-in used once, another pickup never one - and
+  the week is scored a single time (`together`, which `gained` / `lost` /
+  `net` in `season` and `weekly` add up). It also counts a category only two
+  moves together decided. With one move a night it is exactly the move's own
+  swing (checked on 150 single moves of the test league). The team's week
+  view leads with this line; the cards and lists still show each move alone.
 - **A start the dropped player could not have made is not left empty**
   (`stand_in`): a teammate who played on the bench that night and fits the
   slot takes it, the busiest in the counting categories if several, and his
   line counts in the week without the move. Without that, every pickup was
   credited with his whole line on nights the team had someone else ready. On
   the 2025-26 test league it covered 56 of one team's 562 pickup starts and
-  took its net from +77.5 categories to +65.5. Every team still comes out
+  took its net from +77.5 categories to +65.5 (summed move by move; scored together, +53). Every team still comes out
   ahead on its moves, which is what streaming for games should do.
 - **Kept small:** every move of one team (the one shown, else yours) comes
   with both players' totals and nights. Other teams' moves come only when
@@ -2543,7 +2557,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse); then each team's own page for the goalie minimum - read for the matchup's week, a page showing another week not used, an unreadable one costing the appearances but not the score, and the boxes the bookmarklet sends |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
-| `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; season and weekly tallies, where a lone drop is a move but not an add and last week's pickup still counts his starts this week, and a Saturday pickup kept and started this week is one of its adds (not a Friday one, nor one only benched); two shutouts as two hours; points leagues without swings; then the route, private leagues and bad input |
+| `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; season and weekly tallies, where a lone drop is a move but not an add and last week's pickup still counts his starts this week, and a Saturday pickup kept and started this week is one of its adds (not a Friday one, nor one only benched); two shutouts as two hours; two pickups that each alone won assists counted as one category won, not two, with a bench stand-in or an empty slot used once across moves on one night and a category only the moves together decided counted; points leagues without swings; then the route, private leagues and bad input |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, an update reading one page down to the transaction it holds (the whole page, for claims settled late) and every page when it holds none Yahoo knows, and the routes, saying when to merge and when to replace |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |

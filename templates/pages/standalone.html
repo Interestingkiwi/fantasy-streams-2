@@ -3499,17 +3499,18 @@
             return `<span class="text-xs font-semibold px-1.5 py-0.5 rounded ${tone} text-white whitespace-nowrap">${shareText(n)} categor${Math.abs(n) === 1 ? 'y' : 'ies'}</span>`;
         }
 
-        // "Won HIT (without it, a loss)" for each category a week's swing moved
-        function weekOutcomes(w) {
-            const one = ([id, real, other], tone) => `<span class="${tone}">${RESULT_VERBS[real]} ${esc(resultsData.categories.find(c => c.id === id)?.name || id)}</span> <span class="text-gray-500">(without it, ${RESULT_NOUNS[other]})</span>`;
+        // "Won HIT (without it, a loss)" for each category a week's swing moved;
+        // `it` is 'them' for a team's moves taken together
+        function weekOutcomes(w, it = 'it') {
+            const one = ([id, real, other], tone) => `<span class="${tone}">${RESULT_VERBS[real]} ${esc(resultsData.categories.find(c => c.id === id)?.name || id)}</span> <span class="text-gray-500">(without ${it}, ${RESULT_NOUNS[other]})</span>`;
             return [...(w.gains || []).map(g => one(g, 'text-green-400')), ...(w.costs || []).map(c => one(c, 'text-red-300'))].join(' · ');
         }
 
-        function weekLine(w) {
+        function weekLine(w, it = 'it', label = `Week ${w.week}`) {
             const flip = w.with && w.without && matchupOf(w.with) !== matchupOf(w.without)
                 ? ` <span class="text-amber-300 font-medium">Turned ${RESULT_NOUNS[matchupOf(w.without)]} into ${RESULT_NOUNS[matchupOf(w.with)]}.</span>` : '';
-            return `<p class="text-xs leading-relaxed"><span class="text-gray-400">Week ${w.week}${w.opponent ? ` vs ${esc(resultsTeam(w.opponent))}` : ''}:</span> ${weekOutcomes(w)}`
-                + ` <span class="text-gray-500">&middot; ${recordText3(w.with)} with it, ${recordText3(w.without)} without.</span>${flip}</p>`;
+            return `<p class="text-xs leading-relaxed"><span class="text-gray-400">${label}${w.opponent ? ` vs ${esc(resultsTeam(w.opponent))}` : ''}:</span> ${weekOutcomes(w, it)}`
+                + ` <span class="text-gray-500">&middot; ${recordText3(w.with)} with ${it}, ${recordText3(w.without)} without.</span>${flip}</p>`;
         }
 
         // "Waiver claim, Oct 6" and anything a reader needs to know about how
@@ -3608,7 +3609,7 @@
             const now = d ? (d.nowOn ? (d.nowOn === m.team ? 'back on this team' : `now on ${resultsTeam(d.nowOn)}`) : 'on no team now') : '';
             const since = d ? (d.unmatched ? 'not matched to NHL game data'
                 : `${plural(d.games, 'game')} ${a ? 'in that time' : 'since'}, ${d.open} with a spot open`) : '';
-            const weeksHtml = (m.weeks || []).map(weekLine).join('');
+            const weeksHtml = (m.weeks || []).map(w => weekLine(w)).join('');
             const noSwing = resultsData.swingsScored && !(m.weeks || []).length && (a?.starts || d?.open)
                 ? '<p class="text-xs text-gray-500">Changed no category in any week.</p>' : '';
             return `
@@ -3642,7 +3643,7 @@
                         ${netBadge(w ? w.net : moveNet(m))}
                     </div>
                     <p>${who}</p>
-                    ${(w ? [w] : m.weeks || []).map(weekLine).join('')}
+                    ${(w ? [w] : m.weeks || []).map(each => weekLine(each)).join('')}
                 </li>`;
         }
 
@@ -3695,7 +3696,7 @@
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
                     ${teamTable(resultsData.season, 'Adds: players picked up (drop-only moves are not counted). '
                         + 'Pickup starts: games they started. Drops&rsquo; open games: games the players dropped would have filled an open spot. '
-                        + 'Categories won and cost: across every week, against having kept the dropped player.')}
+                        + 'Categories won and cost: across every week, against having kept the players dropped - a team&rsquo;s moves taken together, so a category two moves helped win counts once.')}
                     ${resultsData.swingsScored ? `
                     <div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">The moves that mattered most</h3>
@@ -3714,7 +3715,7 @@
                     ${teamTable(resultsData.weekly?.[String(number)], `Week ${number}${week && week.status !== 'postevent' ? ', so far' : ''}. `
                         + 'Adds: players picked up this week, or the weekend before if they were kept and started this week (drop-only moves are not counted). '
                         + 'Pickup starts and drops&rsquo; open games: this week&rsquo;s nights, from moves made this week or before. '
-                        + 'Categories won and cost: this week&rsquo;s matchup, against having kept the dropped player.')}
+                        + 'Categories won and cost: this week&rsquo;s matchup, against having kept the players dropped - a team&rsquo;s moves taken together, so a category two moves helped win counts once.')}
                     ${resultsData.swingsScored ? `<div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves that changed week ${number}</h3>
                         ${entries.length ? resultsList(entries.map(e => moveSummary(e.m, e.w)))
@@ -3742,12 +3743,27 @@
                 .sort((x, y) => y.w.net - x.w.net);
             // Made in it, and the weekend before's pickups kept and started in it
             const made = week ? moves.filter(m => (m.date >= week.start && m.date <= week.end) || m.carriedInto === number) : [];
+            // Every move undone at once, which is what the team's tally counts:
+            // a category two moves each won alone is one category
+            const joint = resultsData.together?.[String(number)]?.[team];
+            const claims = changed.flatMap(e => [...(e.w.gains || []), ...(e.w.costs || [])].map(([id]) => id));
+            const overlap = new Set(claims).size < claims.length
+                || Math.abs(changed.reduce((n, e) => n + (e.w.net || 0), 0) - (joint?.net || 0)) > 1e-9;
+            const togetherHtml = joint || changed.length ? `
+                <div class="flex flex-col gap-1 mb-2">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        ${joint ? weekLine(joint, 'them', 'All together') : '<p class="text-xs text-gray-400">All together, they changed no category.</p>'}
+                        ${netBadge(joint?.net || 0)}
+                    </div>
+                    ${changed.length && overlap ? '<p class="text-xs text-gray-500">Each move below is judged on its own, with the team&rsquo;s other moves kept, so two can claim the same category. All together undoes every move active this week at once, and counts each category once.</p>' : ''}
+                </div>` : '';
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
                     ${resultsData.swingsScored ? `<div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">What ${esc(resultsTeam(team))}&rsquo;s moves did to week ${number}${week && week.status !== 'postevent' ? ' <span class="text-xs text-gray-500 font-normal">(so far)</span>' : ''}</h3>
+                        ${togetherHtml}
                         ${changed.length ? resultsList(changed.map(e => moveSummary(e.m, e.w, false)))
-                            : '<p class="text-gray-400">No move changed a category this week.</p>'}
+                            : `<p class="text-gray-400">${joint ? 'No move changed a category on its own, only together.' : 'No move changed a category this week.'}</p>`}
                     </div>` : ''}
                     <div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves made this week</h3>
