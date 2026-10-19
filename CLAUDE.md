@@ -1691,13 +1691,32 @@ matched by name, team and positions.
   moves together decided. With one move a night it is exactly the move's own
   swing (checked on 150 single moves of the test league). The team's week
   view leads with this line; the cards and lists still show each move alone.
+- **A move counts in its own week only** (10/19/2026): the week it was made,
+  plus the week ahead for a weekend pickup carried into it (below), and week
+  1 for a pickup made before the season. Its starts, drops' open games and
+  categories go there and nowhere else, so the undo above is of that week's
+  own moves, and a season is its weeks added up. Until then a pickup counted
+  in every week of his stay: Sauce Boss's week 3 in league 5848 credited
+  Sanheim, picked up 9/29, and he would have kept adding to every week after.
+  The aim is the best move or manager *of a week*, which old moves piling up
+  defeat. A pickup kept past his own weeks is the team's player: his later
+  weeks are still worked out for the team shown and marked `later` (other
+  teams' moves carry only their own weeks), and shown, never counted. On the
+  test league season nets roughly halved again (team 6, +53 to +24.5), every
+  team still ahead. The team's week view puts the week's own moves first,
+  sorted by what they did, with their joint line, and lists **Earlier
+  pickups still playing** below: pickups from before the week who started in
+  it (from their `nights`), each with what he did to it, not counted. A
+  card's badge and the league's lists count only its own weeks; its later
+  weeks show muted.
 - **A start the dropped player could not have made is not left empty**
   (`stand_in`): a teammate who played on the bench that night and fits the
   slot takes it, the busiest in the counting categories if several, and his
   line counts in the week without the move. Without that, every pickup was
   credited with his whole line on nights the team had someone else ready. On
   the 2025-26 test league it covered 56 of one team's 562 pickup starts and
-  took its net from +77.5 categories to +65.5 (summed move by move; scored together, +53). Every team still comes out
+  took its net from +77.5 categories to +65.5 (summed move by move, every
+  week of a stay; scored together, +53; in its own weeks only, +24.5). Every team still comes out
   ahead on its moves, which is what streaming for games should do.
 - **Kept small:** every move of one team (the one shown, else yours) comes
   with both players' totals and nights. Other teams' moves come only when
@@ -1706,22 +1725,24 @@ matched by name, team and positions.
   Changing the team re-requests.
 - **Views:** a team's season (every move as a card: the two players, a
   pickup / dropped / difference table in the categories that apply, the weeks
-  it changed, night by night); a team's week (what its moves did to that
-  week, and the moves made in it); the league's season (a table by team, the
+  it changed, night by night); a team's week (the moves made in it, with what
+  they did together and each alone, then earlier pickups still playing, not
+  counted); the league's season (a table by team, the
   moves that mattered most, the ones that backfired); the league's week (the
   same table for that week, then every move that changed it, by net).
 - **The team table counts adds, not moves**: a drop-only move picked nobody
-  up. `season` and `weekly` are one `_tally` shape. A week's adds are the ones
-  made in it, while its pickup starts, drops' open games and categories come
-  from that week's nights, so a pickup from earlier still counts there.
+  up. `season` and `weekly` are one `_tally` shape. A week's adds, pickup
+  starts, drops' open games and categories all come from its own moves; a
+  pickup from an earlier week counts in his own week, not this one.
 - **A weekend pickup for the week ahead counts in that week too**
   (10/12/2026). A move made on the last two days of a week (Saturday and
   Sunday) whose pickup was kept into the next week and started a game in it
   is among that week's moves and adds as well as the week it was made in,
   and the record says so (`carriedInto`); the team's week view lists it under
-  the moves made that week, marked. So weeks' adds can sum past the season's,
-  which counts each once. On the test league, 120 of 301 weekend pickups
-  carried.
+  the moves made that week, marked. His starts and categories there count
+  (from 10/19/2026; before, every pickup's did). So weeks' adds can sum past
+  the season's, which counts each once. On the test league, 120 of 301
+  weekend pickups carried.
 - **Points leagues** get contributions but no swings, as with bench points.
   Results are held in the page, not stored, and are worked out again after
   Update from Yahoo or a transactions scrape.
@@ -2557,7 +2578,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse); then each team's own page for the goalie minimum - read for the matchup's week, a page showing another week not used, an unreadable one costing the appearances but not the score, and the boxes the bookmarklet sends |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
-| `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; season and weekly tallies, where a lone drop is a move but not an add and last week's pickup still counts his starts this week, and a Saturday pickup kept and started this week is one of its adds (not a Friday one, nor one only benched); two shutouts as two hours; two pickups that each alone won assists counted as one category won, not two, with a bench stand-in or an empty slot used once across moves on one night and a category only the moves together decided counted; points leagues without swings; then the route, private leagues and bad input |
+| `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; season and weekly tallies, where a lone drop is a move but not an add and last week's pickup counts nothing this week though he started in it (that later week shown, marked, never counted; another team's moves carry only their own weeks), a Saturday pickup kept and started this week is one of its adds and starts (not a Friday one, nor one only benched), and one made before the season counts in week 1; two shutouts as two hours; two pickups that each alone won assists counted as one category won, not two, with a bench stand-in or an empty slot used once across moves on one night and a category only the moves together decided counted; points leagues without swings; then the route, private leagues and bad input |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, an update reading one page down to the transaction it holds (the whole page, for claims settled late) and every page when it holds none Yahoo knows, and the routes, saying when to merge and when to replace |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
 | `test_adp.py` | the ADP scrape: reading Yahoo's numbers (a dash is an absence, not a zero), stopping paging at the first undrafted player, and the crosswalk — including the two Elias Petterssons Vancouver actually carries. Stubs the API; needs no database |

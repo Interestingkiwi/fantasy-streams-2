@@ -18,12 +18,14 @@ two shutouts are two hours; a pickup made on the weekend before a week, kept
 and started in it, counted among that week's adds (but not a Friday one, nor
 one who only sat on its bench, nor one gone by Monday); a team's week scored
 once with all its moves undone, so two moves that each alone won assists are
-one category won, not two, and each spot and bench stand-in is used once; and
-points leagues get no swings.
+one category won, not two, and each spot and bench stand-in is used once; a
+move counted only in its own week - an earlier pickup's later week shown,
+marked `later`, never counted, and a season its weeks added up; and points
+leagues get no swings.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/15/2026
+Updated - 10/19/2026
 """
 
 import os
@@ -277,9 +279,9 @@ two_weeks = tr.results(INFO, DAYS + [{"date": "2026-10-12", "names": DAYS[0]["na
                                       ["23", "Util", C, sk()], ["24", "G", GOALIE, gl(played=False)]]}}],
     WEEKS + [{"week": 2, "start": "2026-10-12", "end": "2026-10-18", "status": "midevent", "matchups": []}],
     TRANSACTIONS, PLAYERS, OUTSIDE, SLOTS, "1")
-check("a pickup made last week still counts his starts this week, but not as an add",
-      two_weeks["weekly"]["2"] == {"2": {"moves": 0, "adds": 0, "starts": 1, "dropGames": 0, "gained": 0,
-                                         "lost": 0, "net": 0.0}}, two_weeks["weekly"].get("2"))
+check("a pickup made last week counts nothing this week, though he started in it",
+      "2" not in two_weeks["weekly"] and two_weeks["season"]["2"]["starts"] == 2,
+      (two_weeks["weekly"].get("2"), two_weeks["season"]["2"]))
 
 # The weekend before week 2: Friday's pickup (40) and Saturday's (42) both start
 # on Monday; Sunday's (44) is kept but sits on the bench; team 2's Sunday
@@ -305,10 +307,10 @@ weekend = tr.results(INFO, WEEKEND, WEEKS + [{"week": 2, "start": "2026-10-12", 
                                              "status": "midevent", "matchups": []}],
                      WEEKEND_TX, PLAYERS, {}, SLOTS, "1")
 carried = {m["added"]["player"]: m.get("carriedInto") for m in weekend["moves"] if m["team"] == "1"}
-check("a Saturday pickup kept and started in the next week counts among its adds - "
-      "a Friday one does not, nor a Sunday one who only sat on its bench",
+check("a Saturday pickup kept and started in the next week counts among its adds and starts - "
+      "a Friday one does not, though he started there too, nor a Sunday one who only sat on its bench",
       carried == {"40": None, "42": 2, "44": None}
-      and weekend["weekly"]["2"].get("1") == {"moves": 1, "adds": 1, "starts": 2, "dropGames": 0,
+      and weekend["weekly"]["2"].get("1") == {"moves": 1, "adds": 1, "starts": 1, "dropGames": 0,
                                               "gained": 0, "lost": 0, "net": 0.0}, (carried, weekend["weekly"]))
 check("and still counts in the week it was made in, with the season counting it once",
       weekend["weekly"]["1"]["1"]["adds"] == 3 and weekend["season"]["1"]["adds"] == 3, weekend["weekly"]["1"])
@@ -413,6 +415,58 @@ check("a category only the moves together decided is counted, though no move alo
       not any(m.get("weeks") for m in only_together["moves"])
       and only_together["together"]["1"]["1"]["gains"] == [[A, "win", "loss"]]
       and only_together["weekly"]["1"]["1"]["gained"] == 1, only_together["together"])
+
+# --------------------------------------------------------------------------
+print("\n=== 4c. a move counts in its own week ===")
+
+# 50, picked up in week 1, wins assists in week 1 and again in week 2. 52,
+# picked up the Saturday ending week 1, starts in week 2 and wins hits. 53,
+# picked up the day before the season, starts on opening night.
+OWN_DAYS = [{"date": day, "names": {"1": "Mine", "2": "Theirs"}, "teams": teams} for day, teams in [
+    ("2026-10-06", {"1": [["1", "C", C, sk(0, 0, 0)], ["50", "Util", C, sk(0, 2, 0)], ["53", "D", D, sk(0, 0, 0)]],
+                    "2": [["22", "C", C, sk(0, 0, 0)]]}),
+    ("2026-10-10", {"1": [["1", "C", C, sk()], ["50", "Util", C, sk()], ["52", "BN", LW, sk()]],
+                    "2": [["22", "C", C, sk()]]}),
+    ("2026-10-12", {"1": [["1", "C", C, sk(0, 0, 0)], ["50", "Util", C, sk(0, 2, 0)], ["52", "LW", LW, sk(0, 0, 3)]],
+                    "2": [["22", "C", C, sk(0, 0, 0)]]}),
+]]
+OWN_TX = [
+    {"id": "53", "type": "add/drop", "time": at("2026-10-04", 12), "moves": [["53", "freeagents", "1"], ["63", "1", "freeagents"]]},
+    {"id": "50", "type": "add/drop", "time": at("2026-10-06", 9), "moves": [["50", "freeagents", "1"], ["60", "1", "freeagents"]]},
+    {"id": "52", "type": "add/drop", "time": at("2026-10-10", 12), "moves": [["52", "freeagents", "1"], ["62", "1", "freeagents"]]},
+]
+OWN_WEEKS = [{"week": number, "start": start, "end": end, "status": "postevent",
+              "matchups": [{"teams": ["1", "2"], "totals": {"1": {G: 1, **mine, **GOALIES},
+                                                          "2": {G: 1, **theirs, **GOALIES}}}]}
+             for number, start, end, mine, theirs in [
+                 (1, "2026-10-05", "2026-10-11", {A: 4, HIT: 5}, {A: 3, HIT: 5}),
+                 (2, "2026-10-12", "2026-10-18", {A: 3, HIT: 6}, {A: 2, HIT: 4})]]
+own = tr.results(INFO, OWN_DAYS, OWN_WEEKS, OWN_TX, PLAYERS, {}, SLOTS, "1")
+by_pickup = {m["added"]["player"]: m for m in own["moves"]}
+check("an earlier pickup's later week is worked out and marked later - shown, not counted",
+      [(w["week"], w["gains"], w.get("later")) for w in by_pickup["50"]["weeks"]]
+      == [(1, [[A, "win", "loss"]], None), (2, [[A, "win", "loss"]], True)], by_pickup["50"]["weeks"])
+check("so week 2 counts the weekend pickup's hits and not the old pickup's assists",
+      own["weekly"]["2"]["1"] == {"moves": 1, "adds": 1, "starts": 1, "dropGames": 0, "gained": 1,
+                                  "lost": 0, "net": 1.0}
+      and own["together"]["2"]["1"]["gains"] == [[HIT, "win", "loss"]],
+      (own["weekly"]["2"]["1"], own["together"]["2"]))
+check("the weekend pickup's week 2 is his own, not later",
+      by_pickup["52"].get("carriedInto") == 2
+      and [(w["week"], w.get("later")) for w in by_pickup["52"]["weeks"]] == [(2, None)], by_pickup["52"])
+check("a pickup made before the season counts in the first week",
+      by_pickup["53"].get("carriedInto") == 1 and own["weekly"]["1"]["1"]["adds"] == 3
+      and own["weekly"]["1"]["1"]["starts"] == 2, (by_pickup["53"], own["weekly"]["1"]["1"]))
+check("and the season is its weeks added up: one category in each",
+      own["season"]["1"]["gained"] == 2 and own["season"]["1"]["starts"] == 3
+      and own["season"]["1"]["net"] == 2.0, own["season"]["1"])
+check("the old pickup's nights still include the later week, for the team's week view",
+      "2026-10-12" in [n[0] for n in by_pickup["50"]["nights"]])
+league_view = tr.results(INFO, OWN_DAYS, OWN_WEEKS, OWN_TX, PLAYERS, {}, SLOTS, "2")
+check("another team's moves carry only their own weeks",
+      all(not w.get("later") for m in league_view["moves"] for w in m.get("weeks") or [])
+      and [w["week"] for m in league_view["moves"] if m["added"]["player"] == "50" for w in m["weeks"]] == [1],
+      league_view["moves"])
 
 # --------------------------------------------------------------------------
 print("\n=== 5. the route ===")

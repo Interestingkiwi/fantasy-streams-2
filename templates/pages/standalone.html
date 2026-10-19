@@ -552,6 +552,8 @@
                     <li>The dropped player counts on the same nights, from NHL game data, only when a spot he could fill was open: the pickup&rsquo;s own starting slot, an empty slot, or a starter&rsquo;s who had no game. Otherwise he would have sat.</li>
                     <li>A week&rsquo;s swing takes the pickup&rsquo;s line off the real week totals, puts the dropped player&rsquo;s on, and scores every category against that week&rsquo;s opponent again. A tie counts half a category.</li>
                     <li>A start the dropped player could not have made is not left empty: a teammate who played on your bench that night and could fill the slot takes it, and his line counts in the week without the move.</li>
+                    <li>A move counts in the week it was made, and in the week ahead for a pickup made on the Saturday or Sunday before it, kept and started there. A pickup held longer is your player after that: a team&rsquo;s week shows what he still did, but it does not count, so old moves never pile up on anyone&rsquo;s weeks.</li>
+                    <li>A team&rsquo;s week is scored once with all of that week&rsquo;s moves undone together, so a category two moves helped win counts once.</li>
                 </ul>
             </details>
         </section>
@@ -3476,7 +3478,10 @@
         const resultsTeam = id => resultsData?.teams?.[id]
             || league.teams.find(t => String(t.yahooTeamId) === String(id))?.name || `Team ${id}`;
         const shareText = n => (n > 0 ? '+' : n < 0 ? '−' : '') + (Math.abs(n) % 1 ? Math.abs(n).toFixed(1) : Math.abs(n));
-        const moveNet = m => (m.weeks || []).reduce((n, w) => n + (w.net || 0), 0);
+        // A move counts in its own week (and the week ahead, for a weekend
+        // pickup); a week it changed after that is `later` - shown, not counted
+        const countedWeeks = m => (m.weeks || []).filter(w => !w.later);
+        const moveNet = m => countedWeeks(m).reduce((n, w) => n + (w.net || 0), 0);
         const recordText3 = r => (r ? `${r[0]}-${r[1]}-${r[2]}` : '');
         const matchupOf = r => (r[0] > r[1] ? 'win' : r[0] < r[1] ? 'loss' : 'tie');
 
@@ -3598,7 +3603,12 @@
                 </details>`;
         }
 
-        function moveCard(m, note = '') {
+        // A week a pickup kept from earlier changed: what he did, muted, since
+        // it is not counted
+        const laterLine = w => `<div class="opacity-60">${weekLine(w, 'it', `Week ${w.week} <span class="text-gray-500">(kept from earlier, not counted)</span>`)}</div>`;
+
+        // `only` limits the card's weeks to one, for a week's own view
+        function moveCard(m, note = '', only = null) {
             const a = m.added;
             const d = m.dropped;
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -3609,14 +3619,17 @@
             const now = d ? (d.nowOn ? (d.nowOn === m.team ? 'back on this team' : `now on ${resultsTeam(d.nowOn)}`) : 'on no team now') : '';
             const since = d ? (d.unmatched ? 'not matched to NHL game data'
                 : `${plural(d.games, 'game')} ${a ? 'in that time' : 'since'}, ${d.open} with a spot open`) : '';
-            const weeksHtml = (m.weeks || []).map(w => weekLine(w)).join('');
-            const noSwing = resultsData.swingsScored && !(m.weeks || []).length && (a?.starts || d?.open)
-                ? '<p class="text-xs text-gray-500">Changed no category in any week.</p>' : '';
+            const weeks = (m.weeks || []).filter(w => only == null || w.week === only);
+            const counted = weeks.filter(w => !w.later);
+            const weeksHtml = counted.map(w => weekLine(w)).join('');
+            const laterHtml = weeks.filter(w => w.later).map(laterLine).join('');
+            const noSwing = resultsData.swingsScored && !counted.length && (a?.starts || d?.open)
+                ? `<p class="text-xs text-gray-500">Changed no category ${only == null ? 'in its own week' : 'this week'}.</p>` : '';
             return `
                 <li class="p-3 sm:px-4 flex flex-col gap-2">
                     <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                         <p class="text-gray-300">${moveHeading(m)}</p>
-                        ${netBadge(moveNet(m))}
+                        ${netBadge(counted.reduce((n, w) => n + (w.net || 0), 0))}
                     </div>
                     ${note ? `<p class="text-xs text-gray-500 -mt-1">${esc(note)}</p>` : ''}
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
@@ -3624,7 +3637,7 @@
                         ${d ? `<div><p><span class="text-red-300 font-semibold">&minus;</span> ${resultsPlayer(d.player)}</p><p class="text-xs text-gray-400">${esc([since, now].filter(Boolean).join(' · '))}</p></div>` : ''}
                     </div>
                     ${a?.totals || d?.totals ? comparisonTable(m) : ''}
-                    ${weeksHtml}${noSwing}
+                    ${weeksHtml}${noSwing}${laterHtml}
                     ${nightsHtml(m)}
                 </li>`;
         }
@@ -3643,7 +3656,7 @@
                         ${netBadge(w ? w.net : moveNet(m))}
                     </div>
                     <p>${who}</p>
-                    ${(w ? [w] : m.weeks || []).map(each => weekLine(each)).join('')}
+                    ${(w ? [w] : countedWeeks(m)).map(each => weekLine(each)).join('')}
                 </li>`;
         }
 
@@ -3694,9 +3707,11 @@
             const worst = ranked.filter(r => r.net < 0).sort((x, y) => x.net - y.net).slice(0, 5);
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
-                    ${teamTable(resultsData.season, 'Adds: players picked up (drop-only moves are not counted). '
-                        + 'Pickup starts: games they started. Drops&rsquo; open games: games the players dropped would have filled an open spot. '
-                        + 'Categories won and cost: across every week, against having kept the players dropped - a team&rsquo;s moves taken together, so a category two moves helped win counts once.')}
+                    ${teamTable(resultsData.season, 'Every move counts in the week it was made, and the week ahead for a weekend pickup kept and started there - '
+                        + 'a pickup held longer is the team&rsquo;s player after that, and adds nothing more. '
+                        + 'Adds: players picked up (drop-only moves are not counted). '
+                        + 'Pickup starts: games they started in those weeks. Drops&rsquo; open games: games the players dropped would have filled an open spot. '
+                        + 'Categories won and cost: those weeks&rsquo; matchups, against having kept the players dropped - a team&rsquo;s moves in a week taken together, so a category two moves helped win counts once.')}
                     ${resultsData.swingsScored ? `
                     <div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">The moves that mattered most</h3>
@@ -3708,14 +3723,14 @@
 
         function resultsLeagueWeek(number) {
             const week = resultsData.weeks.find(w => w.week === number);
-            const entries = resultsData.moves.flatMap(m => (m.weeks || []).filter(w => w.week === number).map(w => ({ m, w })))
+            const entries = resultsData.moves.flatMap(m => countedWeeks(m).filter(w => w.week === number).map(w => ({ m, w })))
                 .sort((x, y) => y.w.net - x.w.net || (y.w.gains || []).length - (x.w.gains || []).length);
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
                     ${teamTable(resultsData.weekly?.[String(number)], `Week ${number}${week && week.status !== 'postevent' ? ', so far' : ''}. `
                         + 'Adds: players picked up this week, or the weekend before if they were kept and started this week (drop-only moves are not counted). '
-                        + 'Pickup starts and drops&rsquo; open games: this week&rsquo;s nights, from moves made this week or before. '
-                        + 'Categories won and cost: this week&rsquo;s matchup, against having kept the players dropped - a team&rsquo;s moves taken together, so a category two moves helped win counts once.')}
+                        + 'Pickup starts and drops&rsquo; open games: those moves&rsquo; games this week. A pickup from an earlier week counted in his own week, not this one. '
+                        + 'Categories won and cost: this week&rsquo;s matchup, against having kept the players dropped - the week&rsquo;s moves taken together, so a category two moves helped win counts once.')}
                     ${resultsData.swingsScored ? `<div>
                         <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves that changed week ${number}</h3>
                         ${entries.length ? resultsList(entries.map(e => moveSummary(e.m, e.w)))
@@ -3728,48 +3743,71 @@
             const moves = resultsData.moves.filter(m => m.team === team);
             const s = resultsData.season[team] || { moves: 0, starts: 0, dropGames: 0, gained: 0, lost: 0, net: 0 };
             const summary = `${resultsTeam(team)}: ${s.moves} move${s.moves === 1 ? '' : 's'}, pickups started ${s.starts} game${s.starts === 1 ? '' : 's'}, the players dropped would have filled ${s.dropGames}.`
-                + (resultsData.swingsScored ? ` Against keeping them: ${s.gained} categor${s.gained === 1 ? 'y' : 'ies'} won, ${s.lost} cost - ${shareText(s.net)} net.` : '');
+                + (resultsData.swingsScored ? ` Against keeping them, each move in its own week: ${s.gained} categor${s.gained === 1 ? 'y' : 'ies'} won, ${s.lost} cost - ${shareText(s.net)} net.` : '');
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-3">
                     <p class="text-gray-300">${esc(summary)}</p>
-                    ${moves.length ? resultsList(moves.map(moveCard)) : '<p class="text-gray-400">No moves this season.</p>'}
+                    ${moves.length ? resultsList(moves.map(m => moveCard(m))) : '<p class="text-gray-400">No moves this season.</p>'}
                 </div>`;
         }
 
+        // One team's week: the moves made in it first, with what they did -
+        // the only ones its numbers count - then the pickups from earlier
+        // weeks still starting for the team, shown but not counted
         function resultsTeamWeek(team, number) {
             const week = resultsData.weeks.find(w => w.week === number);
+            if (!week) return '';
             const moves = resultsData.moves.filter(m => m.team === team);
-            const changed = moves.flatMap(m => (m.weeks || []).filter(w => w.week === number).map(w => ({ m, w })))
-                .sort((x, y) => y.w.net - x.w.net);
+            const effect = m => (m.weeks || []).find(w => w.week === number);
             // Made in it, and the weekend before's pickups kept and started in it
-            const made = week ? moves.filter(m => (m.date >= week.start && m.date <= week.end) || m.carriedInto === number) : [];
-            // Every move undone at once, which is what the team's tally counts:
-            // a category two moves each won alone is one category
+            const own = m => (m.date >= week.start && m.date <= week.end) || m.carriedInto === number;
+            const made = moves.filter(own)
+                .sort((x, y) => (effect(y)?.net || 0) - (effect(x)?.net || 0) || (y.date < x.date ? -1 : y.date > x.date ? 1 : 0));
+            const changed = made.map(effect).filter(Boolean);
+            // The week's moves undone at once, which is what the team's numbers
+            // count: a category two moves each won alone is one category
             const joint = resultsData.together?.[String(number)]?.[team];
-            const claims = changed.flatMap(e => [...(e.w.gains || []), ...(e.w.costs || [])].map(([id]) => id));
+            const claims = changed.flatMap(w => [...(w.gains || []), ...(w.costs || [])].map(([id]) => id));
             const overlap = new Set(claims).size < claims.length
-                || Math.abs(changed.reduce((n, e) => n + (e.w.net || 0), 0) - (joint?.net || 0)) > 1e-9;
-            const togetherHtml = joint || changed.length ? `
+                || Math.abs(changed.reduce((n, w) => n + (w.net || 0), 0) - (joint?.net || 0)) > 1e-9;
+            const togetherHtml = resultsData.swingsScored && made.length ? `
                 <div class="flex flex-col gap-1 mb-2">
                     <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                         ${joint ? weekLine(joint, 'them', 'All together') : '<p class="text-xs text-gray-400">All together, they changed no category.</p>'}
                         ${netBadge(joint?.net || 0)}
                     </div>
-                    ${changed.length && overlap ? '<p class="text-xs text-gray-500">Each move below is judged on its own, with the team&rsquo;s other moves kept, so two can claim the same category. All together undoes every move active this week at once, and counts each category once.</p>' : ''}
+                    ${changed.length && overlap ? '<p class="text-xs text-gray-500">Each move below is judged on its own, with the team&rsquo;s other moves kept, so two can claim the same category. All together undoes every one of this week&rsquo;s moves at once, and counts each category once.</p>' : ''}
                 </div>` : '';
+
+            // Picked up before this week, still starting for the team in it
+            const NOT_STARTING = ['BN', 'IR', 'IR+', 'NA'];
+            const startsIn = m => (m.nights || []).filter(n => n[0] >= week.start && n[0] <= week.end
+                && n[1] && !NOT_STARTING.includes(n[1]) && n[2]).length;
+            const earlier = moves.filter(m => m.added && !own(m) && m.date < week.start)
+                .map(m => ({ m, starts: startsIn(m), w: effect(m) }))
+                .filter(e => e.starts)
+                .sort((x, y) => (y.w?.net || 0) - (x.w?.net || 0) || y.starts - x.starts);
+            const earlierItem = ({ m, starts, w }) => `
+                <li class="p-2 sm:px-3 flex flex-col gap-0.5">
+                    <p>${resultsPlayer(m.added.player)} <span class="text-xs text-gray-500">picked up ${esc(shortDate(m.date))}${m.dropped ? ' for' : ''}</span>${m.dropped ? ` ${resultsPlayer(m.dropped.player)}` : ''}</p>
+                    <p class="text-xs text-gray-400">Started ${starts} game${starts === 1 ? '' : 's'} this week</p>
+                    ${w ? weekLine(w) : ''}
+                </li>`;
+            const soFar = week.status !== 'postevent' ? ' <span class="text-xs text-gray-500 font-normal">(so far)</span>' : '';
             return `
                 <div class="p-3 sm:p-4 flex flex-col gap-4">
-                    ${resultsData.swingsScored ? `<div>
-                        <h3 class="text-sm font-semibold text-gray-300 mb-1">What ${esc(resultsTeam(team))}&rsquo;s moves did to week ${number}${week && week.status !== 'postevent' ? ' <span class="text-xs text-gray-500 font-normal">(so far)</span>' : ''}</h3>
-                        ${togetherHtml}
-                        ${changed.length ? resultsList(changed.map(e => moveSummary(e.m, e.w, false)))
-                            : `<p class="text-gray-400">${joint ? 'No move changed a category on its own, only together.' : 'No move changed a category this week.'}</p>`}
-                    </div>` : ''}
                     <div>
-                        <h3 class="text-sm font-semibold text-gray-300 mb-1">Moves made this week</h3>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">${esc(resultsTeam(team))}&rsquo;s moves in week ${number}${soFar}</h3>
+                        ${togetherHtml}
                         ${made.length ? resultsList(made.map(m => moveCard(m, m.carriedInto === number
-                            ? 'Made the weekend before, and kept: started this week.' : ''))) : '<p class="text-gray-400">None.</p>'}
+                            ? 'Made before this week, and kept: started this week.' : '', number)))
+                            : '<p class="text-gray-400">None.</p>'}
                     </div>
+                    ${earlier.length ? `<div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">Earlier pickups still playing</h3>
+                        <p class="text-xs text-gray-500 mb-1">Picked up before this week and still starting for ${esc(resultsTeam(team))}. What they did to week ${number} is shown, but it counts in the week each was picked up, not this one.</p>
+                        ${resultsList(earlier.map(earlierItem))}
+                    </div>` : ''}
                 </div>`;
         }
 

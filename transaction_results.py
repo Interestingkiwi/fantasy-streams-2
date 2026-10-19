@@ -42,21 +42,26 @@ category the real week won or tied that the counterfactual would not have is
 a gain; the reverse a cost, a tie counting half (`net`). Points leagues get
 contributions but no swings, as with bench points.
 
+**A move counts in its own week only** (10/19/2026): the week it was made
+in, and - for a pickup made on the Saturday or Sunday ending a week (its last
+two days), kept into the next week and started there - that next week too
+(`carriedInto`); a move made before the season, the first week the same way.
+Its starts, its dropped player's open games and its categories go to those
+weeks and no others. A pickup kept longer is simply the team's player after
+that: the weeks he changed later are still worked out, for the team being
+looked at, and marked `later`, but never counted. Counted every week of his
+stay, a pickup from opening night kept piling up a manager's weeks all
+season, which is no measure of the moves made in any one of them.
+
 **A team's week is scored once, with all its moves undone together**
 (`undone`, `together`). Each move's own swing says what that move alone
 decided, so two moves that each alone won assists both say so - and summed,
 the team was credited with two categories for one. Its categories won, cost
-and net are therefore the week with every move active on each night undone
-at once, each spot and each bench stand-in used once, and scored against the
-opponent a single time. On the 2025-26 test league a category was claimed by
-more than one move in 172 of the 236 team-weeks a move changed.
-
-**A weekend pickup for the week ahead counts in that week too.** A move made
-on the Saturday or Sunday ending a week (its last two days) whose pickup was
-kept into the next week and started a game for the team in it is counted
-among that week's moves and adds as well as the week it was made in
-(`carriedInto`). His starts and swings already went to the week of each
-night; this is the week's tally of moves, and the page's list of them.
+and net are therefore the week with every one of the week's own moves
+undone at once on each night, each spot and each bench stand-in used once,
+and scored against the opponent a single time. On the 2025-26 test league a
+category was claimed by more than one move in 172 of the 236 team-weeks a
+move changed.
 
 **A start the dropped player could not have made is not left empty.** On a
 night the pickup started and played and the dropped player could not take his
@@ -69,7 +74,7 @@ strongly ahead on its moves, streamers most of all.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/15/2026
+Updated - 10/19/2026
 """
 
 from collections import Counter, defaultdict
@@ -384,9 +389,11 @@ def _tally():
     table counts), the pickups' `starts` and the dropped players' open games
     (`dropGames`) on that span's nights, and the categories its moves won,
     cost and were worth together (`gained`, `lost`, `net` - each week scored
-    once with all of them undone, never each move's swing summed). A week's adds are those
-    made in it, and those made the weekend before whose pickup started for
-    the team in it; its starts and swings come from moves made then or before.
+    once with all of them undone, never each move's swing summed). A week's
+    moves are those made in it, and those made the weekend before whose
+    pickup started for the team in it; everything a week counts comes from
+    them alone, and a season is its weeks added up (adds aside: a carried
+    pickup is one add in the season and one in each of his two weeks).
     """
     return {"moves": 0, "adds": 0, "starts": 0, "dropGames": 0, "gained": 0, "lost": 0, "net": 0.0}
 
@@ -406,7 +413,9 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
     {categories, swingsScored, teams, players, asOf, weeks, moves, season,
     weekly, together} - `season` a `_tally` per team, `weekly` one per team
     per week, `together` {week: {team: swing with its opponent}} for each week
-    a team's moves, undone at once, changed.
+    a team's own moves for it, undone at once, changed. A move's `weeks` are
+    those its swing changed; one after its own weeks is `later` (shown, not
+    counted), and only the detail team's moves carry those.
 
     `players` is {yahooId: [name, nhlTeam, positions]}; `outside` {yahooId:
     {date: game line}} - the dropped players' NHL games, matched by the route;
@@ -460,10 +469,13 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         if made_in:
             weekly[made_in["week"]][team]["moves"] += 1
         # Made on the weekend ending a week: the next week's too, if he was
-        # kept into it and started there (counted once the nights are read)
+        # kept into it and started there (counted once the nights are read).
+        # One made before the season is the first week's the same way.
         following = week_of(_plus(made_in["end"], 1)) if made_in and added else None
         if following and _plus(move["date"], WEEKEND_DAYS) < following["start"]:
             following = None
+        if not made_in and added and week_list and move["date"] < week_list[0]["start"]:
+            following = week_list[0]
         if added:
             summary[team]["adds"] += 1
             if made_in:
@@ -478,6 +490,9 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         a_total, d_total = {}, {}
         a_games = a_starts = d_games = d_open = covered = following_starts = 0
         by_week = defaultdict(lambda: ({}, {}))
+        # Per week, until the move's own weeks are known: its starts, its
+        # dropped player's open games, and its nights for `undone`
+        week_starts, week_open, week_nights = Counter(), Counter(), defaultdict(list)
         nights = []
         for when in window:
             roster = season.roster(when, team)
@@ -492,7 +507,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                 add_line(a_total, row[2])
                 if week:
                     add_line(by_week[week["week"]][0], row[2])
-                    weekly[week["week"]][team]["starts"] += 1
+                    week_starts[week["week"]] += 1
                     if following and week["week"] == following["week"]:
                         following_starts += 1
 
@@ -507,7 +522,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                         add_line(d_total, d_line)
                         if week:
                             add_line(by_week[week["week"]][1], d_line)
-                            weekly[week["week"]][team]["dropGames"] += 1
+                            week_open[week["week"]] += 1
             # A start the dropped player could not have made would not have
             # gone unfilled: a teammate who played on the bench takes it, and
             # his line belongs to the week without the move
@@ -518,11 +533,11 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                     covered += 1
                     if week:
                         add_line(by_week[week["week"]][1], cover[1])
-            if row or d_line:
+            if week and (row or d_line):
                 # A pickup on the roster, started or not: undone with the
                 # rest, he is no one's bench stand-in
-                nightly[(team, when)].append((added if row else None, row if started else None,
-                                              drop_positions, d_line))
+                week_nights[week["week"]].append((when, (added if row else None, row if started else None,
+                                                         drop_positions, d_line)))
             if team == detail_team and (a_played or d_line):
                 nights.append([when, row[0] if row else None,
                                _compact_line(row[2], categories) if a_played else None,
@@ -530,28 +545,38 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                                _compact_line(d_line, categories) if d_line else None,
                                [cover[0], _compact_line(cover[1], categories)] if cover else None])
 
-        # Only the weeks a move changed: a season of every week of every move
-        # is most of a response otherwise
-        week_out = []
-        for number, (minus, plus) in sorted(by_week.items()):
-            rival = opponent.get((number, team))
-            if swings_scored and rival and (number, team) in totals and (number, rival) in totals:
-                entry = swing(totals[(number, team)], totals[(number, rival)], minus, plus, categories)
-                if entry["gains"] or entry["costs"]:
-                    week_out.append({"week": number, "opponent": rival, **entry})
-
         carried = following["week"] if following and following_starts else None
         if carried is not None:
             weekly[carried][team]["moves"] += 1
             weekly[carried][team]["adds"] += 1
 
-        summary[team]["starts"] += a_starts
-        summary[team]["dropGames"] += d_open
+        # A move counts in its own weeks only - the one it was made in and the
+        # one a weekend pickup was carried into. A pickup kept longer is the
+        # team's player after that: his later weeks are shown, never counted,
+        # so an old move cannot keep piling up a manager's weeks.
+        own = {w for w in (made_in["week"] if made_in else None, carried) if w is not None}
+        for number in own:
+            weekly[number][team]["starts"] += week_starts[number]
+            weekly[number][team]["dropGames"] += week_open[number]
+            summary[team]["starts"] += week_starts[number]
+            summary[team]["dropGames"] += week_open[number]
+            for when, entry in week_nights[number]:
+                nightly[(team, when)].append(entry)
 
-        # The team being looked at gets every move, with its lines and nights.
-        # The rest of the league only feeds the summary and the weeks a move
-        # changed, so a move of theirs that changed none is left out.
+        # The team being looked at gets every move, with its lines and nights,
+        # and every week it changed, those after its own marked `later`. The
+        # rest of the league gets only moves that changed one of their own
+        # weeks - the only weeks the league's views show.
         detail = team == detail_team
+        week_out = []
+        for number, (minus, plus) in sorted(by_week.items()):
+            rival = opponent.get((number, team))
+            if (number in own or detail) and swings_scored and rival \
+                    and (number, team) in totals and (number, rival) in totals:
+                entry = swing(totals[(number, team)], totals[(number, rival)], minus, plus, categories)
+                if entry["gains"] or entry["costs"]:
+                    week_out.append({"week": number, "opponent": rival, **entry,
+                                     **({} if number in own else {"later": True})})
         if not (detail or week_out):
             continue
         record = _slim({
