@@ -19,7 +19,9 @@ and started in it, counted among that week's adds (but not a Friday one, nor
 one who only sat on its bench, nor one gone by Monday); a team's week scored
 once with all its moves undone, so two moves that each alone won assists are
 one category won, not two, and each spot and bench stand-in is used once; a
-move counted only in its own week - an earlier pickup's later week shown,
+chain of the week's moves undone together keeping the player it began by
+dropping, never one picked up and dropped again within it; a move counted
+only in its own week - an earlier pickup's later week shown,
 marked `later`, never counted, and a season its weeks added up; and points
 leagues get no swings.
 
@@ -263,17 +265,24 @@ check("their move won hits - only a win over a tie, since 26 would have played 2
       and sorted(week["costs"]) == sorted([[A, "loss", "tie"], [G, "tie", "win"]]) and week["net"] == -0.5, week)
 check("and says one of its starts a teammate on the bench would have covered", theirs["added"]["covered"] == 1)
 check("a win made of a tie, and a tie made of a win, net to nothing", mine["weeks"][0]["net"] == 0.0)
+# Team 1's two moves undone together: 10 never arrives, and the lone drop of
+# 10 on the 9th is undone too - so 3 was never dropped, and his 5-5-5 night
+# in the empty Util is the team's without its moves. Goals 10 to 3 and hits
+# 14 to 11 win, assists stay won: a tie and a loss given up, -1.5.
 check("the season tallies every move: starts, open games, categories won and lost - "
       "and its lone drop is a move but not an add",
-      out["season"]["1"] == {"moves": 2, "adds": 1, "starts": 1, "dropGames": 2, "gained": 1, "lost": 1,
-                             "net": 0.0}
+      out["season"]["1"] == {"moves": 2, "adds": 1, "starts": 1, "dropGames": 2, "gained": 0, "lost": 2,
+                             "net": -1.5}
       and out["season"]["2"]["gained"] == 1 and out["season"]["2"]["lost"] == 2
       and out["season"]["2"]["net"] == -0.5, out["season"])
 check("each week tallies the same, for the adds made in it and the nights in it",
-      out["weekly"]["1"]["1"] == {"moves": 2, "adds": 1, "starts": 1, "dropGames": 2, "gained": 1,
-                                  "lost": 1, "net": 0.0}
+      out["weekly"]["1"]["1"] == {"moves": 2, "adds": 1, "starts": 1, "dropGames": 2, "gained": 0,
+                                  "lost": 2, "net": -1.5}
       and out["weekly"]["1"]["2"] == {"moves": 1, "adds": 1, "starts": 2, "dropGames": 2, "gained": 1,
                                       "lost": 2, "net": -0.5}, out["weekly"])
+check("undoing a pickup and the lone drop of him later brings back the player he replaced",
+      sorted(out["together"]["1"]["1"]["costs"]) == sorted([[G, "tie", "win"], [HIT, "loss", "win"]])
+      and out["together"]["1"]["1"]["gains"] == [], out["together"]["1"]["1"])
 two_weeks = tr.results(INFO, DAYS + [{"date": "2026-10-12", "names": DAYS[0]["names"], "teams": {
     "1": DAYS[3]["teams"]["1"], "2": [["22", "C", C, sk()], ["25", "LW", LW, sk()], ["20", "D", D, sk(0, 0, 1)],
                                       ["23", "Util", C, sk()], ["24", "G", GOALIE, gl(played=False)]]}}],
@@ -408,6 +417,29 @@ together = both["together"]["1"]["1"]
 check("and says what the moves did together, against whom",
       together["gains"] == [[A, "win", "loss"]] and together["costs"] == [] and together["opponent"] == "2"
       and together["with"] == [1, 0, 5] and together["without"] == [0, 1, 5], together)
+
+# A chain within the week, as Sauce Boss's week 3 in league 5848 had it:
+# Monday 70 for 71, Wednesday 72 for 70, and 70 gets two assists for someone
+# else that night. Undone alone, Wednesday's move keeps 70 and his assists -
+# a cost. Undone together, 70 was never there: 71 is kept, with nothing.
+CHAIN_DAYS = [{"date": day, "names": {"1": "Mine", "2": "Theirs"}, "teams": teams} for day, teams in [
+    ("2026-10-06", {"1": [["1", "C", C, sk(0, 0, 0)], ["70", "Util", C, sk(0, 0, 0)]],
+                    "2": [["22", "C", C, sk(0, 0, 0)]]}),
+    ("2026-10-08", {"1": [["1", "C", C, sk(0, 0, 0)], ["72", "Util", C, sk(0, 0, 0)]],
+                    "2": [["22", "C", C, sk(0, 0, 0)]]}),
+]]
+CHAIN_TX = [
+    {"id": "70", "type": "add/drop", "time": at("2026-10-06", 9), "moves": [["70", "freeagents", "1"], ["71", "1", "freeagents"]]},
+    {"id": "72", "type": "add/drop", "time": at("2026-10-08", 9), "moves": [["72", "freeagents", "1"], ["70", "1", "freeagents"]]},
+]
+CHAIN_PLAYERS = {"70": ["Monday", "BOS", "C"], "71": ["Kept", "BOS", "C"], "72": ["Wednesday", "BOS", "C"]}
+CHAIN_OUTSIDE = {"70": {"2026-10-08": sk(0, 2, 0)}, "71": {"2026-10-06": sk(0, 0, 0), "2026-10-08": sk(0, 0, 0)}}
+chain = tr.results(INFO, CHAIN_DAYS, pair_week(5), CHAIN_TX, CHAIN_PLAYERS, CHAIN_OUTSIDE, SLOTS, "1")
+wednesday = next(m for m in chain["moves"] if m["added"]["player"] == "72")
+check("undone alone, the second move of a chain keeps the player it dropped, and his assists cost it",
+      [w["costs"] for w in wednesday["weeks"]] == [[[A, "loss", "win"]]], wednesday.get("weeks"))
+check("undone together, he was never there: the player the chain began by dropping is kept instead",
+      "1" not in chain["together"] and chain["weekly"]["1"]["1"]["lost"] == 0, chain["together"])
 
 # Their one assist: either pickup alone leaves a 2-1 win, both together a 0-1 loss
 only_together = tr.results(INFO, PAIR_DAYS, pair_week(1), PAIR_TX, PLAYERS, {}, SLOTS, "1")

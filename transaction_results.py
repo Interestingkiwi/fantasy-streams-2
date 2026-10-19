@@ -61,7 +61,12 @@ and net are therefore the week with every one of the week's own moves
 undone at once on each night, each spot and each bench stand-in used once,
 and scored against the opponent a single time. On the 2025-26 test league a
 category was claimed by more than one move in 172 of the 236 team-weeks a
-move changed.
+move changed. Undone together, a chain of them is followed back (`kept`):
+X for Y on Monday and Z for X on Thursday keep Y, not X, since X was never
+there - until 10/19/2026 X's games after his drop came back, and Sauce Boss's
+week 3 in league 5848 lost the assists category to two of Trenin's. A
+quarter of the test league's moves drop a player the team picked up earlier
+the same week.
 
 **A start the dropped player could not have made is not left empty.** On a
 night the pickup started and played and the dropped player could not take his
@@ -259,10 +264,12 @@ def undone(roster, active, slots, categories):
 
     # Every dropped player's claim on his own pickup's slot first, so another's
     # last resort never takes it from him
-    plus, refilled, waiting = [], set(), []
+    plus, refilled, waiting, seen = [], set(), [], set()
     for added, _row, positions, line in active:
-        if not line:
+        # Two chains of moves leading back to one player bring him back once
+        if not line or id(line) in seen:
             continue
+        seen.add(id(line))
         if added in vacated and fitter(positions)(vacated[added]):
             refilled.add(added)
             plus.append(line)
@@ -461,6 +468,27 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
     out, summary = [], defaultdict(_tally)
     weekly = defaultdict(lambda: defaultdict(_tally))     # {week: {team: tally}}
     nightly = defaultdict(list)     # {(team, date): every move active that night, for `undone`}
+    own_weeks = {}                  # {move index: the weeks it counts in}
+
+    def kept(n, number):
+        """
+        Whom undoing every one of week `number`'s own moves would have kept
+        in place of move n's dropped player. Usually that player; but if one
+        of those moves had picked him up, undoing it too means he was never
+        there, so the chain is followed back - Z for X after X for Y keeps Y,
+        and a chain that began with a pickup who dropped nobody keeps nobody.
+        Undone one at a time, Z for X keeps X; together, X's games after he
+        was dropped are not the team's to have had.
+        """
+        player, k = moves[n]["dropped"], n
+        while player:
+            earlier = next((i for i in range(k - 1, -1, -1)
+                            if moves[i]["team"] == moves[n]["team"] and moves[i]["added"] == player), None)
+            if earlier is None or number not in own_weeks.get(earlier, ()):
+                return player
+            player, k = moves[earlier]["dropped"], earlier
+        return None
+
     for n, move in enumerate(moves):
         team = move["team"]
         added, dropped = move["added"], move["dropped"]
@@ -533,11 +561,11 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                     covered += 1
                     if week:
                         add_line(by_week[week["week"]][1], cover[1])
-            if week and (row or d_line):
+            if week:
                 # A pickup on the roster, started or not: undone with the
-                # rest, he is no one's bench stand-in
-                week_nights[week["week"]].append((when, (added if row else None, row if started else None,
-                                                         drop_positions, d_line)))
+                # rest, he is no one's bench stand-in. Who comes back in his
+                # place is settled once the week's other moves are known.
+                week_nights[week["week"]].append((when, added if row else None, row if started else None))
             if team == detail_team and (a_played or d_line):
                 nights.append([when, row[0] if row else None,
                                _compact_line(row[2], categories) if a_played else None,
@@ -555,13 +583,19 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
         # team's player after that: his later weeks are shown, never counted,
         # so an old move cannot keep piling up a manager's weeks.
         own = {w for w in (made_in["week"] if made_in else None, carried) if w is not None}
+        own_weeks[n] = own
         for number in own:
             weekly[number][team]["starts"] += week_starts[number]
             weekly[number][team]["dropGames"] += week_open[number]
             summary[team]["starts"] += week_starts[number]
             summary[team]["dropGames"] += week_open[number]
-            for when, entry in week_nights[number]:
-                nightly[(team, when)].append(entry)
+            back = kept(n, number)
+            back_positions = positions_of((players.get(back) or ["", "", ""])[2]) if back else []
+            for when, pickup, start_row in week_nights[number]:
+                line = (outside.get(back) or {}).get(when) \
+                    if back and not season.on_team(when, back, team) else None
+                if pickup or line:
+                    nightly[(team, when)].append((pickup, start_row, back_positions, line))
 
         # The team being looked at gets every move, with its lines and nights,
         # and every week it changed, those after its own marked `later`. The
