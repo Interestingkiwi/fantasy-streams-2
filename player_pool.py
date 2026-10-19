@@ -9,15 +9,18 @@ projected - a call-up, a rookie - and the hand-kept aliases.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/5/2026
+Updated - 10/19/2026
 """
 
 from db import fetch_all
+from in_season import placeholder_ids
 
 
 def pool():
     """`final_projections` rows (playerId, fullName, teamAbbrevs, positionCode),
-    and the latest row of every player with games but no projection."""
+    and the latest row of every player with games but no projection. An
+    imported rookie's stand-in id gives way to his NHL id once he has played
+    (`in_season.placeholder_ids`), so a name finds the id his games are under."""
     rows = fetch_all('SELECT "playerId", "fullName", "teamAbbrevs", "positionCode" FROM final_projections')
     seen = {row["playerId"] for row in rows}
     try:
@@ -27,7 +30,10 @@ def pool():
             ' FROM player_game_stats ORDER BY "playerId", "gameDate" DESC')
     except Exception:                             # noqa: BLE001 - no games scraped yet
         extra = []
-    return rows + [row for row in extra if row["playerId"] not in seen]
+    extra = [row for row in extra if row["playerId"] not in seen]
+    replaced = placeholder_ids(rows, [(r["playerId"], r["fullName"], r["positionCode"], r["teamAbbrevs"])
+                                      for r in extra])
+    return [row for row in rows if row["playerId"] not in replaced] + extra
 
 
 def aliases():

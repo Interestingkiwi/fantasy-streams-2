@@ -2,19 +2,25 @@
 The preseason projections brought up to date with the season so far.
 
 `final_projections` is built once, in the summer, and never touched again in
-season. Four things it says go stale, and League Home reads them from this
+season. Five things it says go stale, and League Home reads them from this
 season's games (`player_game_stats`) instead:
 
+- **An imported rookie's id.** A prospect projected from outside (pipeline
+  step 9) before he had an NHL id carries a stand-in, a negative one - Gavin
+  McKenna was -2. His games are recorded under his real id, so the two never
+  met: he was listed twice, once on his projection with no games and once as
+  a player nobody projected. Once he has played, his projection is re-keyed
+  to his NHL id (`placeholder_ids`), the stand-in kept as `formerId`.
 - **Where a player plays.** His team is the one he played his latest game
   for. On 10/12/2026, 16 projected players were already playing somewhere
   else - Kreider for Montreal, Knies for Columbus, Talbot for Columbus - and
   were being planned on their old team's schedule. A player traded but not
   yet played for his new team stays where he was until he does.
-- **The players nobody projected.** A rookie who made the team, a call-up -
-  T.J. Hughes in Colorado, Gavin McKenna in Toronto - had no row, so no Stat
-  Sourcing could value him, a roster scrape dropped him, and he was never a
-  free agent. Anyone with a game this season and no projection now gets a
-  projection-shaped row (`projectionSource` 'in-season'), built below.
+- **The players nobody projected.** A call-up - T.J. Hughes in Colorado -
+  had no row, so no Stat Sourcing could value him, a roster scrape dropped
+  him, and he was never a free agent. Anyone with a game this season and no
+  projection now gets a projection-shaped row (`projectionSource`
+  'in-season'), built below.
 - **Goalies' share of starts** - `goalie_usage`, applied last.
 - **Which goalies cannot start.** A goalie ESPN has out, on IR or suspended
   is marked with the nights he cannot start - from the date of ESPN's note up
@@ -51,7 +57,7 @@ Yahoo's public player search.
 
 Author - Jason Druckenmiller
 Created - 10/12/2026
-Updated - 10/12/2026
+Updated - 10/19/2026
 """
 
 import argparse
@@ -64,6 +70,7 @@ import goalie_starts as gs
 import goalie_usage
 import stat_sourcing as ss
 from db import fetch_all
+from yahoo_rosters import normalise
 
 log = logging.getLogger(__name__)
 
@@ -196,8 +203,8 @@ def pool(projections, schedule, facts=None):
     if not facts:
         return list(projections)
     team_games = goalie_usage.team_game_counts(schedule)
-    rows = current_teams(projections, facts)
-    rows += unprojected_rows(facts, {str(p.get('playerId')) for p in projections}, team_games)
+    rows = current_teams(rekeyed(projections, facts), facts)
+    rows += unprojected_rows(facts, {str(p.get('playerId')) for p in rows}, team_games)
     opening = min((str(day) for day, _home, _away in schedule), default=None)
     return unavailable_goalies(goalie_usage.apply(rows, facts['usage'], team_games), facts, opening)
 
@@ -232,6 +239,70 @@ def unavailable_goalies(rows, facts, opening=None):
             row = {**row, 'outFrom': opening, 'outUntil': None}
         out.append(row)
     return out
+
+
+def played(facts):
+    """(playerId, name, positionCode, team) for everyone with a game this
+    season, positionCode None for a goalie - what `placeholder_ids` reads."""
+    return [(p['playerId'], p['name'], p['position'], p['team']) for p in facts['players'].values()]
+
+
+def placeholder_ids(projections, players):
+    """
+    {stand-in id: NHL id} - each as the rows carry it - for the projections
+    with no NHL id (an imported rookie's negative stand-in) whose player has
+    played. `players` is (playerId, name, positionCode, team), positionCode
+    None or 'G' for a goalie, as `played` gives them.
+
+    He is the one player of his name with games and no projection, a goalie
+    only for a goalie; of several, the one on the row's team, then the one at
+    its position. With none, or two stand-ins after the same player, the row
+    keeps its stand-in.
+    """
+    projected = {str(row.get('playerId')) for row in projections}
+    by_name = defaultdict(list)
+    for player_id, name, position, team in players:
+        if str(player_id) not in projected:
+            by_name[normalise(name)].append((player_id, position or 'G', team))
+
+    found, claims = {}, defaultdict(int)
+    for row in projections:
+        if not _stand_in(row.get('playerId')):
+            continue
+        goalie = row.get('positionCode') == 'G'
+        candidates = [c for c in by_name.get(normalise(row.get('fullName') or ''), [])
+                      if (c[1] == 'G') == goalie]
+        for index, wanted in ((2, gs.primary_team(row.get('teamAbbrevs'))), (1, row.get('positionCode'))):
+            if len(candidates) > 1:
+                candidates = [c for c in candidates if c[index] == wanted] or candidates
+        if len(candidates) == 1:
+            found[row['playerId']] = candidates[0][0]
+            claims[str(candidates[0][0])] += 1
+    return {old: new for old, new in found.items() if claims[str(new)] == 1}
+
+
+def _stand_in(player_id):
+    """Whether an id is a stand-in rather than an NHL id: a negative one."""
+    try:
+        return float(player_id) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+def rekeyed(projections, facts):
+    """The projections, each imported rookie who has played under his NHL id
+    (`formerId` keeps the stand-in) - as new dicts where re-keyed."""
+    found = placeholder_ids(projections, played(facts))
+    return [{**row, 'playerId': found[row['playerId']], 'formerId': row['playerId']}
+            if row.get('playerId') in found else row for row in projections]
+
+
+def former_ids(rows):
+    """{stand-in id as text: NHL id} from the pool's re-keyed rows - for the
+    page to move what a browser stored under the stand-in, and for a route
+    to read an id it still sends."""
+    return {str(int(float(row['formerId']))): row['playerId']
+            for row in rows if row.get('formerId') is not None}
 
 
 def current_teams(projections, facts):
@@ -397,7 +468,7 @@ def main():
     if not facts:
         print("No games this season yet.")
         return
-    projections = fetch_all('SELECT * FROM final_projections')
+    projections = rekeyed(fetch_all('SELECT * FROM final_projections'), facts)
     projected = {str(p['playerId']) for p in projections}
     team_games = goalie_usage.team_game_counts(schedule)
     built = {str(r['playerId']): r for r in unprojected_rows(facts, projected, team_games)}
@@ -436,6 +507,14 @@ def main():
     print(f"\nPlaying for another team than projected: {len(moved)}\n")
     for r, team in sorted(moved, key=lambda m: m[0]['fullName']):
         print(f"  {r['fullName']:<24} {r['teamAbbrevs']:<8} -> {team}")
+
+    rookies = sorted((r for r in projections if r.get('formerId') is not None), key=lambda r: r['fullName'])
+    print(f"\nImported rookies valued under their NHL id: {len(rookies)}\n")
+    for r in rookies:
+        print(f"  {r['fullName']:<24} {r['formerId']} -> {r['playerId']}")
+    waiting = sorted(r['fullName'] for r in projections if _stand_in(r.get('playerId')))
+    if waiting:
+        print(f"\nStill on a stand-in id (no game yet, or no single match): {', '.join(waiting)}")
 
 
 if __name__ == '__main__':

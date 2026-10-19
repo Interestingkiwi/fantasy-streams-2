@@ -19,11 +19,16 @@ on no NHL roster is out until he plays. A goalie's starts are blended with his
 usage on his current team from his first game for it - a trade counts only
 the new team - after the team's projections are reconciled, his per-start
 line never moving; and the free agents' share of starts is of his team's
-games, not his own appearances.
+games, not his own appearances. An imported rookie projected under a stand-in
+id (-2) is one player once he has played: his projection under his NHL id,
+valued on it plus his games under every Stat Sourcing, never a second "no
+projection" row; matched by name, team settling look-alikes, never to a
+projected player or a skater for a goalie; found once by the name pool; and
+a stand-in a browser still sends read as the NHL id, card included.
 
 Author - Jason Druckenmiller
 Created - 10/12/2026
-Updated - 10/12/2026
+Updated - 10/19/2026
 """
 
 import os
@@ -165,6 +170,75 @@ check("the pool: the projections, moved, plus the built rows",
 check("no game data: the projections as they are", in_season.pool(PROJECTIONS, SCHEDULE, facts={}) == PROJECTIONS)
 
 # --------------------------------------------------------------------------
+print("\n=== 2b. an imported rookie's stand-in id ===")
+
+# Projected from outside before he had an NHL id: a stand-in, -2, and 0.3
+# goals a game. His three games (3 goals) are under his real id, 20.
+ROOKIE = {'playerId': -2, 'fullName': 'New Kid', 'positionCode': 'C', 'teamAbbrevs': 'DDD',
+          'projectedGames': 10, 'proj_goals': 3, 'projectionSource': 'imported'}
+UNPLAYED = {'playerId': -5, 'fullName': 'Prospect', 'positionCode': 'L', 'teamAbbrevs': 'AAA',
+            'projectedGames': 10, 'proj_goals': 2, 'projectionSource': 'imported'}
+with_rookies = PROJECTIONS + [ROOKIE, UNPLAYED]
+rookie_pool = in_season.pool(with_rookies, SCHEDULE, facts=FACTS)
+his = [r for r in rookie_pool if r['playerId'] in (20, -2)]
+check("he is one player, under his NHL id - not his projection plus a row built from his games",
+      len(his) == 1 and his[0]['playerId'] == 20 and len(rookie_pool) == 7, [r['playerId'] for r in rookie_pool])
+check("valued on his rookie projection, the stand-in kept as formerId",
+      his[0]['projectionSource'] == 'imported' and his[0]['proj_goals'] == 3 and his[0]['formerId'] == -2, his[0])
+check("one who has not played keeps his stand-in",
+      any(r['playerId'] == -5 and 'formerId' not in r for r in rookie_pool))
+check("the page and routes are told which stand-in became which id",
+      in_season.former_ids(rookie_pool) == {'-2': 20}, in_season.former_ids(rookie_pool))
+check("and the projections are not edited", ROOKIE['playerId'] == -2 and 'formerId' not in ROOKIE)
+
+# Stat Sourcing reads his games, keyed by the id they are under
+sums = {'20': {'games': 3, 'goals': 3}}
+blended = ss.combined_rows(his, sums)[0]
+k = ss.PRIOR_GAMES['G']
+check("Combined: his rookie projection blended with his own games",
+      blended['statSource'] == 'combined' and blended['seasonGames'] == 3
+      and close(blended['proj_goals'] / 10, (k * 0.3 + 3 * 1.0) / (k + 3)), blended)
+check("Season to date: his games, not 'proj'",
+      ss.season_rows(his, sums)[0]['statSource'] == 'season'
+      and close(ss.season_rows(his, sums)[0]['proj_goals'] / 10, 1.0))
+
+matched = in_season.placeholder_ids(
+    [{'playerId': 12, 'fullName': 'Veteran', 'positionCode': 'C', 'teamAbbrevs': 'CCC'},
+     {'playerId': -6, 'fullName': 'Veteran', 'positionCode': 'C', 'teamAbbrevs': 'CCC'},
+     {'playerId': -7, 'fullName': 'Spare', 'positionCode': 'G', 'teamAbbrevs': 'DDD'},
+     {'playerId': -8, 'fullName': 'Twin', 'positionCode': 'C', 'teamAbbrevs': 'BBB'},
+     {'playerId': -9, 'fullName': 'Elias Pettersson', 'positionCode': 'D', 'teamAbbrevs': 'VAN'},
+     {'playerId': -10, 'fullName': 'Dup', 'positionCode': 'C', 'teamAbbrevs': 'AAA'},
+     {'playerId': -11, 'fullName': 'Dup', 'positionCode': 'C', 'teamAbbrevs': 'AAA'},
+     {'playerId': -12, 'fullName': 'Patrik Laine', 'positionCode': 'L', 'teamAbbrevs': 'MTL'}],
+    [(12, 'Veteran', 'C', 'CCC'), (21, 'Spare', 'R', 'DDD'),
+     (102, 'Twin', 'C', 'AAA'), (103, 'Twin', 'C', 'BBB'),
+     (100, 'Elias Pettersson', 'C', 'VAN'), (101, 'Elias Pettersson', 'D', 'VAN'),
+     (104, 'Dup', 'C', 'AAA'), (105, 'Pátrik Laine', 'L', 'MTL')])
+check("never a projected player's games, nor a skater's for a goalie",
+      -6 not in matched and -7 not in matched, matched)
+check("two of one name: his team settles it, then his position",
+      matched.get(-8) == 103 and matched.get(-9) == 101, matched)
+check("two stand-ins after one player: neither takes him", -10 not in matched and -11 not in matched, matched)
+check("names matched as the roster scrape matches them, accents and all", matched.get(-12) == 105, matched)
+
+import player_pool                                          # noqa: E402
+
+real_fetch = player_pool.fetch_all
+player_pool.fetch_all = lambda sql, params=None: (
+    [{'playerId': -2, 'fullName': 'New Kid', 'teamAbbrevs': 'DDD', 'positionCode': 'C'},
+     {'playerId': 12, 'fullName': 'Veteran', 'teamAbbrevs': 'CCC', 'positionCode': 'C'}]
+    if 'final_projections' in sql else
+    [{'playerId': 20, 'fullName': 'New Kid', 'teamAbbrevs': 'DDD', 'positionCode': 'C'},
+     {'playerId': 12, 'fullName': 'Veteran', 'teamAbbrevs': 'CCC', 'positionCode': 'C'}])
+try:
+    names = player_pool.pool()
+finally:
+    player_pool.fetch_all = real_fetch
+check("the name pool (ESPN, Yahoo's lineups) finds him once, under the id his games are under",
+      [r['playerId'] for r in names if r['fullName'] == 'New Kid'] == [20] and len(names) == 2, names)
+
+# --------------------------------------------------------------------------
 print("\n=== 3. goalies' starts from their usage ===")
 
 traded = gu.usage_from(
@@ -249,7 +323,8 @@ try:
     schedule = [(r['gameDate'], r['homeTeam'], r['awayTeam'])
                 for r in fetch_all('SELECT "gameDate", "homeTeam", "awayTeam" FROM nhl_schedule')]
     facts = in_season.season_facts(ss.schedule_season(schedule), fresh=True)
-    projected = {str(r['playerId']) for r in fetch_all('SELECT "playerId" FROM final_projections')}
+    rows = in_season.rekeyed(fetch_all('SELECT * FROM final_projections'), facts) if facts else []
+    projected = {str(r['playerId']) for r in rows}
     new = [p for k, p in (facts or {}).get('players', {}).items()
            if k not in projected and p['position'] and p['games']]
     if not new:
@@ -276,6 +351,61 @@ try:
               (pool_reply.get('message'), [(p['fullName'], p.get('startShare')) for p in goalies[:5]]))
         check("and those who have played carry their usage", any(p.get('usage') for p in goalies),
               [p['fullName'] for p in goalies[:5]])
+
+    from routes.standalone_routes import _adopt_nhl_ids
+    sent = {'roster': [-2, 8478402], 'out': ['-2'], 'opponent': [], 'rostered': [-2.0, None],
+            'moves': [{'add': -2, 'drop': 8478402, 'date': '2026-10-20'}],
+            'lineups': {'2026-10-20': ['-2', None]}, 'evaluate': {'add': -2, 'drop': None}}
+    _adopt_nhl_ids(sent, {'-2': 8486067})
+    check("a tab still sending a stand-in is read as the NHL id, wherever the id is",
+          sent['roster'] == [8486067, 8478402] and sent['out'] == [8486067] and sent['rostered'] == [8486067, None]
+          and sent['moves'][0]['add'] == 8486067 and sent['moves'][0]['drop'] == 8478402
+          and sent['lineups']['2026-10-20'] == [8486067, None] and sent['evaluate']['add'] == 8486067, sent)
+
+    rookies = [r for r in rows if r.get('formerId') is not None]
+    if not rookies:
+        print("  (no imported rookie has played in this database - rookie route checks skipped)")
+    else:
+        client = app.test_client()
+        rookie = max(rookies, key=lambda r: facts['players'][str(r['playerId'])]['games'])
+        nhl_id, stand_in = rookie['playerId'], rookie['formerId']
+        games = facts['players'][str(nhl_id)]['games']
+        setup = client.get('/standalone/api/setup').get_json()
+        listed = [p['playerId'] for p in setup['players'] if p['fullName'] == rookie['fullName']]
+        check(f"{rookie['fullName']} is listed once, under his NHL id, and setup says what his stand-in became",
+              listed == [nhl_id] and setup['formerIds'].get(str(stand_in)) == nhl_id, (listed, setup.get('formerIds')))
+
+        for source in ('combined', 'todate'):
+            body = {'roster': [stand_in], 'league_mode': 'categories', 'source': source,
+                    'categories': ['proj_goals', 'proj_shots'], 'slots': {'C': 1, 'LW': 1, 'RW': 1, 'D': 1},
+                    'start': '2026-10-19', 'end': '2026-10-25'}
+            plan = client.post('/standalone/api/week', json=body).get_json()
+            mine = plan.get('players') or [{}]
+            check(f"a plan sent his stand-in values him on his projection and his {games} games ({source})",
+                  plan.get('status') == 'success' and mine[0].get('playerId') == nhl_id
+                  and not mine[0].get('unprojected') and mine[0].get('seasonGames') == games
+                  and mine[0].get('form') is not None, (plan.get('message'), mine[0]))
+
+        other = next(r['playerId'] for r in rows if r.get('positionCode') == 'C' and r['playerId'] != nhl_id)
+        body = {'roster': [other], 'league_mode': 'categories', 'source': 'combined',
+                'categories': ['proj_goals', 'proj_shots'], 'slots': {'C': 1, 'LW': 1, 'RW': 1, 'D': 1},
+                'start': '2026-10-19', 'end': '2026-10-25'}
+        free = client.post('/standalone/api/free-agents/pool', json=body).get_json()
+        found = [p for p in free.get('players', []) if p['fullName'] == rookie['fullName']]
+        check("the free agents list him once, with his games, his form and no 'No proj'",
+              len(found) == 1 and found[0]['playerId'] == nhl_id and found[0].get('seasonGames') == games
+              and found[0].get('form') is not None and not found[0].get('unprojected'),
+              (free.get('message'), found))
+        free = client.post('/standalone/api/free-agents/pool',
+                           json={**body, 'rostered': [stand_in]}).get_json()
+        check("and rostered under his stand-in, he is not a free agent",
+              not any(p['playerId'] == nhl_id for p in free.get('players', [])))
+
+        cards = [client.get(f'/standalone/api/player/{i}').get_json() for i in (stand_in, nhl_id)]
+        check("his card, asked for by either id, is one card: his projection and his games",
+              all(c.get('status') == 'success' and c['player']['playerId'] == str(nhl_id)
+                  and c.get('projection') and c.get('stats') for c in cards),
+              [(c.get('status'), c.get('message')) for c in cards])
 except Exception as exc:                                    # noqa: BLE001
     import traceback
     traceback.print_exc()

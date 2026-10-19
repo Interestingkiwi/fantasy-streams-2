@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 10/7/2026
+Updated - 10/19/2026
 """
 
 import logging
@@ -704,9 +704,10 @@ def setup():
     score, keyed the way draft prep stores them.
     """
     try:
+        projections = _projections()
         players = sorted(
             ({k: p.get(k) for k in ('playerId', 'fullName', 'teamAbbrevs', 'positionCode',
-                                    'eligiblePositions')} for p in _projections()),
+                                    'eligiblePositions')} for p in projections),
             key=lambda p: p['fullName'] or '')
         categories = [
             {"column": column, "code": code,
@@ -714,8 +715,11 @@ def setup():
              "rate": code in dv.RATE_COLUMNS}
             for column, code in week_planner.COLUMN_TO_CATEGORY.items()
         ]
+        # Imported rookies who have played, {stand-in id: NHL id}: the page
+        # moves what it stored under the stand-in onto the NHL id
         return jsonify({"status": "success", "players": players,
-                        "categories": categories})
+                        "categories": categories,
+                        "formerIds": in_season.former_ids(projections)})
     except Exception as exc:                      # noqa: BLE001 - repo convention
         log.exception("Standalone setup failed.")
         return _error(str(exc), 500)
@@ -805,6 +809,37 @@ def _lineups(raw):
     return lineups
 
 
+def _adopt_nhl_ids(body, former):
+    """
+    Every player id in a plan request that is an imported rookie's stand-in
+    swapped for the NHL id `in_season.pool` now carries him under, in place.
+    `former` is `in_season.former_ids`. The page moves its own storage on
+    load; this is for a tab opened before he played, still sending -2.
+    """
+    if not former:
+        return
+
+    def swap(value):
+        try:
+            return former.get(str(int(float(value))), value)
+        except (TypeError, ValueError, OverflowError):
+            return value
+
+    for field in ('roster', 'out', 'opponent', 'opponent_out', 'rostered'):
+        if isinstance(body.get(field), list):
+            body[field] = [swap(v) for v in body[field]]
+    for move in body.get('moves') if isinstance(body.get('moves'), list) else []:
+        if isinstance(move, dict):
+            move.update({k: swap(move[k]) for k in ('add', 'drop') if k in move})
+    if isinstance(body.get('lineups'), dict):
+        body['lineups'] = {day: [swap(s) for s in seats] if isinstance(seats, list) else seats
+                           for day, seats in body['lineups'].items()}
+    for field in ('evaluate', 'extra'):
+        if isinstance(body.get(field), dict):
+            body[field].update({k: swap(body[field][k]) for k in ('add', 'drop', 'playerId')
+                                if k in body[field]})
+
+
 def _request_plan(body):
     """
     Everything the week plan and the free-agent search share: the prepared
@@ -821,7 +856,8 @@ def _request_plan(body):
     minimum counts; goalie_minimum, the league's minimum appearances a week
     (0 or absent for none); moves ([{add, drop, date}]), planned
     add/drops on your roster; and source, the Stat Sourcing ('projected', the
-    default, 'combined', or 'todate' once it has opened).
+    default, 'combined', or 'todate' once it has opened). An imported rookie's
+    stand-in id anywhere in it is read as his NHL id (`_adopt_nhl_ids`).
     """
     roster = list(body.get('roster') or [])[:MAX_ROSTER]
     if not roster:
@@ -866,6 +902,8 @@ def _request_plan(body):
             banked[mapped[0]] = entry
 
     projections = _projections(schedule)
+    _adopt_nhl_ids(body, in_season.former_ids(projections))
+    roster = list(body.get('roster') or [])[:MAX_ROSTER]
     week = week_planner.Week(
         projections, categories, slots, dates, schedule,
         team_stats=_team_stats(), peripheral=_peripheral_venue(),
@@ -1271,7 +1309,17 @@ def _scraped_through():
         return None
 
 
-@standalone_bp.route('/api/player/<int:player_id>')
+def _stand_ins(schedule):
+    """{stand-in id: NHL id} for the imported rookies who have played this
+    season (`in_season.placeholder_ids`), {} before any games."""
+    facts = in_season.season_facts(stat_sourcing.schedule_season(schedule))
+    if not facts:
+        return {}
+    rows = fetch_all('SELECT "playerId", "fullName", "teamAbbrevs", "positionCode" FROM final_projections')
+    return in_season.placeholder_ids(rows, in_season.played(facts))
+
+
+@standalone_bp.route('/api/player/<int(signed=True):player_id>')
 def player_detail(player_id):
     """
     One player's card for League Home's player modal (`player_card`): his
@@ -1281,6 +1329,10 @@ def player_detail(player_id):
     Query: start and end (YYYY-MM-DD), the week whose games to show; without
     them the card has no schedule. Needs no league - it is the same card in
     every league, and the page orders the stats by the league's categories.
+
+    An imported rookie is one card: asked for by his stand-in id (negative)
+    or his NHL id, it carries his projection and, once he has played, his
+    games under the NHL id.
     """
     try:
         start, end = request.args.get('start'), request.args.get('end')
@@ -1290,8 +1342,12 @@ def player_detail(player_id):
             except ValueError as exc:
                 return _error(f"Bad week: {exc}", 400)
 
-        projection = fetch_all('SELECT * FROM final_projections WHERE "playerId" = :id',
-                               {'id': player_id})
+        schedule = _schedule()
+        stand_ins = _stand_ins(schedule)
+        player_id = int(stand_ins.get(player_id, player_id))
+        ids = [player_id] + [int(old) for old, new in stand_ins.items() if int(new) == player_id]
+        projection = fetch_all('SELECT * FROM final_projections WHERE "playerId" = ANY(:ids)',
+                               {'ids': ids})
         games, season = player_form.load([player_id], columns=None)
         games = games.get(str(player_id), [])
         if not projection and not games:
@@ -1301,7 +1357,6 @@ def player_detail(player_id):
         line_rows = line_rows.get(str(player_id), [])
         mates = {p for r in line_rows for p in [*(r.get('lineMates') or []), *(r.get('ppMates') or []),
                                                  *(m[0] for m in r.get('mates') or [])]}
-        schedule = _schedule()
         injuries, injury_date = _injuries()
 
         card = player_card.card(

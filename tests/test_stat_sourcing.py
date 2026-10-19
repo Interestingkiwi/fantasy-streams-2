@@ -12,11 +12,13 @@ What is pinned is what would be easy to get quietly wrong:
 - a player with no games keeps his projection and says so, and a skater never
   picks up a goalie column;
 - the category weights and the draft board's rank stay on the projections
-  whatever the source.
+  whatever the source;
+- the Free Agents table's per-game lines and shading, and the order of the
+  recommendations, follow the source as the plan does.
 
 Author - Jason Druckenmiller
 Created - 10/1/2026
-Updated - 10/3/2026
+Updated - 10/19/2026
 """
 
 import os
@@ -167,6 +169,49 @@ check("and the projections are kept for the draft board", sourced.projections is
 
 
 # --------------------------------------------------------------------------
+print("\n=== 3b. the free agents are valued on the source too ===")
+
+# Every regular is rostered; two free agents are left. The projections like
+# Star (50 goals), his season so far does not (none in five); Hot the reverse.
+star = dict(skater, playerId=100, teamAbbrevs='MTL', proj_goals=50, projectedGames=80)
+hot = dict(skater, playerId=101, teamAbbrevs='MTL', proj_goals=10, projectedGames=80)
+fa_pool = pool + [star, hot]
+fa_sums = {'100': {'games': 5, 'goals': 0, 'shots': 15}, '101': {'games': 5, 'goals': 6, 'shots': 15}}
+rostered = [p['playerId'] for p in pool]
+setting = (['G', 'SOG'], {'C': 1}, ['2026-10-05'], [('2026-10-05', 'TOR', 'MTL')])
+by_source = {
+    'projected': week_planner.Week(fa_pool, *setting),
+    'todate': week_planner.Week(fa_pool, *setting, values=ss.season_rows(fa_pool, fa_sums)),
+    'combined': week_planner.Week(fa_pool, *setting, values=ss.combined_rows(fa_pool, fa_sums)),
+}
+table = {source: {p['playerId']: p for p in week_planner.available(week, rostered)}
+         for source, week in by_source.items()}
+check("the free agent table lists only the two free agents",
+      set(table['projected']) == {100, 101}, set(table['projected']))
+check("projected, a free agent's per-game line is his projection",
+      table['projected'][100]['perGame']['G'] == 0.625 and table['projected'][101]['perGame']['G'] == 0.125,
+      table['projected'][100]['perGame'])
+check("Season to date, it is his rate so far",
+      table['todate'][100]['perGame']['G'] == 0 and table['todate'][101]['perGame']['G'] == 1.2,
+      table['todate'][101]['perGame'])
+expected_hot = round(dv.per_game(by_source['combined'].by_id['101'], ['G'])['G'], week_planner.DISPLAY_PLACES)
+check("Combined, it is the blend - between the two",
+      table['combined'][101]['perGame']['G'] == expected_hot and 0.125 < expected_hot < 1.2,
+      (table['combined'][101]['perGame'], expected_hot))
+check("the shading follows the line it shades",
+      table['projected'][100]['heat']['G'] > table['projected'][101]['heat']['G']
+      and table['todate'][101]['heat']['G'] > table['todate'][100]['heat']['G'],
+      {s: (t[100]['heat'], t[101]['heat']) for s, t in table.items()})
+check("and each says where its line came from",
+      'statSource' not in table['projected'][101] and table['todate'][101]['statSource'] == 'season'
+      and table['combined'][101]['statSource'] == 'combined' and table['todate'][101]['seasonGames'] == 5)
+best = {source: week_planner.free_agents(week, [10], rostered)['candidates'][0]['player']['playerId']
+        for source, week in by_source.items()}
+check("the recommendations rank on the source: Star projected, Hot on his season",
+      best['projected'] == 100 and best['todate'] == 101, best)
+
+
+# --------------------------------------------------------------------------
 print("\n=== 4. against the database and the routes ===")
 
 try:
@@ -213,6 +258,19 @@ try:
     pool_reply = client.post('/standalone/api/free-agents/pool', json={**body, 'source': 'todate'})
     check("the free agent pool takes the source too", pool_reply.status_code == 200
           and all('statSource' in p for p in pool_reply.get_json()['players'][:20]))
+    pool_projected = {p['playerId']: p for p in
+                      client.post('/standalone/api/free-agents/pool', json=body).get_json()['players']}
+    pool_todate = {p['playerId']: p for p in pool_reply.get_json()['players']}
+    played = [i for i, p in pool_todate.items() if p.get('statSource') == 'season']
+    check("a free agent who has played is shown on his season, not his projection",
+          played and sum(pool_todate[i]['perGame'] != pool_projected[i]['perGame'] for i in played)
+          > len(played) / 2, len(played))
+    check("one who has not keeps his projected line",
+          all(p['perGame'] == pool_projected[i]['perGame']
+              for i, p in pool_todate.items() if p.get('statSource') == 'projection'))
+    check("the free agents' draft-board rank is the same whichever the source",
+          {i: p.get('seasonRank') for i, p in pool_projected.items()}
+          == {i: p.get('seasonRank') for i, p in pool_todate.items()})
 
     app.config['STAT_SOURCING_PREVIEW'] = False
     original = ss.opens_on

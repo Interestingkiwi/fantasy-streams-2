@@ -1032,6 +1032,40 @@
             schedulePlan();
         }
 
+        // An imported rookie projected before he had an NHL id carries a
+        // stand-in (-2) until his first game; then the server knows him only
+        // by his NHL id (`formerIds` from setup, in_season.py). Whatever this
+        // browser stored under the stand-in - rosters, planned moves, manual
+        // lineups - is moved onto it once, and saved (so an account follows).
+        function adoptNhlIds(former) {
+            const nhl = new Map(Object.entries(former || {}));
+            if (!nhl.size) return;
+            const swap = id => (id != null && nhl.has(String(id)) ? nhl.get(String(id)) : id);
+            const moved = list => list.some(id => id != null && nhl.has(String(id)));
+
+            if (league.teams.some(t => moved(t.players.map(p => p.id)))) {
+                league.teams.forEach(team => {
+                    const seen = new Set();
+                    team.players = team.players
+                        .map(p => ({ ...p, id: swap(p.id) }))
+                        .filter(p => !seen.has(String(p.id)) && seen.add(String(p.id)));
+                });
+                write(KEYS.teams, league);
+            }
+            if (Object.values(moves).some(list => moved((list || []).flatMap(m => [m.add, m.drop])))) {
+                Object.keys(moves).forEach(week => {
+                    moves[week] = (moves[week] || []).map(m => ({ ...m, add: swap(m.add), drop: swap(m.drop) }));
+                });
+                write(KEYS.moves, moves);
+            }
+            if (Object.values(lineupEdits).some(entry => Array.isArray(entry?.seats) && moved(entry.seats))) {
+                Object.values(lineupEdits).forEach(entry => {
+                    if (Array.isArray(entry?.seats)) entry.seats = entry.seats.map(swap);
+                });
+                write(KEYS.lineupEdits, lineupEdits);
+            }
+        }
+
         function renderTeams() {
             const entered = league.teams.filter(t => t.players.length).length;
             const players = league.teams.reduce((n, t) => n + t.players.length, 0);
@@ -2223,7 +2257,8 @@
             $('fa-find').disabled = true;
             $('fa-find').textContent = 'Searching…';
             try {
-                faResults = await postFreeAgents({});
+                const source = statSource;
+                faResults = { ...await postFreeAgents({}), source };
                 faMetric = faResults.metric;
                 faStale = false;
                 showError('');
@@ -2245,10 +2280,11 @@
                 renderFreeAgents();
             }
             try {
+                const source = statSource;
                 const data = await postFreeAgents({ evaluate: { add: asId(add), drop: drop === '' || drop == null ? null : asId(drop) } });
                 faMetric = data.metric;
                 if (!faResults) {
-                    faResults = { ...data, candidates: [] };
+                    faResults = { ...data, candidates: [], source };
                     faStale = false;
                 }
                 const fresh = data.candidates[0];
@@ -2495,8 +2531,13 @@
             statSource = sourceAllowed(event.target.value) ? event.target.value : 'projected';
             write(KEYS.statSource, statSource);
             renderStatSource();
-            markPoolStale();
+            // Re-plans, and marks the free agent list and the last search stale
             schedulePlan();
+            // Every per-game line in the free agent list was on the old source,
+            // so it is not merely stale: fetch it again now if it is showing,
+            // or when the tab is next opened (ensurePool). A search found on
+            // the old source runs again when the recommendations are opened.
+            if ((pool || poolLoading) && !$('tab-free-agents').classList.contains('hidden')) loadPool();
         });
         renderStatSource();
 
@@ -4603,9 +4644,12 @@
         // --- Free agents -----------------------------------------------------
         // The whole pool, as a table to read and filter - the recommendations
         // are one button away rather than the only thing on offer.
-        let pool = null;            // {players, categories, formSeason, injuryDate}
+        let pool = null;            // {players, categories, formSeason, injuryDate, source}
         let poolLoading = false;
         let poolStale = false;
+        let poolRequest = 0;
+        // How the pool's per-game lines were sourced, for its summary
+        const SOURCE_NAMES = { combined: 'Combined', todate: 'Season to date' };
         let poolSort = { key: 'rank', dir: 1 };
         const POOL_LIMIT = 150;     // rows drawn; filters and sorting narrow to them
         const poolFilters = { search: '', positions: new Set(), days: new Set(), gamesOnly: true, hideInjured: false, unprojected: false };
@@ -4696,6 +4740,9 @@
             const parts = [`${pool.players.length} free agents`, `${matches.length} shown`];
             if (unprojected) parts.push(`${unprojected} with no projection, valued on their games`);
             if (matches.length > POOL_LIMIT) parts.push(`top ${POOL_LIMIT} of each table drawn — sort or filter to see others`);
+            // The lines and their shading follow the Stat Sourcing; the draft
+            // board's rank prices the rest of a season, so it never does
+            if (SOURCE_NAMES[pool.source]) parts.push(`per-game lines from ${SOURCE_NAMES[pool.source]}, Rank from the projections`);
             if (pool.formSeason) parts.push(`form from ${pool.formSeason}`);
             if (pool.injuryDate) parts.push(`ESPN injuries as of ${fmt(pool.injuryDate, { month: 'short', day: 'numeric' })}`);
             if (poolStale) parts.push('rosters or settings have changed — select Refresh');
@@ -4708,6 +4755,7 @@
                 $('pool-body').innerHTML = '<p class="text-gray-400 text-sm p-4">Add your players, choose categories and set starting slots first.</p>';
                 return;
             }
+            const requestId = ++poolRequest;
             poolLoading = true;
             $('pool-refresh').disabled = true;
             $('pool-refresh').textContent = 'Loading…';
@@ -4718,17 +4766,21 @@
                     body: JSON.stringify({ ...body, rostered: [...rosteredIds()].map(asId) }),
                 });
                 const data = await response.json();
+                // Switching the source twice fires two loads; only the newest may draw
+                if (requestId !== poolRequest) return;
                 if (!response.ok) throw new Error(data.message || 'The free agent list could not be loaded.');
-                pool = data;
+                pool = { ...data, source: body.source };
                 poolStale = false;
                 renderPoolFilters();
                 renderPool();
             } catch (error) {
-                showError(error.message);
+                if (requestId === poolRequest) showError(error.message);
             } finally {
-                poolLoading = false;
-                $('pool-refresh').disabled = false;
-                $('pool-refresh').textContent = 'Refresh';
+                if (requestId === poolRequest) {
+                    poolLoading = false;
+                    $('pool-refresh').disabled = false;
+                    $('pool-refresh').textContent = 'Refresh';
+                }
             }
         }
 
@@ -5279,9 +5331,11 @@
         });
         document.querySelectorAll('.player-modal-close').forEach(b => b.addEventListener('click', () => closeModal('player-modal')));
 
+        // A search found on another Stat Sourcing ranked players on other
+        // lines, so it runs again rather than waiting to be told to
         $('fa-recommend').addEventListener('click', () => {
             $('fa-modal').classList.remove('hidden');
-            if (!faResults) $('fa-find').click();
+            if (!faResults || faResults.source !== statSource) $('fa-find').click();
         });
 
         // The same exact scoring the recommendations use, for the pair chosen here
@@ -5319,9 +5373,10 @@
             markPoolStale();
         });
 
-        // First visit to the tab loads the list; later visits keep what is there
+        // First visit to the tab loads the list; later visits keep what is
+        // there, unless it was loaded on another Stat Sourcing
         function ensurePool() {
-            if (!pool && !poolLoading) loadPool();
+            if (!poolLoading && (!pool || pool.source !== statSource)) loadPool();
         }
 
         function markPoolStale() {
@@ -5842,6 +5897,7 @@
                 ]);
                 setup = setupData;
                 playersById = new Map(setup.players.map(p => [String(p.playerId), p]));
+                adoptNhlIds(setup.formerIds || {});
                 weekData = loadedWeeks;
                 weeks = weekData.weeks;
 
@@ -5857,6 +5913,7 @@
                 renderMatchup();
                 renderTransactions();
                 if (!$('tab-history').classList.contains('hidden')) showHistory();
+                if (!$('tab-free-agents').classList.contains('hidden')) ensurePool();
                 remindersSetup();
                 // A first visit has nothing to plan against, so open the form
                 setLeagueOpen(!activeCategories().length);

@@ -66,11 +66,17 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 - **The projections are brought up to date in season** (10/12/2026). A
   player is planned on the team he plays for now (16 had moved by 10/12),
   anyone with games and no projection gets a row built from his games (65 on
-  10/12, Gavin McKenna and T.J. Hughes among them) so he can be valued,
+  10/12, T.J. Hughes among them) so he can be valued,
   matched and picked up, goalies' projected starts are blended with how
   often they have really started, and a goalie ESPN has out starts none of
   the nights he misses - his teammates do. `python in_season.py --yahoo`
   lists the unprojected by Yahoo ownership. See *In season*.
+- **An imported rookie is one player once he plays** (10/19/2026). The
+  preseason import gave four prospects stand-in ids (negative: Gavin McKenna
+  -2, Ivar Stenberg, Roman Kantserov, Jonathan Aspirot) that never met their
+  games, so each was listed twice - his projection with no games, and a
+  "No proj" row. His projection now takes his NHL id once he has played, and
+  what a browser stored under the stand-in moves with it. See *In season*.
 
 ## Tech stack
 
@@ -118,7 +124,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `bench_points.py` | Pure: what benched players scored, and the single swaps that would have won or tied a category. See *Season History: left on the bench* |
 | `bench_lineups.py` | Bench points for a private league: the bookmarklet's daily lineups plus `player_game_stats`, built into the same shapes the public API gives. See *Season History: left on the bench* |
 | `transaction_results.py` | Pure: each pickup paired with its drop, what each did, and the weeks a move won or cost a category. See *Season History: transaction results* |
-| `player_pool.py` | Everyone an outside name can be matched to (projections plus anyone with games) and the aliases - for Yahoo's lineups and transactions and ESPN's injuries |
+| `player_pool.py` | Everyone an outside name can be matched to (projections plus anyone with games, an imported rookie under his NHL id once he plays) and the aliases - for Yahoo's lineups and transactions and ESPN's injuries |
 | `injury_report.py` | ESPN's injury report into `current_injuries`, every night; and how the page reads it (`by_player`, stale notes). See *Injuries* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
 | `week_planner.available` | Every free agent as a player line for the Free Agents table (see *The Free Agents tab*) |
@@ -132,7 +138,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `game_lines.py` | Lines and power-play units from the NHL's shift charts into `player_game_lines`; run by the nightly job, or `--start/--end` to backfill. See *The player card* |
 | `stat_sourcing.py` | League Home's Stat Sourcing: projection rows rewritten to each player's season rate or Combined's blend, and the date Season to date opens. See *Stat Sourcing* |
 | `derive_combined_weights.py` | Measures Combined's games of trust in the projection per stat (`stat_sourcing.PRIOR_GAMES`) on a finished season. Not a job — it prints constants to copy by hand. See *Stat Sourcing* |
-| `in_season.py` | The projections brought up to date: each player on his current team, a row for anyone with games and no projection, goalie usage applied (`pool`); `python in_season.py [--yahoo]` reports who is unprojected and who has moved. See *In season* |
+| `in_season.py` | The projections brought up to date: an imported rookie under his NHL id once he plays, each player on his current team, a row for anyone with games and no projection, goalie usage applied (`pool`); `python in_season.py [--yahoo]` reports who is unprojected and who has moved. See *In season* |
 | `goalie_usage.py` | Pure: each goalie's projected starts blended with his starts for his current team (`PRIOR_GAMES`), his per-start line unchanged. See *In season* |
 | `derive_goalie_usage.py` | Measures `goalie_usage.PRIOR_GAMES` on a finished season. Not a job — it prints a constant to copy by hand. See *In season* |
 | `schedule_utils.py` | Light nights, per-team game counts, Mon-Sun week derivation with breaks folded in — shared by draft-prep and Schedules. See *Fantasy weeks* |
@@ -1086,6 +1092,11 @@ and filling every night's gain into the list. Planning it appends to
 **The pool is loaded when the tab is first opened**, not on every plan — it is
 a second request (~1.3s, ~1MB for 664 players, most of it form and per-game
 lines). Anything that re-plans marks it stale and the summary says to Refresh.
+**A Stat Sourcing change reloads it** instead (now if the tab is showing,
+otherwise when it is next opened), since every line in it is on the old
+source, and a search from another source re-runs when the recommendations are
+opened. What moves with the source and what does not (Rank) is under *Stat
+Sourcing*. Of two loads in flight, only the newest is drawn.
 
 **`faMetric` is kept apart from `faResults`.** Scoring one pair from the Add
 modal returns a one-candidate response; assigning that to `faResults` made the
@@ -1941,6 +1952,21 @@ Three things deliberately stay on the projections:
   and his games for everyone else. An injured starter would otherwise be
   planned at nothing.
 
+**On the Free Agents tab** (10/19/2026), as in the Lineups roster view: each
+free agent's per-game line and its shading (`heat`, against regulars on the
+same source), the GP column, and the recommendations (screen, shortlist and
+exact pass all score `week.valued`, so their order changes) follow the source.
+Rank (`seasonRank`) and the suggested drops do not, and neither do PP%, the
+trend arrows or H/A, which are his games whatever the source. The server
+always did this; the page did not show it, so a switch looked like it changed
+nothing. The list was only marked stale, with a note at the end of its summary,
+until Refresh, and it sorts by Rank, which a refresh leaves in the same order.
+Now a source change reloads the list at once if the tab is showing, or when
+it is next opened (the pool remembers its `source`). A search found on another
+source runs again when the recommendations are opened. The summary says
+"per-game lines from Combined, Rank from the projections". A page opened on
+the Free Agents tab now loads its list too; before, it waited for Refresh.
+
 **Combined: `(k × projected rate + n × season rate) / (k + n)`** after n
 games (starts), the projection counting as k games of evidence. k is measured
 per stat by `derive_combined_weights.py` - the k whose blend after a player's
@@ -1988,12 +2014,45 @@ page offers it on the 14th by itself.
 ### In season (`in_season.py`, `goalie_usage.py`)
 
 `final_projections` is built once in the summer and never touched in season,
-and four things in it go stale. Every League Home route that values players
+and five things in it go stale. Every League Home route that values players
 (`_projections()` in `standalone_routes`: the plan, free agents, goalie
 planning, the player search, the roster scrape's matching) reads it through
 `in_season.pool`, which corrects them from this season's `player_game_stats`.
 Its two reads are cached for an hour in each process (~70ms uncached). Draft
-prep still reads the preseason board.
+prep still reads the preseason board, stand-in ids and all.
+
+- **Imported rookies' ids** (from 10/19/2026). A prospect the preseason
+  import projected before he had an NHL id (step 9,
+  `rookie_projections.csv`) carries a stand-in, a negative id: McKenna -2,
+  Stenberg -3, Kantserov -4, Aspirot -1. His games are recorded under his
+  real id, so the two never met. Each was listed twice: his projection, `proj`
+  in the GP column under every Stat Sourcing, with no form, lines or team
+  move, and a *No proj* row built from his games. Once he has played,
+  `in_season.placeholder_ids` finds him: the one player of his name with
+  games and no projection (names normalised as the roster scrape does), a
+  goalie only for a goalie, his team and then his position settling
+  look-alikes. `pool` then re-keys his projection to the NHL id, `formerId`
+  keeping the stand-in, and everything keyed by id meets it: Stat Sourcing's
+  sums, form, lines, the draft-board rank. A stand-in with no games yet, or
+  two after one player, keeps it.
+  - *At read time, not in the pipeline*: fixing `final_projections` means a
+    re-run from step 9 through 12 and a transfer to Render, and next season's
+    imports have the same gap until each rookie plays.
+  - *What a browser stored under the stand-in moves with him.* `/api/setup`
+    sends `formerIds` (`{stand-in: NHL id}`), and the page rewrites rosters,
+    planned moves and manual lineups (`fs_leagueTeams`, `fs_standaloneMoves`,
+    `fs_lineupEdits`) on load, which an account then saves. A tab opened
+    before he played still sends the stand-in, so the plan routes read it as
+    the NHL id (`_adopt_nhl_ids`), and the player card takes either id - a
+    negative one was a 404 until then. `player_pool` drops the stand-in row
+    once his games are in, so ESPN's report, Yahoo's lineups and transaction
+    results match his name to the id his games are under.
+  - *Move reminders* need nothing: either id names him. A move already
+    reminded under the stand-in on the day the page moves it would be
+    reminded once more, its key having changed.
+  - On 10/19 all four matched (McKenna 8486067, Stenberg 8486103, Kantserov
+    8484390, Aspirot 8481219). `python in_season.py` lists them, and any
+    stand-in still waiting.
 
 - **Teams.** A player is on the team he played his latest game for, the old
   one kept as `projectedTeam` (the roster view shows "was ANA"). On 10/12, 16
@@ -2056,7 +2115,9 @@ prep still reads the preseason board.
 who has moved; `--yahoo` adds each one's Yahoo ownership and its change this
 week (Yahoo's public player search; no ownership listed means 0%), most owned
 first. On 10/12: McKenna 85%, Garand (NYR's goalie with both of theirs hurt)
-54% and up 20, Stenberg 47%, T.J. Hughes 3%.
+54% and up 20, Stenberg 47%, T.J. Hughes 3%. McKenna and Stenberg were in
+fact imported rookies whose stand-in ids had not met their games (above);
+from 10/19 they are listed as re-keyed, not unprojected.
 
 ## Accounts (temporary)
 
@@ -2577,8 +2638,8 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_injury_report.py` | ESPN's report with no network: one entry per player with NHL tricodes, two Elias Petterssons told apart by ESPN's position, notes older than a player's last game marked stale (not one from the day of it), the report dated by when it was read; then written to a throwaway table with the pipeline's columns, and a 403, non-JSON or empty report keeping yesterday's |
 | `test_game_lines.py` | lines from a game built shift by shift: 5-on-5 and power-play seconds counted from the skaters on the ice (an empty net is neither, goalies never in a set), line 1 the offensive line even when the checking line is out longer together, PP units from shared power-play time, a skater with no position on no line, the badge's unit from the last game with a power play; then that every game this season has lines and no line or unit is oversized |
 | `test_player_card.py` | the card with no database for the maths: ratios rebuilt from summed parts (and a goalie's GAA over his own seconds), an uncollected column missing rather than zero, windows only once played and arrows by `player_form`'s test on counting stats only, a goalie's starts against scraped team games with rest since his last appearance, opponent ranks kindest-first (a goalie's shots the other way); then the route's 404, 400 and both kinds of card |
-| `test_in_season.py` | the in-season pool with no database for the maths: a player moved to the team of his latest game and no other; an unprojected skater's line Combined's blend against his position's league rate at his ice time (PP stats per PP second, plus/minus against zero) that `daily_value` reads back, his projected games his share since his first; an unprojected goalie per start, none for relief only; Combined leaving a built row, Season to date reading it back; goalie usage counted on his current team from his first game (a trade, the new team only), blended after the team is reconciled, his per-start line unchanged, an imported rookie's appearances standing in; a goalie ESPN has on IR out from the note to his return, day-to-day and stale notes not, skaters never, and one on no NHL roster out until he plays; then the routes - the search and a plan carrying an unprojected player, and free-agent goalies' shares of their team's games |
-| `test_stat_sourcing.py` | Stat Sourcing: opening the day after the last team's fifth game (and the preview opening it early), rewritten rows reading back through `daily_value` as the season rate (per start, GAA over seconds), no-game players kept on their projection, no goalie column on a skater, weights and draft-board rank left on the projections; Combined weighting each stat k to n (goals barely moved by four games, faceoffs a good part of the way, a long season outweighing any projection), points and saves built from their blended parts, every measured k used; then a goalie's relief outings left out of the sums, and the routes - planning with each, refusing Season to date before it opens with the date while Combined plans, and refusing an unknown source |
+| `test_in_season.py` | the in-season pool with no database for the maths: an imported rookie's stand-in id re-keyed to the NHL id his games are under once he has played - one player, on his rookie projection plus his games under Combined and Season to date, never a second "no projection" row - matched by name with team then position settling look-alikes, never to a projected player or a skater for a goalie, and found once by the name pool; a player moved to the team of his latest game and no other; an unprojected skater's line Combined's blend against his position's league rate at his ice time (PP stats per PP second, plus/minus against zero) that `daily_value` reads back, his projected games his share since his first; an unprojected goalie per start, none for relief only; Combined leaving a built row, Season to date reading it back; goalie usage counted on his current team from his first game (a trade, the new team only), blended after the team is reconciled, his per-start line unchanged, an imported rookie's appearances standing in; a goalie ESPN has on IR out from the note to his return, day-to-day and stale notes not, skaters never, and one on no NHL roster out until he plays; then the routes - the search and a plan carrying an unprojected player, and free-agent goalies' shares of their team's games; a real imported rookie listed once, a plan sent his stand-in valuing him on his games under Combined and Season to date, the free agents listing him once with his form, and his card by either id |
+| `test_stat_sourcing.py` | Stat Sourcing: opening the day after the last team's fifth game (and the preview opening it early), rewritten rows reading back through `daily_value` as the season rate (per start, GAA over seconds), no-game players kept on their projection, no goalie column on a skater, weights and draft-board rank left on the projections; Combined weighting each stat k to n (goals barely moved by four games, faceoffs a good part of the way, a long season outweighing any projection), points and saves built from their blended parts, every measured k used; the Free Agents table's lines and shading on each source and the recommendations ranking on it (the projections' pick projected, the hot hand's on his season); then a goalie's relief outings left out of the sums, and the routes - planning with each, the free agent pool's lines moving with the source while its draft-board rank does not, refusing Season to date before it opens with the date while Combined plans, and refusing an unknown source |
 | `test_week_planner.py` | standalone mode: out players counted but unseated, idle nights, backup-only goalie odds balanced over the whole team, points values; against an opponent, odds that follow the margin (inverse categories, banked deficits, points), and a lineup that starts the grinder over the sniper once goals are lost; planned moves by date; free agents — rostered players never suggested, drops from season value and never an Out player, and the gain shown equal to re-planning the week; manual nights kept as set, reported and never refilled, held fixed under matchup weighting and in the free-agent search; each player's nights, next week and heat; GAA and save percentage projected with odds that count in expected wins, the week so far turning them, their parts never shown or totalled, and lineups unchanged by them; the goalie minimum forfeiting every goalie category (a tie when both fall short), zeroing a points league's goalie points, and making a free goalie worth what reaching it saves; then the routes on real data including every 400, rank and form on every player, malformed manual nights dropped, the free agent pool route, and the Matchup tab and Goalie Planning projecting the same ratios |
 | `test_goalie_planning.py` | goalie planning with no database: minutes recovered exactly from GA and GAA and never assumed to be an hour, the measured minutes curve, a pull as a variant outside the distribution and its lopsided cost to GAA, and limits that move with the opponent |
 | `test_goalie_minimum.py` | the goalie minimum with no database: Yahoo's appearances taken as given and otherwise estimated (and said to be), a tandem seated on one night one chance at an appearance, the chance exact against brute force, and the forfeit by Yahoo's rule - the opponent short, you win every goalie category; you short, you lose them; both short, a tie |
@@ -2747,9 +2808,12 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
   report drops him; back late, until ESPN moves the date. A goalie a team
   has simply stopped dressing, with no injury, is left to `goalie_usage`.
 - **A row built for an unprojected player has the NHL's position only**, not
-  Yahoo's multi-eligibility. Gavin McKenna (85% owned) had no projection at
-  all, so the preseason rookie import (step 9) missed at least one top
-  prospect.
+  Yahoo's multi-eligibility.
+- **An imported rookie is matched to his NHL id by name.** One the import
+  names differently from the NHL (a nickname, a transliteration) stays on
+  his stand-in, listed twice as before; `python in_season.py` names any
+  stand-in still waiting, and a corrected name in `rookie_projections.csv`
+  (or his real id there, for next season's build) settles it.
 - **Line numbers differ from Daily Faceoff's** for about a third of forward
   lines and half the pairs, though the groups themselves agree ~90% of the
   time — see *Lines from shift charts*. Their order is partly editorial.
