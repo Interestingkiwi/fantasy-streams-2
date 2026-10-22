@@ -12,7 +12,7 @@ what the page sends.
 
 Author - Jason Druckenmiller
 Created - 9/16/2026
-Updated - 10/19/2026
+Updated - 10/22/2026
 """
 
 import logging
@@ -38,6 +38,7 @@ import player_card
 import player_form
 import player_pool
 import stat_sourcing
+import trade_results
 import transaction_results
 import week_planner
 import yahoo_matchup
@@ -578,7 +579,11 @@ def _posted_transactions(body):
             time_value = int(t['time']) if t.get('time') else None
         except (TypeError, ValueError):
             time_value = None
-        clean.append({"type": str(t.get('type') or ''), "time": time_value, "moves": moves})
+        picks = [[int(p[0]), str(p[1]) if p[1] is not None else None, str(p[2]) if p[2] is not None else None]
+                 for p in t.get('picks') or [] if isinstance(p, list) and len(p) == 3
+                 and str(p[0]).isdigit()]
+        clean.append({"type": str(t.get('type') or ''), "time": time_value, "moves": moves,
+                      **({"picks": picks} if picks else {})})
     players = {str(k): [str(x or '') for x in v[:3]] for k, v in (saved.get('players') or {}).items()
                if isinstance(v, list) and len(v) >= 3}
     return clean, players
@@ -586,8 +591,9 @@ def _posted_transactions(body):
 
 def _dropped_lines(dropped, players, known_ids, first, last):
     """
-    ({yahooId: {date: game line}}, unmatched names) for the dropped players:
-    their NHL games over the season so far, the counterfactual half of a move.
+    ({yahooId: {date: game line}}, unmatched names) for the dropped (or traded
+    away) players: their NHL games over the season so far, the counterfactual
+    half of a move.
     `known_ids` are Yahoo -> NHL matches already made (a private league's
     lineups); the rest are matched here by name, team and positions.
     """
@@ -623,9 +629,51 @@ def transaction_results_view():
     and the page sends `lineups` and the rest of the bench lineups request
     instead (as `/api/bench/lineups` takes them).
     """
+    def work_out(league, transactions, players, outside_for):
+        dropped = {m["dropped"] for m in transaction_results.pair(transactions) if m["dropped"]}
+        outside, unmatched = outside_for(dropped)
+        team = str(body.get('team') or '') or None
+        result = transaction_results.results(league["info"], league["days"], league["weeks"], transactions,
+                                             players, outside, league["slots"], detail_team=team)
+        return result, unmatched
+
+    body = request.get_json(silent=True) or {}
+    return _season_results(body, work_out, "Transaction results")
+
+
+@standalone_bp.route('/api/trade-results', methods=['POST'])
+def trade_results_view():
+    """
+    Trade Results for the season so far: each trade's two sides, week by week
+    since it was made - what the players received did in a starting slot,
+    what the players sent would have done in an open spot, and the categories
+    that changed - and over the season since (see `trade_results`).
+
+    Body as `/api/transaction-results` takes it, less `team`: every trade
+    comes with its lines, there being few of them.
+    """
+    def work_out(league, transactions, players, outside_for):
+        sent = {p for t in trade_results.trades(transactions) for s in t["sides"] for p in s["sent"]}
+        outside, unmatched = outside_for(sent)
+        result = trade_results.results(league["info"], league["days"], league["weeks"], transactions,
+                                       players, outside, league["slots"])
+        return result, unmatched
+
+    body = request.get_json(silent=True) or {}
+    return _season_results(body, work_out, "Trade results")
+
+
+def _season_results(body, work_out, what):
+    """
+    The season a results view is worked out over, then `work_out(league,
+    transactions, players, outside_for)` -> (result, unmatched), as JSON.
+    `league` is {info, days, weeks, slots}; `outside_for(players)` their NHL
+    games and the names not matched. A public league is read through
+    `yahoo_league_api`, from its cache; a private one answers 403 `private`
+    until the page sends its lineups (as `/api/bench/lineups` takes them).
+    """
     test = current_app.config.get("ROSTER_SCRAPE_TEST", False)
     try:
-        body = request.get_json(silent=True) or {}
         transactions, tx_players = _posted_transactions(body)
         if (body.get('lineups') or {}).get('dates'):
             loaded = _private_season(body)
@@ -645,13 +693,14 @@ def transaction_results_view():
         slots = {k: v for k, v in (info.get("slots") or {}).items() if k not in NON_STARTING_SLOTS}
         slots = slots or {k: v for k, v in _clean_slots(body.get('slots')).items()
                           if k not in NON_STARTING_SLOTS}
-        dropped = {m["dropped"] for m in transaction_results.pair(transactions) if m["dropped"]}
         dates = [d["date"] for d in days]
-        outside, unmatched = _dropped_lines(dropped, players, known,
-                                            min(dates) if dates else None, max(dates) if dates else None)
-        team = str(body.get('team') or '') or None
-        result = transaction_results.results(info, days, weeks, transactions, players,
-                                             outside, slots, detail_team=team)
+
+        def outside_for(wanted):
+            return _dropped_lines(wanted, players, known,
+                                  min(dates) if dates else None, max(dates) if dates else None)
+
+        result, unmatched = work_out({"info": info, "days": days, "weeks": weeks, "slots": slots},
+                                     transactions, players, outside_for)
         result["teams"] = {**result["teams"], **names}
         return jsonify({"status": "success", "source": source, "test": test and source == "api",
                         "league": league, "unmatched": unmatched, **result})
@@ -666,7 +715,7 @@ def transaction_results_view():
     except (KeyError, TypeError, ValueError) as exc:
         return _error(f"Those transactions could not be read: {exc}", 400)
     except Exception as exc:                      # noqa: BLE001
-        log.exception("Transaction results failed.")
+        log.exception(f"{what} failed.")
         return _error(str(exc), 500)
 
 

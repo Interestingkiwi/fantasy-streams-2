@@ -43,6 +43,7 @@ TESTS = [
     "test_yahoo_transactions.py",
     "test_bench_points.py",
     "test_transaction_results.py",
+    "test_trade_results.py",
     "test_player_form.py",
     "test_goalie_planning.py",
     "test_goalie_ratios.py",

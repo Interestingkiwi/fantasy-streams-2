@@ -12,7 +12,8 @@ NHL game data, and this works out the rest.
 (add/drop, or a waiver claim with its drop). A manager who drops first and
 adds after makes two, so a lone add and a lone drop by the same team within a
 day of each other are paired too (`paired: 'nearby'`). An add with nothing
-dropped and a drop with nothing added stand alone. Trades are not moves here.
+dropped and a drop with nothing added stand alone. Trades are not moves here;
+`trade_results` judges them, on the same nights and spots.
 
 **What the added player brought is what Yahoo counted:** his line on the days
 he sat in a starting slot and played, from the day he first appears on the
@@ -79,7 +80,7 @@ strongly ahead on its moves, streamers most of all.
 
 Author - Jason Druckenmiller
 Created - 10/5/2026
-Updated - 10/19/2026
+Updated - 10/22/2026
 """
 
 from collections import Counter, defaultdict
@@ -365,16 +366,19 @@ def _compact_line(stats, categories):
     return {c["id"]: bp._compact(stats[c["id"]]) for c in categories if stats.get(c["id"])}
 
 
-def swing(totals, rival, minus, plus, categories):
+def swing(totals, rival, minus, plus, categories, rival_without=None):
     """
     What a move did to a week: `minus` (the added player's started lines) off
     the team's real totals, `plus` (the dropped player's open-spot lines) on,
     every category scored against the opponent again. {with, without, gains,
     costs, net}, each gain or cost [category, with the move, without it], and
     `net` the categories the move was worth, a tie counting half.
+    `rival_without` is the opponent's totals without it, when the move
+    changed his side too (a trade between the two); otherwise his real ones.
     """
     before, results = bp.record(totals, rival, categories)
-    after, after_results = bp.record(bp.swapped_totals(totals, minus, plus, categories), rival, categories)
+    after, after_results = bp.record(bp.swapped_totals(totals, minus, plus, categories),
+                                     rival if rival_without is None else rival_without, categories)
     gains, costs, net = [], [], 0.0
     for c in categories:
         real, other = results[c["id"]], after_results[c["id"]]
@@ -415,6 +419,42 @@ def _slim(record):
     return {k: v for k, v in record.items() if v is not None and v is not False and v != []}
 
 
+def index_weeks(weeks):
+    """(the weeks [{week, start, end, status}], {(week, team): opponent},
+    {(week, team): Yahoo's totals}) from the league's scoreboards."""
+    week_list, opponent, totals = [], {}, {}
+    for week in weeks:
+        if not (week.get("start") and week.get("end")):
+            continue
+        number = week["week"]
+        week_list.append({"week": number, "start": week["start"], "end": week["end"],
+                          "status": week.get("status")})
+        for matchup in week.get("matchups") or []:
+            if len(matchup.get("teams") or []) == 2:
+                a, b = matchup["teams"]
+                opponent[(number, a)], opponent[(number, b)] = b, a
+            for team, values in (matchup.get("totals") or {}).items():
+                totals[(number, team)] = values
+    return week_list, opponent, totals
+
+
+def team_names(days, weeks):
+    """{team number: name}, from the days and the scoreboards."""
+    names = {}
+    for d in days:
+        names.update(d.get("names") or {})
+    for week in weeks:
+        for matchup in week.get("matchups") or []:
+            names.update({k: v for k, v in (matchup.get("names") or {}).items() if v})
+    return names
+
+
+def category_list(categories):
+    """The league's scored categories as the page reads them."""
+    return [{"id": c["id"], "name": c["name"], "higherBetter": c["higherBetter"],
+             "ratio": c["id"] in bp.RATIOS, "goalie": bool(c.get("goalie"))} for c in categories]
+
+
 def results(info, days, weeks, transactions, players, outside, slots, detail_team=None):
     """
     {categories, swingsScored, teams, players, asOf, weeks, moves, season,
@@ -440,29 +480,12 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
     season = Season(days)
     last = season.dates[-1] if season.dates else None
 
-    week_list, opponent, totals = [], {}, {}
-    for week in weeks:
-        if not (week.get("start") and week.get("end")):
-            continue
-        number = week["week"]
-        week_list.append({"week": number, "start": week["start"], "end": week["end"],
-                          "status": week.get("status")})
-        for matchup in week.get("matchups") or []:
-            if len(matchup.get("teams") or []) == 2:
-                a, b = matchup["teams"]
-                opponent[(number, a)], opponent[(number, b)] = b, a
-            for team, values in (matchup.get("totals") or {}).items():
-                totals[(number, team)] = values
+    week_list, opponent, totals = index_weeks(weeks)
 
     def week_of(when):
         return next((w for w in week_list if w["start"] <= when <= w["end"]), None)
 
-    names = {}
-    for d in days:
-        names.update(d.get("names") or {})
-    for week in weeks:
-        for matchup in week.get("matchups") or []:
-            names.update({k: v for k, v in (matchup.get("names") or {}).items() if v})
+    names = team_names(days, weeks)
 
     moves = pair(transactions)
     out, summary = [], defaultdict(_tally)
@@ -667,8 +690,7 @@ def results(info, days, weeks, transactions, players, outside, slots, detail_tea
                                       (m.get("dropped") or {}).get("player")) if p}
     named |= {n[6][0] for m in out for n in m.get("nights") or [] if n[6]}
     return {
-        "categories": [{"id": c["id"], "name": c["name"], "higherBetter": c["higherBetter"],
-                        "ratio": c["id"] in bp.RATIOS, "goalie": bool(c.get("goalie"))} for c in categories],
+        "categories": category_list(categories),
         "swingsScored": swings_scored,
         "teams": names,
         "players": {k: v for k, v in players.items() if k in named},

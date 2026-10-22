@@ -471,6 +471,7 @@
         <div class="flex gap-5 overflow-x-auto whitespace-nowrap border-b border-gray-700" role="tablist" aria-label="Season History">
             <button type="button" role="tab" class="sub-tab" data-history="transactions" aria-controls="history-transactions" aria-selected="true">Transactions</button>
             <button type="button" role="tab" class="sub-tab" data-history="results" aria-controls="history-results" aria-selected="false">Transaction Results</button>
+            <button type="button" role="tab" class="sub-tab" data-history="trades" aria-controls="history-trades" aria-selected="false">Trade Results</button>
             <button type="button" role="tab" class="sub-tab" data-history="bench" aria-controls="history-bench" aria-selected="false">Bench Points</button>
         </div>
 
@@ -547,13 +548,50 @@
             <details class="border-t border-gray-700 px-3 sm:px-4 py-2 text-xs text-gray-500">
                 <summary class="cursor-pointer py-1 text-gray-400">How this is worked out</summary>
                 <ul class="mt-1 mb-2 space-y-1 list-disc pl-4">
-                    <li>A move is a pickup and the player dropped for him &mdash; one add/drop, or a drop and an add by the same team within a day. Trades are left out.</li>
+                    <li>A move is a pickup and the player dropped for him &mdash; one add/drop, or a drop and an add by the same team within a day. Trades are left out: Trade Results judges them.</li>
                     <li>The pickup counts from his first night on the roster until he left, and only on nights Yahoo had him in a starting slot and he played. Nights he played on your bench count as games, not production.</li>
                     <li>The dropped player counts on the same nights, from NHL game data, only when a spot he could fill was open: the pickup&rsquo;s own starting slot, an empty slot, or a starter&rsquo;s who had no game. Otherwise he would have sat.</li>
                     <li>A week&rsquo;s swing takes the pickup&rsquo;s line off the real week totals, puts the dropped player&rsquo;s on, and scores every category against that week&rsquo;s opponent again. A tie counts half a category.</li>
                     <li>A start the dropped player could not have made is not left empty: a teammate who played on your bench that night and could fill the slot takes it, and his line counts in the week without the move.</li>
                     <li>A move counts in the week it was made, and in the week ahead for a pickup made on the Saturday or Sunday before it, kept and started there. A pickup held longer is your player after that: a team&rsquo;s week shows what he still did, but it does not count, so old moves never pile up on anyone&rsquo;s weeks.</li>
                     <li>A team&rsquo;s week is scored once with all of that week&rsquo;s moves undone together, so a category two moves helped win counts once.</li>
+                </ul>
+            </details>
+        </section>
+        </div>
+
+        <!-- Trade Results: what each trade brought each side, week by week and
+             over the season since, against keeping what it sent away -->
+        <div id="history-trades" role="tabpanel" class="history-panel hidden flex flex-col gap-4 sm:gap-6">
+        <section id="trades-section" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="flex-1 min-w-[14rem]">
+                    <h2 class="text-lg font-semibold text-white">Trade Results</h2>
+                    <p id="trades-status" class="text-xs text-gray-500 mt-0.5">Every trade this season, ranked: what each side got, what it gave away would have done instead, and the categories that changed, week by week since.</p>
+                </div>
+                <button id="trades-load" type="button" class="column-toggle">Load trades</button>
+            </div>
+            <div id="trades-controls" class="hidden p-3 sm:p-4 border-b border-gray-700 flex flex-wrap items-end gap-3">
+                <div class="w-full sm:w-auto">
+                    <label for="trades-week" class="block mb-1 text-xs font-medium text-gray-400">Show</label>
+                    <select id="trades-week" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <label for="trades-team" class="block mb-1 text-xs font-medium text-gray-400">Team</label>
+                    <select id="trades-team" class="form-select p-2 text-sm w-full sm:w-56"></select>
+                </div>
+            </div>
+            <div id="trades-body" class="text-sm"></div>
+            <details class="border-t border-gray-700 px-3 sm:px-4 py-2 text-xs text-gray-500">
+                <summary class="cursor-pointer py-1 text-gray-400">How this is worked out</summary>
+                <ul class="mt-1 mb-2 space-y-1 list-disc pl-4">
+                    <li>Each trade has two sides, one per team: the players it got and the players it gave. Draft picks are listed but not scored.</li>
+                    <li>A player received counts on nights Yahoo had him in a starting slot and he played. Nights on the bench count as games, not production.</li>
+                    <li>A player sent away counts his line wherever he played &mdash; on another fantasy team, or from NHL game data on none &mdash; but only on nights a spot he could fill was open on the team that traded him: a received player&rsquo;s starting slot, an empty slot, or a starter&rsquo;s who had no game. Otherwise he would have sat.</li>
+                    <li>A start no player sent away could have made is not left empty: a teammate who played on the bench that night and could fill the slot takes it.</li>
+                    <li>A side is judged from the trade until the last player it got is gone &mdash; whatever happened after that is the next move&rsquo;s doing. A side that got only picks, or let its players go before they played a night for it, is judged to now. Unlike a pickup, a trade counts in every week since, not just the week it was made.</li>
+                    <li>Each week&rsquo;s matchup is scored again without the trade. In a week the two teams played each other, both sides are undone. A tie counts half a category.</li>
+                    <li>A team&rsquo;s numbers score all its trades in effect each week together, so a category two trades helped win counts once.</li>
                 </ul>
             </details>
         </section>
@@ -2926,6 +2964,7 @@
             };
             write(KEYS.transactions, saved);
             invalidateResults(false);
+            invalidateTrades(false);
             const n = transactions.length;
             showTxPanel(`<p class="text-gray-300">${previous ? `${fresh.toLocaleString()} new; ` : 'Read '}`
                 + `${n.toLocaleString()} transaction${n === 1 ? '' : 's'}${previous ? ' in all' : ' from Yahoo'}`
@@ -3516,7 +3555,9 @@
         const RESULT_NOUNS = { win: 'a win', tie: 'a tie', loss: 'a loss' };
         const SPOT_WORDS = { own: 'in the pickup’s', empty: 'in an empty', idle: 'in an idle starter’s' };
         const myYahooTeam = () => String(teamById(league.mine)?.yahooTeamId || '');
-        const resultsTeam = id => resultsData?.teams?.[id]
+        // `data` is whichever view's answer is being drawn: Trade Results
+        // draws with these too
+        const resultsTeam = (id, data = resultsData) => data?.teams?.[id]
             || league.teams.find(t => String(t.yahooTeamId) === String(id))?.name || `Team ${id}`;
         const shareText = n => (n > 0 ? '+' : n < 0 ? '−' : '') + (Math.abs(n) % 1 ? Math.abs(n).toFixed(1) : Math.abs(n));
         // A move counts in its own week (and the week ahead, for a weekend
@@ -3526,15 +3567,15 @@
         const recordText3 = r => (r ? `${r[0]}-${r[1]}-${r[2]}` : '');
         const matchupOf = r => (r[0] > r[1] ? 'win' : r[0] < r[1] ? 'loss' : 'tie');
 
-        function resultsPlayer(id) {
+        function resultsPlayer(id, data = resultsData) {
             if (!id) return '<span class="text-gray-500">nobody</span>';
-            const [name, nhl, positions] = resultsData.players[id] || ['Unknown player', '', ''];
+            const [name, nhl, positions] = data.players[id] || ['Unknown player', '', ''];
             const detail = [nhl, positions].filter(Boolean).join(' · ');
-            return `<span class="text-white">${playerLink(resultsData.players[id] ? nhlIdFor(name, nhl, positions) : null, esc(name))}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
+            return `<span class="text-white">${playerLink(data.players[id] ? nhlIdFor(name, nhl, positions) : null, esc(name))}</span>${detail ? ` <span class="text-xs text-gray-500">${esc(detail)}</span>` : ''}`;
         }
 
-        function resultsLine(stats) {
-            const parts = resultsData.categories.filter(c => stats?.[c.id])
+        function resultsLine(stats, data = resultsData) {
+            const parts = data.categories.filter(c => stats?.[c.id])
                 .map(c => `${benchValue(c.id, stats[c.id])} ${c.name}`);
             return parts.length ? parts.join(' · ') : 'nothing in your categories';
         }
@@ -3547,15 +3588,18 @@
 
         // "Won HIT (without it, a loss)" for each category a week's swing moved;
         // `it` is 'them' for a team's moves taken together
-        function weekOutcomes(w, it = 'it') {
-            const one = ([id, real, other], tone) => `<span class="${tone}">${RESULT_VERBS[real]} ${esc(resultsData.categories.find(c => c.id === id)?.name || id)}</span> <span class="text-gray-500">(without ${it}, ${RESULT_NOUNS[other]})</span>`;
+        function weekOutcomes(w, it = 'it', data = resultsData) {
+            const one = ([id, real, other], tone) => `<span class="${tone}">${RESULT_VERBS[real]} ${esc(data.categories.find(c => c.id === id)?.name || id)}</span> <span class="text-gray-500">(without ${it}, ${RESULT_NOUNS[other]})</span>`;
             return [...(w.gains || []).map(g => one(g, 'text-green-400')), ...(w.costs || []).map(c => one(c, 'text-red-300'))].join(' · ');
         }
 
-        function weekLine(w, it = 'it', label = `Week ${w.week}`) {
-            const flip = w.with && w.without && matchupOf(w.with) !== matchupOf(w.without)
-                ? ` <span class="text-amber-300 font-medium">Turned ${RESULT_NOUNS[matchupOf(w.without)]} into ${RESULT_NOUNS[matchupOf(w.with)]}.</span>` : '';
-            return `<p class="text-xs leading-relaxed"><span class="text-gray-400">${label}${w.opponent ? ` vs ${esc(resultsTeam(w.opponent))}` : ''}:</span> ${weekOutcomes(w, it)}`
+        // " Turned a loss into a win." when the week's result changed with it
+        const turnedText = w => (w.with && w.without && matchupOf(w.with) !== matchupOf(w.without)
+            ? ` <span class="text-amber-300 font-medium">Turned ${RESULT_NOUNS[matchupOf(w.without)]} into ${RESULT_NOUNS[matchupOf(w.with)]}.</span>` : '');
+
+        function weekLine(w, it = 'it', label = `Week ${w.week}`, data = resultsData) {
+            const flip = turnedText(w);
+            return `<p class="text-xs leading-relaxed"><span class="text-gray-400">${label}${w.opponent ? ` vs ${esc(resultsTeam(w.opponent, data))}` : ''}:</span> ${weekOutcomes(w, it, data)}`
                 + ` <span class="text-gray-500">&middot; ${recordText3(w.with)} with ${it}, ${recordText3(w.without)} without.</span>${flip}</p>`;
         }
 
@@ -3573,13 +3617,21 @@
 
         // Added, dropped and the difference, in the league's categories - a
         // goalie's or a skater's when both players are one, all of them otherwise
-        const isGoalieId = id => String(resultsData.players[id]?.[2] || '').split(',').includes('G');
+        const isGoalieId = (id, data = resultsData) => String(data.players[id]?.[2] || '').split(',').includes('G');
+        // The categories that apply to these players: a goalie's or a
+        // skater's when they are all one, every one otherwise
+        function categoriesFor(ids, data = resultsData) {
+            const kinds = new Set(ids.filter(Boolean).map(id => isGoalieId(id, data)));
+            return kinds.size === 1 ? data.categories.filter(c => c.goalie === [...kinds][0]) : data.categories;
+        }
+
         function comparisonTable(m) {
-            const kinds = new Set([m.added?.player, m.dropped?.player].filter(Boolean).map(isGoalieId));
-            const cats = kinds.size === 1
-                ? resultsData.categories.filter(c => c.goalie === [...kinds][0]) : resultsData.categories;
-            const a = m.added?.totals;
-            const d = m.dropped?.totals;
+            return compareTable(m.added?.totals, m.dropped?.totals,
+                categoriesFor([m.added?.player, m.dropped?.player]), ['Pickup', 'Dropped']);
+        }
+
+        // Two lines side by side, and the difference, in `cats`
+        function compareTable(a, d, cats, [aLabel, dLabel]) {
             const cell = (stats, c) => {
                 const v = stats?.[c.id];
                 return `<td class="px-2 py-1 text-right ${v ? 'text-gray-200' : 'text-gray-600'}">${v != null ? esc(benchValue(c.id, v)) : (c.ratio ? '' : '0')}</td>`;
@@ -3595,8 +3647,8 @@
                 return `<td class="px-2 py-1 text-right font-medium ${good ? 'text-green-400' : 'text-red-300'}">${n > 0 ? '+' : '−'}${esc(text)}</td>`;
             };
             const rows = [
-                a ? `<tr><th class="col-sticky px-2 py-1 text-left font-medium text-gray-400 whitespace-nowrap">Pickup</th>${cats.map(c => cell(a, c)).join('')}</tr>` : '',
-                d ? `<tr><th class="col-sticky px-2 py-1 text-left font-medium text-gray-400 whitespace-nowrap">Dropped</th>${cats.map(c => cell(d, c)).join('')}</tr>` : '',
+                a ? `<tr><th class="col-sticky px-2 py-1 text-left font-medium text-gray-400 whitespace-nowrap">${aLabel}</th>${cats.map(c => cell(a, c)).join('')}</tr>` : '',
+                d ? `<tr><th class="col-sticky px-2 py-1 text-left font-medium text-gray-400 whitespace-nowrap">${dLabel}</th>${cats.map(c => cell(d, c)).join('')}</tr>` : '',
                 a && d ? `<tr class="border-t border-gray-700"><th class="col-sticky px-2 py-1 text-left font-medium text-gray-300 whitespace-nowrap">Difference</th>${cats.map(diff).join('')}</tr>` : '',
             ].join('');
             return `
@@ -3966,6 +4018,400 @@
             $('results-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
         });
 
+        // --- Season History: trade results -----------------------------------
+        // Worked out by the server (trade_results.py) from the stored
+        // transactions and the league's days and weeks, as transaction results
+        // are - Yahoo's for a public league, the bookmarklet's lineups for a
+        // private one. A season has a dozen trades, not a thousand moves, so
+        // every one comes with its lines and weeks: picking a team or a week
+        // needs no request. Held here, not stored.
+        let tradesData = null;
+        let tradesLoading = null;
+        const tradeTeam = id => resultsTeam(id, tradesData);
+        const tradePlayer = id => resultsPlayer(id, tradesData);
+        const tradeLine = stats => resultsLine(stats, tradesData);
+        const countOf = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
+        const categoriesText = n => countOf(n, 'category', 'categories');
+        // Each side is scored against its own matchups, so both can come out
+        // ahead; the trades are ranked by how far apart the two ended up
+        const tradeMargin = t => Math.abs((t.sides[0].net || 0) - (t.sides[1].net || 0));
+
+        // One end of a side: its players, then any picks
+        function tradeNames(ids, picks) {
+            const parts = ids.map(tradePlayer);
+            if (picks?.length) {
+                parts.push(`<span class="text-gray-400">${picks.length === 1 ? `a round ${esc(picks[0])} pick`
+                    : `round ${esc(picks.join(', '))} picks`}</span>`);
+            }
+            return parts.length ? parts.join(', ') : '<span class="text-gray-500">nothing</span>';
+        }
+
+        function tradeVerdict(t) {
+            if (!tradesData.swingsScored) return '';
+            const [a, b] = t.sides;
+            if (![a, b].some(s => s.gained || s.lost)) return 'No category changed for either side yet.';
+            if (a.net === b.net) return 'Even.';
+            const [ahead, behind] = a.net > b.net ? [a, b] : [b, a];
+            if (behind.net > 0) return `Both came out ahead, ${tradeTeam(ahead.team)} by more.`;
+            if (ahead.net < 0) return `Both came out behind, ${tradeTeam(behind.team)} by more.`;
+            const by = ahead.net - behind.net;
+            return `${tradeTeam(ahead.team)} won it, by ${shareText(by).replace('+', '')} categor${by === 1 ? 'y' : 'ies'}.`;
+        }
+
+        function sideWindow(s) {
+            if (!s.start) return 'Nothing played since';
+            return s.current ? `Since ${shortDate(s.start)}`
+                : `${shortDate(s.start)} – ${shortDate(s.end)}, until the last player it got was gone`;
+        }
+
+        function sideSince(s) {
+            const turned = [s.better ? `turned ${countOf(s.better, 'matchup')} its way` : '',
+                s.worse ? `${countOf(s.worse, 'matchup')} against it` : ''].filter(Boolean).join(', ');
+            return `${categoriesText(s.gained || 0)} won, ${s.lost || 0} cost${turned ? ` · ${turned}` : ''}`;
+        }
+
+        const teamPick = id => `<button type="button" data-team="${esc(id)}" class="trades-team-pick text-left py-1 text-blue-400 hover:text-blue-300">${esc(tradeTeam(id))}</button>${id === myYahooTeam() ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}`;
+        const gotSign = '<span class="text-green-400 font-semibold">+</span>';
+        const gaveSign = '<span class="text-red-300 font-semibold">&minus;</span>';
+
+        // One side at a glance: what it got and gave, and what that did
+        function sideCard(s) {
+            const starts = (s.received || []).reduce((n, p) => n + (p.starts || 0), 0);
+            const open = (s.sent || []).reduce((n, p) => n + (p.open || 0), 0);
+            return `
+                <div class="rounded-md border border-gray-700 p-2 sm:p-3 flex flex-col gap-1">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <p class="font-medium">${teamPick(s.team)}</p>
+                        ${netBadge(s.net)}
+                    </div>
+                    <p>${gotSign} ${tradeNames((s.received || []).map(p => p.player), s.picksIn)}</p>
+                    <p>${gaveSign} ${tradeNames((s.sent || []).map(p => p.player), s.picksOut)}</p>
+                    <p class="text-xs text-gray-400">${esc(sideWindow(s))}: the players it got started ${esc(countOf(starts, 'game'))}; those it sent would have filled ${esc(countOf(open, 'open spot'))}.</p>
+                    ${tradesData.swingsScored && s.start ? `<p class="text-xs text-gray-300">${esc(sideSince(s))}</p>` : ''}
+                </div>`;
+        }
+
+        // A player's week or season: received [starts, games, line], sent
+        // [games in an open spot, games, line]
+        function gotText([starts, games, line]) {
+            if (!games) return 'no games';
+            const bench = games - starts;
+            return starts ? `${countOf(starts, 'start')}: ${tradeLine(line)}${bench ? ` (${bench} more on the bench)` : ''}`
+                : `${countOf(games, 'game')} on the bench`;
+        }
+
+        function gaveText([open, games, line]) {
+            if (!games) return 'no games';
+            return open ? `${countOf(open, 'game')} in an open spot: ${tradeLine(line)}${games > open ? ` (${games - open} with none open)` : ''}`
+                : `${countOf(games, 'game')}, no spot open`;
+        }
+
+        // One week of a side: each player's line in it, and what the trade
+        // did to the matchup. `label` names the week, or the trade - in a
+        // team's week, where the opponent is named once above.
+        function tradeWeek(s, w, label = `Week ${w.week}`, named = false) {
+            const week = tradesData.weeks.find(x => x.week === w.week);
+            const notes = [
+                week && s.start > week.start ? `from ${shortDate(s.start)}` : '',
+                week && !s.current && s.end < week.end ? `until ${shortDate(s.end)}` : '',
+                week && week.status !== 'postevent' ? 'so far' : '',
+            ].filter(Boolean);
+            const rows = [
+                ...Object.entries(w.received || {}).map(([id, v]) => `<p class="text-xs">${gotSign} ${tradePlayer(id)}: <span class="text-gray-300">${esc(gotText(v))}</span></p>`),
+                ...Object.entries(w.sent || {}).map(([id, v]) => `<p class="text-xs">${gaveSign} ${tradePlayer(id)}: <span class="text-gray-300">${esc(gaveText(v))}</span></p>`),
+            ].join('');
+            let outcome = '';
+            if (!tradesData.swingsScored) {
+                // Points leagues: the lines, no swings
+            } else if (w.gains || w.costs) {
+                outcome = `<p class="text-xs leading-relaxed">${weekOutcomes(w, 'the trade', tradesData)}`
+                    + ` <span class="text-gray-500">&middot; ${recordText3(w.with)} with it, ${recordText3(w.without)} without.</span>${turnedText(w)}</p>`;
+            } else if (w.with) {
+                outcome = `<p class="text-xs text-gray-500">Changed no category: ${recordText3(w.with)} either way.</p>`;
+            } else {
+                outcome = '<p class="text-xs text-gray-500">No matchup to score.</p>';
+            }
+            return `
+                <li class="py-2 flex flex-col gap-0.5">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <p class="text-xs text-gray-400"><span class="text-gray-200 font-medium">${label}</span>${w.opponent && !named ? ` vs ${esc(tradeTeam(w.opponent))}` : ''}${notes.length ? ` (${esc(notes.join(', '))})` : ''}</p>
+                        ${netBadge(w.net)}
+                    </div>
+                    ${w.met ? '<p class="text-xs text-gray-500">The two teams played each other: both sides are undone.</p>' : ''}
+                    ${rows || '<p class="text-xs text-gray-500">No games for anyone in the trade.</p>'}
+                    ${w.covered ? `<p class="text-xs text-gray-500">A teammate who played on the bench would have covered ${esc(countOf(w.covered, 'start'))}.</p>` : ''}
+                    ${outcome}
+                </li>`;
+        }
+
+        // A side in full: each player since the trade, the two lines side by
+        // side, then every week since
+        function sideDetail(s) {
+            const ids = [...(s.received || []), ...(s.sent || [])].map(p => p.player);
+            const now = (p) => p.nowOn ? (p.nowOn === s.team ? 'back on this team' : `now on ${tradeTeam(p.nowOn)}`) : 'on no team now';
+            const players = [
+                ...(s.received || []).map(p => `<p class="text-xs">${gotSign} ${tradePlayer(p.player)} <span class="text-gray-400">&middot; ${esc(p.first
+                    ? `on the roster ${shortDate(p.first)} – ${p.current ? 'now' : shortDate(p.last)} · started ${p.starts || 0} of ${countOf(p.games || 0, 'game')}`
+                    : 'never played a night for them')}</span></p>`),
+                ...(s.sent || []).map(p => `<p class="text-xs">${gaveSign} ${tradePlayer(p.player)} <span class="text-gray-400">&middot; ${esc([p.unmatched ? 'not matched to NHL game data'
+                    : `${countOf(p.games || 0, 'game')} since, ${p.open || 0} with a spot open`, now(p)].join(' · '))}</span></p>`),
+            ];
+            const weeksHtml = (s.weeks || []).length
+                ? `<ul class="divide-y divide-gray-700">${s.weeks.map(w => tradeWeek(s, w)).join('')}</ul>`
+                : '<p class="text-xs text-gray-500">Nothing played since.</p>';
+            return `
+                <div class="flex flex-col gap-2 min-w-0">
+                    <h4 class="text-sm font-semibold text-gray-300">${esc(tradeTeam(s.team))}&rsquo;s side <span class="text-xs font-normal text-gray-500">&middot; ${esc(sideWindow(s))}</span></h4>
+                    ${players.join('')}
+                    ${compareTable(s.totals?.received || {}, s.totals?.sent || {}, categoriesFor(ids, tradesData), ['Got', 'Gave'])}
+                    ${weeksHtml}
+                </div>`;
+        }
+
+        // `first` puts that team's side first; `open` shows the week by week
+        function tradeCard(t, first = null, open = false) {
+            const sides = first && t.sides[1].team === first ? [t.sides[1], t.sides[0]] : t.sides;
+            const verdict = tradeVerdict(t);
+            return `
+                <li class="p-3 sm:px-4 flex flex-col gap-2">
+                    <p class="text-gray-300"><span class="font-medium text-white">${esc(shortDate(t.date))}</span> &middot; ${esc(tradeTeam(sides[0].team))} and ${esc(tradeTeam(sides[1].team))}${verdict ? ` <span class="text-xs text-gray-400">&middot; ${esc(verdict)}</span>` : ''}</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${sides.map(sideCard).join('')}</div>
+                    <details class="text-sm"${open ? ' open' : ''}>
+                        <summary class="cursor-pointer py-1 text-xs text-gray-400">Week by week, and the totals since</summary>
+                        <div class="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">${sides.map(sideDetail).join('')}</div>
+                    </details>
+                </li>`;
+        }
+
+        // Every team's trades over a span, from the server's tallies
+        // (`season`, or one week's of `weekly`), all of a team's trades in a
+        // week taken together. Teams with none still get a row.
+        function tradesTeamTable(tallies, note, inEffect = false) {
+            const blank = { trades: 0, starts: 0, open: 0, gained: 0, lost: 0, net: 0, better: 0, worse: 0 };
+            const ids = [...new Set([...Object.keys(tradesData.season), ...Object.keys(tradesData.teams)])];
+            const s = Object.fromEntries(ids.map(id => [id, tallies?.[id] || blank]));
+            ids.sort((x, y) => s[y].net - s[x].net || s[y].trades - s[x].trades || Number(x) - Number(y));
+            const cell = (n, tone = '') => `<td class="px-3 py-2 text-right ${n ? tone || 'text-gray-200' : 'text-gray-600'}">${n}</td>`;
+            const turned = t => (t.better || t.worse)
+                ? [t.better ? `<span class="text-green-400">+${t.better}</span>` : '', t.worse ? `<span class="text-red-300">&minus;${t.worse}</span>` : ''].filter(Boolean).join(' ')
+                : '<span class="text-gray-600">0</span>';
+            const swings = tradesData.swingsScored;
+            return `
+                <div class="overflow-x-auto">
+                    <table class="data-table w-full text-left text-sm">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="col-sticky px-3 py-2 font-medium">Team</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">${inEffect ? 'In effect' : 'Trades'}</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Starts got</th>
+                                <th class="px-3 py-2 font-medium text-right whitespace-nowrap">Open games given</th>
+                                ${swings ? `<th class="px-3 py-2 font-medium text-right whitespace-nowrap">Categories won</th>
+                                <th class="px-3 py-2 font-medium text-right">Cost</th>
+                                <th class="px-3 py-2 font-medium text-right">Net</th>
+                                <th class="px-3 py-2 font-medium text-right">Matchups</th>` : ''}
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700">
+                            ${ids.map(id => `
+                                <tr class="table-row-hover">
+                                    <td class="col-sticky px-3 py-2">${teamPick(id)}</td>
+                                    ${cell(s[id].trades)}${cell(s[id].starts)}${cell(s[id].open)}
+                                    ${swings ? `${cell(s[id].gained, 'text-green-400')}${cell(s[id].lost, 'text-red-300')}
+                                    <td class="px-3 py-2 text-right font-semibold ${s[id].net > 0 ? 'text-green-400' : s[id].net < 0 ? 'text-red-300' : 'text-gray-600'}">${shareText(s[id].net)}</td>
+                                    <td class="px-3 py-2 text-right whitespace-nowrap">${turned(s[id])}</td>` : ''}
+                                </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-xs text-gray-500 -mt-2">${note} Select a team to see its trades.</p>`;
+        }
+
+        const TRADE_COLUMNS = 'Starts got: games the players received started. Open games given: games the players sent away would have filled an open spot. '
+            + 'Categories won and cost: those weeks&rsquo; matchups against having kept the players sent - a team&rsquo;s trades taken together, so a category two helped win counts once. '
+            + 'Matchups: weeks they turned the result the team&rsquo;s way, or against it.';
+
+        function tradesLeagueSeason() {
+            const swings = tradesData.swingsScored;
+            // Newest first as they come; the most one-sided first where categories are scored
+            const ranked = swings ? [...tradesData.trades].sort((x, y) => tradeMargin(y) - tradeMargin(x)) : tradesData.trades;
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-4">
+                    ${tradesTeamTable(tradesData.season, 'A trade counts in every week since it was made, while a player it brought in is still on the team. ' + TRADE_COLUMNS)}
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">${swings ? 'Every trade, the most one-sided first' : 'Every trade, newest first'}</h3>
+                        ${ranked.length ? resultsList(ranked.map(t => tradeCard(t))) : '<p class="text-gray-400">No trades this season.</p>'}
+                    </div>
+                </div>`;
+        }
+
+        function tradesLeagueWeek(number) {
+            const week = tradesData.weeks.find(w => w.week === number);
+            const entries = tradesData.trades.flatMap(t => t.sides.map(s => ({ t, s, w: (s.weeks || []).find(w => w.week === number) })))
+                .filter(e => e.w && (e.w.gains || e.w.costs))
+                .sort((x, y) => (y.w.net || 0) - (x.w.net || 0));
+            const item = ({ t, s, w }) => `
+                <li class="p-2 sm:px-3 flex flex-col gap-0.5">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <p class="text-gray-300">${teamPick(s.team)} <span class="text-xs text-gray-500">&middot; ${esc(shortDate(t.date))} trade with ${esc(tradeTeam(s.partner))}</span></p>
+                        ${netBadge(w.net)}
+                    </div>
+                    <p>${gotSign} ${tradeNames((s.received || []).map(p => p.player), s.picksIn)} <span class="text-gray-500">for</span> ${tradeNames((s.sent || []).map(p => p.player), s.picksOut)}</p>
+                    ${weekLine(w, 'the trade', `Week ${number}`, tradesData)}
+                </li>`;
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-4">
+                    ${tradesTeamTable(tradesData.weekly?.[String(number)], `Week ${number}${week && week.status !== 'postevent' ? ', so far' : ''}: the trades in effect, made this week or before. ` + TRADE_COLUMNS, true)}
+                    ${tradesData.swingsScored ? `<div>
+                        <h3 class="text-sm font-semibold text-gray-300 mb-1">Trades that changed week ${number}</h3>
+                        ${entries.length ? resultsList(entries.map(item)) : '<p class="text-gray-400">No trade changed a category this week.</p>'}
+                    </div>` : ''}
+                </div>`;
+        }
+
+        function tradesTeamSeason(team) {
+            const trades = tradesData.trades.filter(t => t.sides.some(s => s.team === team));
+            const s = tradesData.season[team] || { trades: 0, starts: 0, open: 0, gained: 0, lost: 0, net: 0, better: 0, worse: 0 };
+            const turned = [s.better ? `turned ${countOf(s.better, 'matchup')} their way` : '', s.worse ? `${countOf(s.worse, 'matchup')} against them` : ''].filter(Boolean).join(', ');
+            const summary = `${tradeTeam(team)}: ${countOf(s.trades, 'trade')}. The players received started ${countOf(s.starts, 'game')}; the players sent would have filled ${countOf(s.open, 'open spot')}.`
+                + (tradesData.swingsScored ? ` Against keeping them, every week since: ${categoriesText(s.gained)} won, ${s.lost} cost - ${shareText(s.net)} net${turned ? `, and ${turned}` : ''}.` : '');
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-3">
+                    <p class="text-gray-300">${esc(summary)}</p>
+                    ${trades.length ? resultsList(trades.map(t => tradeCard(t, team, true))) : '<p class="text-gray-400">No trades this season.</p>'}
+                </div>`;
+        }
+
+        // One team's week: each of its trades in effect, its players' lines
+        // that week, and - with more than one - what they did together
+        function tradesTeamWeek(team, number) {
+            const week = tradesData.weeks.find(w => w.week === number);
+            if (!week) return '';
+            const active = tradesData.trades.flatMap(t => t.sides.filter(s => s.team === team)
+                .map(s => ({ t, s, w: (s.weeks || []).find(w => w.week === number) }))).filter(e => e.w)
+                .sort((x, y) => (y.w.net || 0) - (x.w.net || 0));
+            const joint = tradesData.together?.[String(number)]?.[team];
+            const togetherHtml = tradesData.swingsScored && active.length > 1 ? `
+                <div class="flex flex-col gap-1 mb-2">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        ${joint ? weekLine(joint, 'them', 'All together', tradesData) : '<p class="text-xs text-gray-400">All together, they changed no category.</p>'}
+                        ${netBadge(joint?.net || 0)}
+                    </div>
+                    <p class="text-xs text-gray-500">Each trade below is judged on its own, with the others kept, so two can claim the same category. All together undoes every one at once, and counts each category once.</p>
+                </div>` : '';
+            const label = ({ t, s }) => `${esc(shortDate(t.date))} trade with ${esc(tradeTeam(s.partner))}`;
+            const rival = active.find(e => e.w.opponent)?.w.opponent;
+            const soFar = week.status !== 'postevent' ? ' <span class="text-xs text-gray-500 font-normal">(so far)</span>' : '';
+            return `
+                <div class="p-3 sm:p-4 flex flex-col gap-2">
+                    <h3 class="text-sm font-semibold text-gray-300">${esc(tradeTeam(team))}&rsquo;s trades in week ${number}${rival ? ` vs ${esc(tradeTeam(rival))}` : ''}${soFar}</h3>
+                    ${togetherHtml}
+                    ${active.length ? `<ul class="divide-y divide-gray-700 border border-gray-700 rounded-md px-2 sm:px-3">${active.map(e => tradeWeek(e.s, e.w, label(e), true)).join('')}</ul>`
+                        : '<p class="text-gray-400">No trade of theirs was in effect this week.</p>'}
+                </div>`;
+        }
+
+        function renderTrades() {
+            if (!tradesData) return;
+            const week = $('trades-week').value ? Number($('trades-week').value) : null;
+            const team = $('trades-team').value;
+            $('trades-body').innerHTML = team
+                ? (week ? tradesTeamWeek(team, week) : tradesTeamSeason(team))
+                : (week ? tradesLeagueWeek(week) : tradesLeagueSeason());
+        }
+
+        function applyTrades(data) {
+            tradesData = data;
+            const n = data.trades.length;
+            const notes = [
+                data.swingsScored ? '' : 'Week swings are worked out for category leagues only.',
+                data.source === 'browser' ? 'From your lineups on Yahoo - Update from Yahoo reads the days since.' : '',
+                (data.unmatched || []).length ? `${countOf(data.unmatched.length, 'player')} traded away not matched to NHL game data: ${data.unmatched.slice(0, 5).join(', ')}.` : '',
+            ].filter(Boolean).join(' ');
+            $('trades-status').textContent = `${data.league?.name || 'Your league'}${data.test ? ' (test league)' : ''}`
+                + `${data.asOf ? `, through ${dayLabel(data.asOf)}` : ''}: ${countOf(n, 'trade')} league-wide.`
+                + (notes ? ` ${notes}` : '');
+
+            const weekValue = $('trades-week').value;
+            $('trades-week').innerHTML = '<option value="">All season</option>' + data.weeks.map(w =>
+                `<option value="${w.week}">Week ${w.week} · ${esc(shortDate(w.start))} – ${esc(shortDate(w.end))}`
+                + `${w.status === 'postevent' ? '' : ' (so far)'}</option>`).join('');
+            $('trades-week').value = data.weeks.some(w => String(w.week) === weekValue) ? weekValue : '';
+
+            // Every trade to start with: the ranking is the point
+            const teamValue = $('trades-team').value;
+            const ids = [...new Set([...Object.keys(data.season), ...Object.keys(data.teams)])]
+                .sort((x, y) => Number(x) - Number(y));
+            const mine = myYahooTeam();
+            $('trades-team').innerHTML = '<option value="">All teams</option>' + ids.map(id =>
+                `<option value="${esc(id)}">${esc(tradeTeam(id))}${id === mine ? ' (you)' : ''}</option>`).join('');
+            $('trades-team').value = ids.includes(teamValue) ? teamValue : '';
+            $('trades-controls').classList.remove('hidden');
+            renderTrades();
+        }
+
+        async function loadTrades() {
+            if (tradesLoading) return tradesLoading;
+            const status = text => { $('trades-status').textContent = text; };
+            const saved = read(KEYS.transactions, null);
+            if (!saved?.transactions?.length) {
+                status('Scrape the league’s transactions first - on the Transactions tab, or with Update from Yahoo.');
+                return { ok: false, message: 'no transactions yet' };
+            }
+            if (!!saved.test !== ROSTER_TEST_MODE
+                || (!ROSTER_TEST_MODE && saved.leagueId && String(saved.leagueId) !== String(savedLeagueId() || ''))) {
+                status('The transactions stored here are another league’s. Scrape this league’s on the Transactions tab first.');
+                return { ok: false, message: 'transactions are another league’s' };
+            }
+            const leagueId = savedLeagueId();
+            if (!ROSTER_TEST_MODE && !leagueId) {
+                status('Enter your League ID on the League tab first - trades are read from Yahoo.');
+                return { ok: false, message: 'no League ID yet' };
+            }
+            const body = {
+                league_id: leagueId, slots,
+                transactions: { transactions: saved.transactions, players: saved.players || {} },
+            };
+            $('trades-load').disabled = true;
+            status('Working out every trade this season… the first time a league is read can take a minute.');
+            tradesLoading = (async () => {
+                // A league known to be private goes straight to its stored lineups
+                let answer = benchStore().private ? null
+                    : await postJSON('/standalone/api/trade-results', body);
+                if (!answer || (!answer.ok && answer.data.code === 'private')) {
+                    answer = benchStored() ? await postJSON('/standalone/api/trade-results', { ...body, ...benchRequest() })
+                        : { ok: false, data: { message: 'This league is private, so its lineups are read through the '
+                            + 'bookmarklet: select Update from Yahoo at the top of the page.' } };
+                }
+                tradesLoading = null;
+                $('trades-load').disabled = false;
+                if (!answer.ok) {
+                    status(answer.data.message || 'Trade results could not be worked out.');
+                    return { ok: false, message: answer.data.message || 'could not be worked out' };
+                }
+                applyTrades(answer.data);
+                return { ok: true };
+            })();
+            return tradesLoading;
+        }
+
+        // New transactions or lineups: worked out again when next looked at,
+        // or now if the section is open
+        function invalidateTrades(reload) {
+            tradesData = null;
+            if (reload && !$('tab-history').classList.contains('hidden')
+                && !$('history-trades').classList.contains('hidden')) loadTrades();
+        }
+
+        $('trades-load').addEventListener('click', () => loadTrades());
+        ['trades-week', 'trades-team'].forEach(id => $(id).addEventListener('change', renderTrades));
+        $('trades-body').addEventListener('click', event => {
+            const pick = event.target.closest('.trades-team-pick');
+            if (!pick) return;
+            $('trades-team').value = pick.dataset.team;
+            renderTrades();
+            $('trades-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
+
         // --- Season History: its sections ------------------------------------
         // One at a time, each fetched the first time it is shown. A new section
         // is a button and a panel in the markup and an entry here, run when it
@@ -3973,6 +4419,7 @@
         const HISTORY_TABS = {
             transactions: () => renderTransactions(),
             results: () => { if (!resultsData) loadResults(); },
+            trades: () => { if (!tradesData) loadTrades(); },
             bench: () => { if (!benchData) loadBench(); },
         };
 
@@ -4159,6 +4606,7 @@
             renderUpdate(results, false);
             // Built from the transactions and lineups just read
             invalidateResults(true);
+            invalidateTrades(true);
         }
 
         $('update-all').addEventListener('click', async () => {

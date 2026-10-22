@@ -77,6 +77,12 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
   games, so each was listed twice - his projection with no games, and a
   "No proj" row. His projection now takes his NHL id once he has played, and
   what a browser stored under the stand-in moves with it. See *In season*.
+- **Season History ranks trades** (10/22/2026): a Trade Results sub-tab
+  judges each trade's two sides week by week since it was made - what the
+  players received did in a starting slot against what the players sent would
+  have done in an open spot, and the categories and matchups that changed -
+  and ranks the season's trades by how one-sided they were. See *Season
+  History: trade results*.
 
 ## Tech stack
 
@@ -124,6 +130,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `bench_points.py` | Pure: what benched players scored, and the single swaps that would have won or tied a category. See *Season History: left on the bench* |
 | `bench_lineups.py` | Bench points for a private league: the bookmarklet's daily lineups plus `player_game_stats`, built into the same shapes the public API gives. See *Season History: left on the bench* |
 | `transaction_results.py` | Pure: each pickup paired with its drop, what each did, and the weeks a move won or cost a category. See *Season History: transaction results* |
+| `trade_results.py` | Pure: each trade's two sides, what the players received did against what the players sent would have, week by week since and over the season. See *Season History: trade results* |
 | `player_pool.py` | Everyone an outside name can be matched to (projections plus anyone with games, an imported rookie under his NHL id once he plays) and the aliases - for Yahoo's lineups and transactions and ESPN's injuries |
 | `injury_report.py` | ESPN's injury report into `current_injuries`, every night; and how the page reads it (`by_player`, stale notes). See *Injuries* |
 | `week_planner.py` | `Week` (the roster-independent setup), `plan_week` and the `free_agents` search; pure, the route loads the rows. Also manual lineups (`manual_lineup`, `seat_order`) |
@@ -164,7 +171,7 @@ Deployed on Render (fantasystreams.app); `main` deploys on push. Author: Jason D
 | `templates/pages/draft-prep.html` | ~2,070-line draft prep UI: League Settings modal, projection table, ranking controls, saved list tabs, xlsx export |
 | `templates/pages/league-database.html` | League Database viewer — settings, teams/rosters, schedule, transactions, player pool |
 | `templates/pages/schedules.html` | NHL Schedule Insights — games by team, light nights, per-night calendar |
-| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid; Season History its own sub-tabs (Transactions / Transaction Results / Bench Points); every player opens the player card modal |
+| `templates/pages/standalone.html` | Standalone League Home — settings bar (your team, week, stat sourcing), then League / Matchup / Lineups / Free Agents / Goalie Planning / Season History tabs. Lineups carries the roster view and the hand-editable nightly grid; Season History its own sub-tabs (Transactions / Transaction Results / Trade Results / Bench Points); every player opens the player card modal |
 | `templates/partials/page-nav.html` | Shared nav; `{% set active = '...' %}` before including. Stand-in for the deferred `home.html` shell. Carries the account button, and includes `partials/account.html` (the account modal and the boot data) |
 | `static/styles.css` | **Shared design tokens + component classes.** Every page links it; no page declares its own colours |
 | `tests/` | Standalone suites, no pytest — `python tests/run_all.py` (see *Tests*) |
@@ -834,8 +841,8 @@ top holds what every sub-page reads — **Your Team**, **Fantasy Week** (with
 sub-page tabs, **League · Matchup · Lineups · Free Agents · Goalie Planning · Season History**,
 and the chosen one fills the panel under it. The site-wide nav keeps the corner
 the old Logout button had. Season History holds Transactions, Transaction
-Results and Bench Points; the old site's category strength, and its Trade
-Helper and Tools tabs, are still to come.
+Results, Trade Results and Bench Points; the old site's category strength, and
+its Trade Helper and Tools tabs, are still to come.
 
 **Season History's sections are sub-tabs** (10/5/2026): a lighter underlined
 row (`.sub-tab` in `styles.css`) under the page tabs, one section shown at a
@@ -1668,7 +1675,8 @@ matched by name, team and positions.
 
 - **A move** is one add/drop, or a lone drop and a lone add by the same team
   within 24 hours (`paired: 'nearby'`): a manager who drops first and adds
-  after makes two transactions. Trades are left out. A lone drop is judged
+  after makes two transactions. Trades are left out (*Season History: trade
+  results* judges them). A lone drop is judged
   until the team's next pickup, which filled the spot he left.
 - **The pickup counts from his first night on the roster** (the move's day,
   or up to two days later for one effective tomorrow) **until he is gone**,
@@ -1767,6 +1775,69 @@ matched by name, team and positions.
 - **Points leagues** get contributions but no swings, as with bench points.
   Results are held in the page, not stored, and are worked out again after
   Update from Yahoo or a transactions scrape.
+
+### Season History: trade results (`trade_results.py`)
+
+Transaction Results for trades: each trade's two sides, what the players a
+side received did against what the players it sent would have done, week by
+week since the trade and over the season, and the league's trades ranked by
+how one-sided they were. `/api/trade-results` takes the same body as
+`/api/transaction-results` (less `team`) and shares its loading
+(`_season_results`): Yahoo's public API for a public league, the
+bookmarklet's lineups for a private one. A season has a dozen trades, so every
+one comes with its lines and weeks (~100 KB for the test league's 11, 1.4 s),
+and choosing a team or a week needs no request. Held in the page, worked out
+again after Update from Yahoo or a transactions scrape.
+
+- **A side** is one team's half: players received and sent, from the trade's
+  team-to-team moves. Picks are listed (`picksIn` / `picksOut`; the route
+  used to drop them from the posted transactions and now keeps them), never
+  scored. A drop inside the trade's transaction is no part of it.
+- **Received players count as a pickup does**: lines on nights in a starting
+  slot and played; a bench night is a game.
+- **Sent players count their line wherever they played** - Yahoo's own from
+  the days while on another fantasy roster, `player_game_stats` while on none
+  - on nights a spot they fit was open on the team that traded them.
+  `transaction_results.undone` does the seating, the whole side at once: the
+  busiest sent player that night is paired with a received player's slot
+  first, the rest go to empty or idle slots, and a received player's start
+  nobody sent could make goes to a bench teammate who played.
+- **Judged while what it brought is on the team**: from the trade until the
+  last player received is gone - what came after is that drop's or trade's to
+  answer for. A side that took only picks, or players gone before a night on
+  its roster, runs to the end of the season so far. In the test league team
+  6 got Stephenson for Pettersson and dropped him six hours later; without
+  that rule Pettersson's loss went unjudged.
+- **Every week since counts**, unlike a pickup (*a move counts in its own
+  week only*). A trade is a bet on the rest of the season, which is what the
+  view is for.
+- **Each week is scored again without the trade** (`transaction_results.swing`,
+  which now takes `rival_without`). **In a week the two partners met, both
+  sides are undone**: neither had what it got. Scored against the partner's
+  real totals instead, the hand-worked test case reads -0.5 where the truth
+  is +1.0; undone both ways, the two sides' nets are equal and opposite, as a
+  head-to-head week has to be.
+- **A team's totals score its trades together** (`together`, `season`,
+  `weekly`): a week with several in effect is undone at once, each spot used
+  once. **Chains are common** - in the test league team 9 got Trocheck from
+  team 1 and sent him to team 4, and got J.T. Miller from 7 and sent him to
+  12. A player received in one active side and sent in another nets out
+  (`netted`): undoing both, he never came, or never left. Each side's own
+  numbers are that trade alone, so they need not sum to the team's.
+- **`better` / `worse`**: weeks whose matchup result the trade (or a team's
+  trades together) turned its way, or against it.
+- **The page**: the league's season is a team table and every trade as a
+  card, the most one-sided first - by the gap between the two sides' nets,
+  since each is scored against its own matchups and both can come out ahead.
+  Each card's *Week by week* has both sides: every player's line that week,
+  the categories it changed, and Got / Gave / Difference totals since. A
+  week lists the trades that changed it; a team, its trades opened; a team's
+  week, each trade's line and all of them together.
+- **Points leagues** get the lines but no swings.
+
+On the test league (11 trades), A.H.H. Final Boss made six and came out
++15 categories; The Hockey Hunx's Hedman-for-Hertl (Hedman hurt, 3 games) is
+the most one-sided, 12.5 categories apart.
 
 ### Update from Yahoo (every scrape at once)
 
@@ -2649,6 +2720,7 @@ under a test guid and deleting them again, so a database must be reachable.
 | `test_player_form.py` | form for the roster view: trends are a standard-error test (a streak inside a noisy player's spread is flat, too few games is no trend), PP share never reaches past the recent games, venue needs games at both, goalies judged on starts |
 | `test_yahoo_matchup.py` | the score scrape with no network: URLs carry week and mid1, a dash is not a zero, starred columns are unscored, SV% maps to SVpct, each wrong page named, and the routes (test mode, columns, private, bad input, bookmarklet parse); then each team's own page for the goalie minimum - read for the matchup's week, a page showing another week not used, an unreadable one costing the appearances but not the score, and the boxes the bookmarklet sends |
 | `test_bench_points.py` | bench points with no network: only BN counts (never IR), a bench player replaces only a starter whose slot he fits and a goalie only a goalie, an idle starter is offered and marked, a swap names what it wins, ties and costs with the exact record before and after, GAA and SV% rebuilt from their parts with minutes recovered from GAA, points leagues get totals but no swaps; the API reader's compact day shape and its private refusal; the routes; and the private path — game rows as Yahoo stats (PPA from PPP and PPG, a goalie's GAA from his own seconds), unsupported categories reported, two Elias Petterssons told apart by the page's positions, week totals from starters only, and bench_points reading the built shapes exactly as it reads the API's |
+| `test_trade_results.py` | trade results with no network or database, on a four-team fortnight worked out by hand: a trade is two sides, picks both ways and a drop inside it no part of either; a player received counts only nights he started and played; a player sent counts Yahoo's line on another roster and NHL data on none, only with a spot open, and is never "unmatched" if he was always on a roster; a side judged until the last player it got is gone, and one that took only a pick, or let its player go before his first night, to the end; every week since reviewed, changed or not, and one with no matchup reviewed but unscored; the partners' week with both sides undone, one side's gain the other's loss; a team's trades together counting a category once, and one only they together decided; a chain's player who came in one trade and left in another never brought back; points leagues without swings; then the route, picks reaching it, private leagues and bad input |
 | `test_transaction_results.py` | transaction results with no network or database, on a two-team week worked out by hand: an add/drop is one move, so is a drop and an add six hours apart but not thirty, nor across teams, and trades are not moves; the pickup's line only on nights he started and played; the dropped player only when his own, an empty or an idle starter's spot was open (a goalie never a skater's, nor the reverse); a start nobody else could make covered by the busiest teammate who played on the bench; a week's swing naming the category won and the one cost, a tie as half; season and weekly tallies, where a lone drop is a move but not an add and last week's pickup counts nothing this week though he started in it (that later week shown, marked, never counted; another team's moves carry only their own weeks), a Saturday pickup kept and started this week is one of its adds and starts (not a Friday one, nor one only benched), and one made before the season counts in week 1; two shutouts as two hours; two pickups that each alone won assists counted as one category won, not two, with a bench stand-in or an empty slot used once across moves on one night and a category only the moves together decided counted; a chain (Monday X for Y, Wednesday Z for X) undone together keeping Y and never X's games after his drop, and a lone drop of an earlier pickup the same; points leagues without swings; then the route, private leagues and bad input |
 | `test_yahoo_transactions.py` | the transactions scrape with no network: API stand-ins and synthetic pages describing the same league must come out identical; waiver claims vs free-agent pickups, drops to waivers vs free agents, a trade's two rows as one trade with picks, the year turning at New Year, page times in the sent zone, commissioner settings changes kept out, API paging and every error, an update reading one page down to the transaction it holds (the whole page, for claims settled late) and every page when it holds none Yahoo knows, and the routes, saying when to merge and when to replace |
 | `test_yahoo_rosters.py` | the roster scrape with no network: League IDs, parsing (IR/IR+/NA out, empty slots, Yahoo's status badge — NA in a starting slot is out, DTD is not), private / not-found / unrelated pages each named, two Elias Petterssons told apart by Yahoo's player record, the pipeline copies not drifting, and the routes in and out of test mode |
@@ -2791,7 +2863,9 @@ placeholders; this repo is SQLAlchemy Core with `text()` and `:name` binds.
 - **Transaction Results' counterfactual is a model**: it assumes the dropped
   player would have started in any open spot he fits, and that a benched
   teammate who played would have covered a pickup's start otherwise. Managers
-  are not that diligent, and nothing models a different move instead.
+  are not that diligent, and nothing models a different move instead. Trade
+  Results rests on the same model, and also assumes a team would have kept
+  the players it traded away for as long as it kept what it got.
 - **Move reminders have not been received on a real phone** yet, and need
   `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` set on Render first. Planned moves
   model no waiver periods, so a reminder to add a player on waivers comes too
